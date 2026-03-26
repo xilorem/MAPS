@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MAPS"
+version = "0.0.1"
+description = "MAGIA mesh scheduler"
+requires-python = ">=3.10"
+dependencies = [
+  "onnx==1.20.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "debugpy==1.8.20",
+  "netron==8.9.6",
+  "pynvim==0.6.0",
+  "pytest==9.0.2",
+]
+
+[tool.setuptools]
+packages = [
+  "MAPS",
+  "MAPS.builders",
+  "MAPS.core",
+  "MAPS.cost_models",
+  "MAPS.importers",
+  "MAPS.importers.onnx",
+  "MAPS.importers.onnx.ops",
+  "MAPS.ops",
+]
+
+[tool.setuptools.package-dir]
+"MAPS" = "."
+"MAPS.builders" = "builders"
+"MAPS.core" = "core"
+"MAPS.cost_models" = "cost_models"
+"MAPS.importers" = "importers"
+"MAPS.importers.onnx" = "importers/onnx"
+"MAPS.importers.onnx.ops" = "importers/onnx/ops"
+"MAPS.ops" = "ops"
