@@ -1,4 +1,4 @@
-"""Layer IR matching the runtime-side `layer_t` and related structs."""
+"""Stage IR for scheduled execution units on the mesh."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from .layout import TensorLayout
 from .submesh import Submesh
 
 if TYPE_CHECKING:
+    from .graph import Node
     from .tensor import Tensor
 
 
@@ -20,25 +21,25 @@ class InputSourceKind(IntEnum):
 
 
 @dataclass(frozen=True)
-class LayerOutputRef:
-    """Reference to a specific output of another layer."""
+class StageOutputRef:
+    """Reference to a specific output of another stage."""
 
-    layer_id: int
+    stage_id: int
     output_idx: int
 
     def __post_init__(self) -> None:
-        if self.layer_id < 0 or self.output_idx < 0:
-            raise ValueError("layer_id and output_idx must be >= 0")
+        if self.stage_id < 0 or self.output_idx < 0:
+            raise ValueError("stage_id and output_idx must be >= 0")
 
 
 @dataclass(frozen=True)
 class InputSource:
-    """How one layer input is wired."""
+    """How one stage input is wired."""
 
     kind: InputSourceKind
     external_base_addr: int | None = None
     transition_id: int | None = None
-    local_output: LayerOutputRef | None = None
+    local_output: StageOutputRef | None = None
 
     def __post_init__(self) -> None:
         if self.kind is InputSourceKind.EXTERNAL:
@@ -51,18 +52,10 @@ class InputSource:
             if self.local_output is None:
                 raise ValueError("local inputs require a local_output reference")
 
-        print("ok")
-
-class LayerOpKind(IntEnum):
-    GEMM = 0
-    ELEMENTWISE = 1
-    REDUCTION = 2
-    CUSTOM = 255
-
 
 @dataclass(frozen=True)
-class LayerInputBinding:
-    """One input binding of a layer."""
+class StageInputBinding:
+    """One input binding of a stage."""
 
     tensor_id: int
     source: InputSource
@@ -73,8 +66,8 @@ class LayerInputBinding:
 
 
 @dataclass(frozen=True)
-class LayerOutputBinding:
-    """One output binding of a layer."""
+class StageOutputBinding:
+    """One output binding of a stage."""
 
     tensor_id: int
     layout: TensorLayout
@@ -85,37 +78,23 @@ class LayerOutputBinding:
 
 
 @dataclass(frozen=True)
-class Layer:
-    """One logical compute stage."""
+class Stage:
+    """One scheduled execution stage on a placed submesh."""
 
     name: str
     submesh: Submesh
-    kind: LayerOpKind
-    inputs: tuple[LayerInputBinding, ...] = field(default_factory=tuple)
-    outputs: tuple[LayerOutputBinding, ...] = field(default_factory=tuple)
-    payload: object | None = None # contains the operations specific descriptor (ex, which input is x, which is w for matmul)
+    nodes: tuple["Node", ...] = field(default_factory=tuple)
+    inputs: tuple[StageInputBinding, ...] = field(default_factory=tuple)
+    outputs: tuple[StageOutputBinding, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.name:
-            raise ValueError("layer name must not be empty")
-        self.validate_payload()
-
-    def validate_payload(self) -> None:
-        """Validate that the payload matches the declared op kind."""
-
-        from MAPS.ops.gemm import GemmLayerOp
-
-        if self.kind is LayerOpKind.GEMM:
-            if not isinstance(self.payload, GemmLayerOp):
-                raise ValueError("GEMM layers require a GemmLayerOp payload")
-            self.payload.validate_bindings(self.inputs, self.outputs)
-            return
-
-        if isinstance(self.payload, GemmLayerOp):
-            raise ValueError("GemmLayerOp payloads are only valid for GEMM layers")
+            raise ValueError("stage name must not be empty")
+        if not self.nodes:
+            raise ValueError("stages must contain at least one node")
 
     def validate_tensors(self, tensors: tuple["Tensor", ...]) -> None:
-        """Validate bound tensor ids and op-specific tensor compatibility."""
+        """Validate bound tensor ids and output layout compatibility."""
 
         for binding in self.inputs:
             if binding.tensor_id >= len(tensors):
@@ -124,7 +103,3 @@ class Layer:
             if binding.tensor_id >= len(tensors):
                 raise ValueError(f"output tensor_id out of range: {binding.tensor_id}")
             binding.layout.validate_for(tensors[binding.tensor_id])
-
-        if self.kind is LayerOpKind.GEMM:
-            assert self.payload is not None
-            self.payload.validate_tensors(self.inputs, self.outputs, tensors)

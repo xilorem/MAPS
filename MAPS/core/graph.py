@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 
-from .layer import LayerOpKind
 from .tensor import Tensor
+
+
+class OpKind(IntEnum):
+    GEMM = 0
+    ELEMENTWISE = 1
+    REDUCTION = 2
+    CUSTOM = 255
 
 
 @dataclass(frozen=True)
@@ -13,7 +20,7 @@ class Node:
     """One logical compute node in the graph."""
 
     name: str
-    kind: LayerOpKind
+    kind: OpKind
     inputs: tuple[Tensor, ...] = field(default_factory=tuple)
     outputs: tuple[Tensor, ...] = field(default_factory=tuple)
     payload: object | None = None
@@ -39,7 +46,7 @@ class Edge:
 
 @dataclass(frozen=True)
 class Graph:
-    """One logical graph ready to be consumed by the MAPS."""
+    """One logical graph ready to be consumed by the scheduler."""
 
     name: str
     tensors: tuple[Tensor, ...] = field(default_factory=tuple)

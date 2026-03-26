@@ -1,6 +1,6 @@
 """Core planner IR mirroring the runtime-side C structures."""
 
-from .graph import Edge, Graph, Node
+from .graph import Edge, Graph, Node, OpKind
 from .layout import (
     TENSOR_AXIS_NONE,
     LayoutAxis,
@@ -9,14 +9,13 @@ from .layout import (
     TensorRange,
     TensorSlice,
 )
-from .layer import (
+from .stage import (
     InputSource,
     InputSourceKind,
-    Layer,
-    LayerInputBinding,
-    LayerOpKind,
-    LayerOutputBinding,
-    LayerOutputRef,
+    Stage,
+    StageInputBinding,
+    StageOutputBinding,
+    StageOutputRef,
 )
 from .mesh import Mesh, Tile
 from .pipeline import Pipeline
@@ -29,15 +28,16 @@ __all__ = [
     "Graph",
     "InputSource",
     "InputSourceKind",
-    "Layer",
-    "LayerInputBinding",
-    "LayerOpKind",
-    "LayerOutputBinding",
-    "LayerOutputRef",
     "LayoutAxis",
     "LayoutAxisMode",
     "Mesh",
+    "Node",
+    "OpKind",
     "Pipeline",
+    "Stage",
+    "StageInputBinding",
+    "StageOutputBinding",
+    "StageOutputRef",
     "Submesh",
     "TENSOR_AXIS_NONE",
     "TENSOR_MAX_DIMS",
@@ -49,5 +49,4 @@ __all__ = [
     "Transition",
     "TransitionFragment",
     "TransitionMode",
-    "Node",
 ]

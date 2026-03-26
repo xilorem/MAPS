@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from MAPS.core.layer import LayerInputBinding, LayerOutputBinding
+from MAPS.core.stage import StageInputBinding, StageOutputBinding
 from MAPS.core.tensor import Tensor
 
 
 @dataclass(frozen=True)
 class GemmLayerOp:
-    """GEMM-specific layer payload.
+    """GEMM-specific operation payload.
 
     The planner-side GEMM convention is:
     - ``x`` has shape ``[..., M, K]``
@@ -24,21 +24,25 @@ class GemmLayerOp:
     y: Tensor | None
     output: Tensor
 
-    def validate_bindings(self,
-                          inputs: tuple[LayerInputBinding, ...],
-                          outputs: tuple[LayerOutputBinding, ...]) -> None:
+    def validate_bindings(
+        self,
+        inputs: tuple[StageInputBinding, ...],
+        outputs: tuple[StageOutputBinding, ...],
+    ) -> None:
         """Validate the minimum binding structure required by GEMM."""
 
         if len(inputs) < 2:
-            raise ValueError("GEMM layers require at least two inputs")
+            raise ValueError("GEMM stages require at least two inputs")
         if len(outputs) == 0:
-            raise ValueError("GEMM layers require at least one output")
+            raise ValueError("GEMM stages require at least one output")
 
-    def validate_tensors(self,
-                         inputs: tuple[LayerInputBinding, ...],
-                         outputs: tuple[LayerOutputBinding, ...],
-                         tensors: tuple[Tensor, ...]) -> None:
-        """Validate tensor availability against one GEMM layer instance."""
+    def validate_tensors(
+        self,
+        inputs: tuple[StageInputBinding, ...],
+        outputs: tuple[StageOutputBinding, ...],
+        tensors: tuple[Tensor, ...],
+    ) -> None:
+        """Validate tensor availability against one GEMM stage instance."""
 
         self.validate_bindings(inputs, outputs)
 
@@ -46,13 +50,13 @@ class GemmLayerOp:
         bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)
 
         if self.x not in bound_inputs:
-            raise ValueError("GEMM X tensor is not present in layer inputs")
+            raise ValueError("GEMM X tensor is not present in stage inputs")
         if self.w not in bound_inputs:
-            raise ValueError("GEMM W tensor is not present in layer inputs")
+            raise ValueError("GEMM W tensor is not present in stage inputs")
         if self.y is not None and self.y not in bound_inputs:
-            raise ValueError("GEMM Y tensor is not present in layer inputs")
+            raise ValueError("GEMM Y tensor is not present in stage inputs")
         if self.output not in bound_outputs:
-            raise ValueError("GEMM output tensor is not present in layer outputs")
+            raise ValueError("GEMM output tensor is not present in stage outputs")
 
         for tensor_name, tensor in (
             ("X", self.x),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from MAPS.core.layer import LayerOpKind
+from MAPS.core.graph import OpKind
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
 
@@ -13,7 +13,7 @@ def lower_matmul_node(
     node_name: str,
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
-) -> tuple[LayerOpKind, object]:
+) -> tuple[OpKind, object]:
     """Lower one ONNX MatMul node into scheduler-side GEMM semantics."""
 
     if len(inputs) != 2:
@@ -24,7 +24,7 @@ def lower_matmul_node(
     x_tensor, w_tensor = inputs
     output_tensor = outputs[0]
     return (
-        LayerOpKind.GEMM,
+        OpKind.GEMM,
         GemmLayerOp(
             x=x_tensor,
             w=w_tensor,

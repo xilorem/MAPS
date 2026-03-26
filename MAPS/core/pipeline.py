@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .layer import Layer
 from .mesh import Mesh
+from .stage import Stage
 from .tensor import Tensor
 from .transition import Transition
 
@@ -18,7 +18,7 @@ class Pipeline:
     mesh: Mesh
     num_microbatches: int
     tensors: tuple[Tensor, ...] = field(default_factory=tuple)
-    layers: tuple[Layer, ...] = field(default_factory=tuple)
+    stages: tuple[Stage, ...] = field(default_factory=tuple)
     transitions: tuple[Transition, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:

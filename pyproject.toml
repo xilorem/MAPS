@@ -19,24 +19,6 @@ dev = [
   "pytest==9.0.2",
 ]
 
-[tool.setuptools]
-packages = [
-  "MAPS",
-  "MAPS.builders",
-  "MAPS.core",
-  "MAPS.cost_models",
-  "MAPS.importers",
-  "MAPS.importers.onnx",
-  "MAPS.importers.onnx.ops",
-  "MAPS.ops",
-]
-
-[tool.setuptools.package-dir]
-"MAPS" = "."
-"MAPS.builders" = "builders"
-"MAPS.core" = "core"
-"MAPS.cost_models" = "cost_models"
-"MAPS.importers" = "importers"
-"MAPS.importers.onnx" = "importers/onnx"
-"MAPS.importers.onnx.ops" = "importers/onnx/ops"
-"MAPS.ops" = "ops"
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["MAPS*"]

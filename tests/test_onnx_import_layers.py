@@ -1,6 +1,6 @@
 """Tests for ONNX lowering into the shared graph IR."""
 
-from MAPS.core.layer import LayerOpKind
+from MAPS.core.graph import OpKind
 from MAPS.importers.onnx.graph_parser import parse_graph
 from MAPS.importers.onnx.utils import build_tensor_producer_table
 from MAPS.ops.gemm import GemmLayerOp
@@ -27,7 +27,7 @@ def test_parse_graph_lowers_matmul_to_graph_node() -> None:
 
     assert lowered_graph.name == "tiny_matmul"
     assert len(lowered_graph.nodes) == 1
-    assert lowered_graph.nodes[0].kind is LayerOpKind.GEMM
+    assert lowered_graph.nodes[0].kind is OpKind.GEMM
     assert isinstance(lowered_graph.nodes[0].payload, GemmLayerOp)
     assert lowered_graph.nodes[0].inputs[0].name == "x"
     assert lowered_graph.nodes[0].inputs[1].name == "w"
