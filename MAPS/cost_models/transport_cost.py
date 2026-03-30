@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from MAPS.core.mesh import Tile
+from MAPS.arch import Tile
 
 
 class TransferKind(Enum):
@@ -77,5 +77,4 @@ class TransportCostModel:
             assert leg.src_tile is not None and leg.dst_tile is not None
             return self.l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
         raise ValueError(f"unsupported transfer kind: {leg.kind}")
-
 

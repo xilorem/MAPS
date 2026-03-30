@@ -1,6 +1,6 @@
 """Helpers to build direct-remap fragments from concrete tile ownership."""
 
-from MAPS.core.mesh import Tile
+from MAPS.arch import Tile
 from MAPS.core.layout import TensorRange, TensorSlice
 from MAPS.core.transition import TransitionFragment
 from MAPS.core.ownership import tile_tensor_slice

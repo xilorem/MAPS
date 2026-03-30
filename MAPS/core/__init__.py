@@ -1,4 +1,4 @@
-"""Core planner IR mirroring the runtime-side C structures."""
+from MAPS.arch import Mesh, Tile
 
 from .graph import Edge, Graph, Node, OpKind
 from .layout import (
@@ -17,7 +17,6 @@ from .stage import (
     StageOutputBinding,
     StageOutputRef,
 )
-from .mesh import Mesh, Tile
 from .pipeline import Pipeline
 from .submesh import Submesh
 from .tensor import TENSOR_MAX_DIMS, Tensor

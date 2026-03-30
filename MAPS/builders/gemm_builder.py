@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
-from MAPS.core.mesh import Tile
+from MAPS.arch import Tile
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp

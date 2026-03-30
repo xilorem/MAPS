@@ -1,5 +1,5 @@
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
-from MAPS.core.mesh import Mesh
+from MAPS.arch import Mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.builders.gemm_builder import build_gemm_tile_work
@@ -7,7 +7,7 @@ from MAPS.ops.gemm import GemmLayerOp
 
 
 def test_build_gemm_tile_work_derives_required_operand_slices() -> None:
-    mesh = Mesh(2, 2)
+    mesh = Mesh(2, 2, l2_bytes=4096)
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tile = mesh.tile(1, 0)
 

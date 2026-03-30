@@ -1,10 +1,8 @@
-"""Top-level pipeline IR matching the runtime-side `pipeline_t`."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .mesh import Mesh
+from MAPS.arch import Mesh
 from .stage import Stage
 from .tensor import Tensor
 from .transition import Transition

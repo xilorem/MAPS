@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from MAPS.core.mesh import Mesh
+from MAPS.arch import Mesh
 from MAPS.core.layout import TensorSlice
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import Transition, TransitionFragment, TransitionMode

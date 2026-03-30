@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .mesh import Mesh, Tile
+from MAPS.arch import Mesh, Tile
 
 
 @dataclass(frozen=True)
