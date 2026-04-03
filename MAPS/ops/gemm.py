@@ -4,8 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from MAPS.arch import Tile
+from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
+from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.stage import StageInputBinding, StageOutputBinding
 from MAPS.core.tensor import Tensor
+
+
+@dataclass(frozen=True)
+class GemmTileWork:
+    """Concrete GEMM slices associated with one tile."""
+
+    output_slice: TensorSlice
+    x_slice: TensorSlice
+    w_slice: TensorSlice
+    y_slice: TensorSlice | None
+
+
+def _full_range(dim: int) -> TensorRange:
+    return TensorRange(start=0, length=dim)
 
 
 @dataclass(frozen=True)
@@ -23,6 +40,56 @@ class GemmLayerOp:
     w: Tensor
     y: Tensor | None
     output: Tensor
+
+    @property
+    def cost_model(self) -> object:
+        from MAPS.cost_models.gemm_cost import GemmCostModel
+
+        return GemmCostModel()
+
+    def required_x_slice(self, output_slice: TensorSlice) -> TensorSlice:
+        if output_slice.rank != self.x.rank:
+            raise ValueError("output slice rank must match X tensor rank")
+        dims = list(output_slice.dims[:-2])
+        dims.append(output_slice.dims[-2])
+        dims.append(_full_range(self.x.dims[-1]))
+        return TensorSlice(rank=self.x.rank, dims=tuple(dims))
+
+    def required_w_slice(self, output_slice: TensorSlice) -> TensorSlice:
+        if output_slice.rank != self.w.rank:
+            raise ValueError("output slice rank must match W tensor rank")
+        dims = list(output_slice.dims[:-2])
+        dims.append(_full_range(self.w.dims[-2]))
+        dims.append(output_slice.dims[-1])
+        return TensorSlice(rank=self.w.rank, dims=tuple(dims))
+
+    def required_y_slice(self, output_slice: TensorSlice) -> TensorSlice | None:
+        if self.y is None:
+            return None
+        if output_slice.rank != self.y.rank:
+            raise ValueError("output slice rank must match Y tensor rank")
+        return output_slice
+
+    def build_tile_work(
+        self,
+        input_layouts: tuple[TensorLayout, ...],
+        output_layouts: tuple[TensorLayout, ...],
+        tile: Tile,
+        microbatch_idx: int,
+    ) -> GemmTileWork:
+        del input_layouts
+        output_slice = tile_tensor_slice(
+            tensor=self.output,
+            layout=output_layouts[0],
+            tile=tile,
+            microbatch_idx=microbatch_idx,
+        )
+        return GemmTileWork(
+            output_slice=output_slice,
+            x_slice=self.required_x_slice(output_slice),
+            w_slice=self.required_w_slice(output_slice),
+            y_slice=self.required_y_slice(output_slice),
+        )
 
     def validate_bindings(
         self,
