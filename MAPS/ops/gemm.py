@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from MAPS.arch import Tile
-from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
+from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.stage import StageInputBinding, StageOutputBinding
+from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 
 
@@ -46,6 +47,44 @@ class GemmLayerOp:
         from MAPS.cost_models.gemm_cost import GemmCostModel
 
         return GemmCostModel()
+
+    def default_input_layouts(
+        self,
+        submesh: Submesh,
+        num_microbatches: int,
+    ) -> tuple[TensorLayout, ...]:
+        return tuple(
+            self._default_tensor_layout(tensor, submesh, num_microbatches)
+            for tensor in (self.x, self.w)
+        ) + (
+            (self._default_tensor_layout(self.y, submesh, num_microbatches),)
+            if self.y is not None
+            else ()
+        )
+
+    def default_output_layouts(
+        self,
+        submesh: Submesh,
+        num_microbatches: int,
+    ) -> tuple[TensorLayout, ...]:
+        return (self._default_tensor_layout(self.output, submesh, num_microbatches),)
+
+    def _default_tensor_layout(
+        self,
+        tensor: Tensor,
+        submesh: Submesh,
+        num_microbatches: int,
+    ) -> TensorLayout:
+        if tensor.rank < 2:
+            raise ValueError("default GEMM layout requires rank >= 2")
+
+        return TensorLayout(
+            submesh=submesh,
+            mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=tensor.rank - 1),
+            mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=tensor.rank - 2),
+            microbatch_axis=0 if tensor.rank > 2 else None,
+            num_microbatches=num_microbatches,
+        )
 
     def required_x_slice(self, output_slice: TensorSlice) -> TensorSlice:
         if output_slice.rank != self.x.rank:
