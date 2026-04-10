@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING
 
+from .graph import OpKind
 from .layout import TensorLayout
 from .submesh import Submesh
 

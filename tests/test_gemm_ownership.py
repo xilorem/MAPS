@@ -2,7 +2,6 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRan
 from MAPS.arch import Mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.builders.gemm_builder import build_gemm_tile_work
 from MAPS.ops.gemm import GemmLayerOp
 
 
@@ -39,7 +38,7 @@ def test_build_gemm_tile_work_derives_required_operand_slices() -> None:
         num_microbatches=1,
     )
 
-    work = build_gemm_tile_work(op, output_layout, x_layout, w_layout, tile, 0)
+    work = op.build_tile_work((x_layout, w_layout), (output_layout,), tile, 0)
 
     assert work.output_slice == TensorSlice(
         rank=2,

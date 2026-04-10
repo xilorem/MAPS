@@ -7,6 +7,7 @@ from .constraints import (
     validate_constraints,
     validate_num_microbatches,
 )
+from .spatial_mapping import map_spatially
 from .workload_balancing import balance_workload
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "ConstraintViolation",
     "PlannerConstraints",
     "balance_workload",
+    "map_spatially",
     "validate_constraints",
     "validate_num_microbatches",
 ]
