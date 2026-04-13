@@ -52,12 +52,13 @@ class GemmLayerOp:
         self,
         submesh: Submesh,
         num_microbatches: int,
+        logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
         return tuple(
-            self._default_tensor_layout(tensor, submesh, num_microbatches)
+            self._default_tensor_layout(tensor, submesh, num_microbatches, logical_shape)
             for tensor in (self.x, self.w)
         ) + (
-            (self._default_tensor_layout(self.y, submesh, num_microbatches),)
+            (self._default_tensor_layout(self.y, submesh, num_microbatches, logical_shape),)
             if self.y is not None
             else ()
         )
@@ -66,17 +67,24 @@ class GemmLayerOp:
         self,
         submesh: Submesh,
         num_microbatches: int,
+        logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (self._default_tensor_layout(self.output, submesh, num_microbatches),)
+        return (self._default_tensor_layout(self.output, submesh, num_microbatches, logical_shape),)
 
     def _default_tensor_layout(
         self,
         tensor: Tensor,
         submesh: Submesh,
         num_microbatches: int,
+        logical_shape: tuple[int, int] | None,
     ) -> TensorLayout:
         if tensor.rank < 2:
             raise ValueError("default GEMM layout requires rank >= 2")
+
+        logical_width = None
+        logical_height = None
+        if logical_shape is not None:
+            logical_width, logical_height = logical_shape
 
         return TensorLayout(
             submesh=submesh,
@@ -84,6 +92,8 @@ class GemmLayerOp:
             mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=tensor.rank - 2),
             microbatch_axis=0 if tensor.rank > 2 else None,
             num_microbatches=num_microbatches,
+            logical_width=logical_width,
+            logical_height=logical_height,
         )
 
     def required_x_slice(self, output_slice: TensorSlice) -> TensorSlice:

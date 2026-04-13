@@ -1,15 +1,19 @@
 from MAPS.arch import Mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
+from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
 from MAPS.planner.spatial_mapping import (
     _edge_placement_costs,
     _edge_shape_costs,
+    _layout_on_submesh,
     _shape_options,
     _stage_io_costs,
     _stage_io_costs_for_placements,
     map_spatially,
+    place_stage_plans,
 )
+from MAPS.planner.workload_balancing import StagePlan
 
 
 def _gemm_node(name: str, m: int, k: int, n: int) -> Node:
@@ -146,6 +150,63 @@ def test_shape_options_raise_when_tile_count_cannot_fit_mesh() -> None:
         assert "no rectangular shape fits" in str(exc)
     else:
         raise AssertionError("expected _shape_options to raise for infeasible tile count")
+
+
+def test_layout_on_submesh_preserves_logical_shape() -> None:
+    mesh = Mesh(6, 2, l2_bytes=4096)
+    planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
+    placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
+    node = _gemm_node("node", 8, 8, 8)
+    layout = node.payload.default_output_layouts(
+        planning_submesh,
+        num_microbatches=1,
+        logical_shape=(3, 2),
+    )[0]
+    plan = StagePlan(
+        stage_id=0,
+        tile_count=6,
+        logical_shape=(3, 2),
+        input_layouts=(),
+        output_layouts=(layout,),
+        num_microbatches=1,
+    )
+
+    placed_layout = _layout_on_submesh(plan.output_layouts[0], placed_submesh)
+
+    assert placed_layout.submesh == placed_submesh
+    assert placed_layout.logical_width == 3
+    assert placed_layout.logical_height == 2
+
+
+def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
+    mesh = Mesh(6, 2, l2_bytes=4096)
+    planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
+    placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
+    node = _gemm_node("node", 8, 8, 8)
+    input_layouts = node.payload.default_input_layouts(
+        planning_submesh,
+        num_microbatches=1,
+        logical_shape=(3, 2),
+    )
+    output_layouts = node.payload.default_output_layouts(
+        planning_submesh,
+        num_microbatches=1,
+        logical_shape=(3, 2),
+    )
+    plan = StagePlan(
+        stage_id=0,
+        tile_count=6,
+        logical_shape=(3, 2),
+        input_layouts=input_layouts,
+        output_layouts=output_layouts,
+        num_microbatches=1,
+    )
+
+    placed_plans = place_stage_plans({0: plan}, {0: placed_submesh})
+
+    assert placed_plans[0].output_layouts[0].submesh == placed_submesh
+    assert placed_plans[0].output_layouts[0].logical_width == 3
+    assert placed_plans[0].output_layouts[0].logical_height == 2
 
 
 def test_map_spatially_returns_non_overlapping_submeshes_on_4x4_mesh() -> None:

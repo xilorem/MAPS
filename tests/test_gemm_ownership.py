@@ -62,3 +62,28 @@ def test_build_gemm_tile_work_derives_required_operand_slices() -> None:
         ),
     )
     assert work.y_slice == work.output_slice
+
+
+def test_default_gemm_layouts_accept_logical_shape() -> None:
+    mesh = Mesh(6, 1, l2_bytes=4096)
+    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
+    op = GemmLayerOp(
+        x=Tensor(name="x", rank=2, dims=(8, 16), elem_bytes=2),
+        w=Tensor(name="w", rank=2, dims=(16, 12), elem_bytes=2),
+        y=None,
+        output=Tensor(name="out", rank=2, dims=(8, 12), elem_bytes=2),
+    )
+
+    input_layouts = op.default_input_layouts(
+        submesh,
+        num_microbatches=1,
+        logical_shape=(3, 2),
+    )
+    output_layouts = op.default_output_layouts(
+        submesh,
+        num_microbatches=1,
+        logical_shape=(3, 2),
+    )
+
+    assert all(layout.logical_width == 3 for layout in (*input_layouts, *output_layouts))
+    assert all(layout.logical_height == 2 for layout in (*input_layouts, *output_layouts))

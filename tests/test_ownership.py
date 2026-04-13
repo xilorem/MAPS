@@ -84,3 +84,30 @@ def test_tile_tensor_slice_microbatches_one_axis_and_shards_both_axes() -> None:
     assert result.rank == 3
     assert result.dims == expected
     print("result: PASS")
+
+
+def test_tile_tensor_slice_uses_logical_shape_not_physical_shape() -> None:
+    mesh = Mesh(6, 1, l2_bytes=4096)
+    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
+    tensor = Tensor(name="x", rank=2, dims=(6, 12), elem_bytes=2)
+    layout = TensorLayout(
+        submesh=submesh,
+        mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
+        mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
+        microbatch_axis=None,
+        num_microbatches=1,
+        logical_width=3,
+        logical_height=2,
+    )
+
+    result = tile_tensor_slice(
+        tensor=tensor,
+        layout=layout,
+        tile=mesh.tile(4, 0),
+        microbatch_idx=0,
+    )
+
+    assert result.dims == (
+        TensorRange(start=3, length=3),
+        TensorRange(start=4, length=4),
+    )

@@ -7,16 +7,18 @@ from MAPS.builders.transition_builder import build_transition
 from MAPS.cost_models.transition_cost import estimate_transition_cost
 from MAPS.cost_models.transport_cost import TransportCostModel
 from MAPS.core.layout import TensorSlice
+from MAPS.core.layout import TensorLayout
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.graph import Graph, Node
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+from MAPS.planner.workload_balancing import StagePlan
 
 
 def map_spatially(
     graph: Graph,
     mesh: Mesh,
-    tile_counts: dict[int, int],
+    tile_counts: dict[int, int] | dict[int, StagePlan],
     num_microbatches: int,
     objective: str = "max",
 ) -> dict[int, Submesh]:
@@ -28,14 +30,29 @@ def map_spatially(
         raise ValueError(f"unsupported spatial mapping objective: {objective}")
 
     stage_ids = tuple(range(len(graph.nodes)))
+    stage_plans = _stage_plans_from_tile_counts(tile_counts)
+    resolved_tile_counts = {
+        stage_id: _stage_tile_count(tile_counts[stage_id])
+        for stage_id in stage_ids
+    }
 
     # enumerate the possible placements of a stage given its counts
     placement_options = {
-        stage_id: _placement_options(stage_id, tile_counts[stage_id], mesh)
+        stage_id: _placement_options(stage_id, resolved_tile_counts[stage_id], mesh)
         for stage_id in stage_ids
     }
-    edge_placement_costs = _edge_placement_costs(graph, placement_options, num_microbatches)
-    stage_io_costs = _stage_io_costs_for_placements(graph, placement_options, num_microbatches)
+    edge_placement_costs = _edge_placement_costs(
+        graph,
+        placement_options,
+        num_microbatches,
+        stage_plans=stage_plans,
+    )
+    stage_io_costs = _stage_io_costs_for_placements(
+        graph,
+        placement_options,
+        num_microbatches,
+        stage_plans=stage_plans,
+    )
 
     model = pulp.LpProblem("maps_spatial_mapping", pulp.LpMinimize)
 
@@ -140,6 +157,59 @@ def map_spatially(
     return mapping
 
 
+def place_stage_plans(
+    stage_plans: dict[int, StagePlan],
+    mapping: dict[int, Submesh],
+) -> dict[int, StagePlan]:
+    """Attach mapped physical submeshes to preselected logical layouts."""
+
+    return {
+        stage_id: StagePlan(
+            stage_id=plan.stage_id,
+            tile_count=plan.tile_count,
+            logical_shape=plan.logical_shape,
+            input_layouts=_layouts_on_submesh(plan.input_layouts, mapping[stage_id]),
+            output_layouts=_layouts_on_submesh(plan.output_layouts, mapping[stage_id]),
+            num_microbatches=plan.num_microbatches,
+        )
+        for stage_id, plan in stage_plans.items()
+    }
+
+
+def _stage_plans_from_tile_counts(
+    tile_counts: dict[int, int] | dict[int, StagePlan],
+) -> dict[int, StagePlan] | None:
+    if not tile_counts:
+        return None
+    if all(isinstance(value, StagePlan) for value in tile_counts.values()):
+        return tile_counts  # type: ignore[return-value]
+    if any(isinstance(value, StagePlan) for value in tile_counts.values()):
+        raise ValueError("tile_counts must contain either all ints or all StagePlan values")
+    return None
+
+
+def _stage_tile_count(tile_count_or_plan: int | StagePlan) -> int:
+    if isinstance(tile_count_or_plan, StagePlan):
+        return tile_count_or_plan.tile_count
+    return tile_count_or_plan
+
+
+def _layout_on_submesh(layout: TensorLayout, submesh: Submesh) -> TensorLayout:
+    return TensorLayout(
+        submesh=submesh,
+        mesh_x=layout.mesh_x,
+        mesh_y=layout.mesh_y,
+        microbatch_axis=layout.microbatch_axis,
+        num_microbatches=layout.num_microbatches,
+        logical_width=layout.logical_width,
+        logical_height=layout.logical_height,
+    )
+
+
+def _layouts_on_submesh(layouts: tuple[TensorLayout, ...], submesh: Submesh) -> tuple[TensorLayout, ...]:
+    return tuple(_layout_on_submesh(layout, submesh) for layout in layouts)
+
+
 def _min_pair_comm_cost(costs: dict[str, float]) -> float:
     return min(costs["l1"], costs["l2"])
 
@@ -213,6 +283,7 @@ def _edge_placement_costs(
     graph: Graph,
     placement_options: dict[int, tuple[Submesh, ...]],
     num_microbatches: int,
+    stage_plans: dict[int, StagePlan] | None = None,
 ) -> dict[tuple[int, int, int, int, int], dict[str, float]]:
     costs: dict[tuple[int, int, int, int, int], dict[str, float]] = {}
     for edge_idx, edge in enumerate(graph.edges):
@@ -231,6 +302,8 @@ def _edge_placement_costs(
                     dst_node,
                     dst_submesh,
                     num_microbatches,
+                    src_plan=None if stage_plans is None else stage_plans[src_stage],
+                    dst_plan=None if stage_plans is None else stage_plans[dst_stage],
                 )
     return costs
 
@@ -286,6 +359,7 @@ def _stage_io_costs_for_placements(
     graph: Graph,
     placement_options: dict[int, tuple[Submesh, ...]],
     num_microbatches: int,
+    stage_plans: dict[int, StagePlan] | None = None,
 ) -> dict[int, dict[int, dict[str, float]]]:
     producer_stage_ids = {_node_stage_id(graph, edge.src) for edge in graph.edges if edge.src is not None and edge.dst is not None}
     consumer_stage_ids = {_node_stage_id(graph, edge.dst) for edge in graph.edges if edge.src is not None and edge.dst is not None}
@@ -298,10 +372,16 @@ def _stage_io_costs_for_placements(
 
             read_cost = 0.0
             if stage_id not in consumer_stage_ids:
-                input_layouts = node.payload.default_input_layouts(submesh, num_microbatches=num_microbatches)
+                plan = None if stage_plans is None else stage_plans[stage_id]
+                effective_microbatches = num_microbatches if plan is None else plan.num_microbatches
+                input_layouts = (
+                    node.payload.default_input_layouts(submesh, num_microbatches=effective_microbatches)
+                    if plan is None
+                    else _layouts_on_submesh(plan.input_layouts, submesh)
+                )
                 read_cost = max(
                     (
-                        _max_l2_read_cost(tensor, layout, num_microbatches, model)
+                        _max_l2_read_cost(tensor, layout, effective_microbatches, model)
                         for tensor, layout in zip(node.inputs, input_layouts)
                     ),
                     default=0.0,
@@ -309,10 +389,16 @@ def _stage_io_costs_for_placements(
 
             write_cost = 0.0
             if stage_id not in producer_stage_ids:
-                output_layouts = node.payload.default_output_layouts(submesh, num_microbatches=num_microbatches)
+                plan = None if stage_plans is None else stage_plans[stage_id]
+                effective_microbatches = num_microbatches if plan is None else plan.num_microbatches
+                output_layouts = (
+                    node.payload.default_output_layouts(submesh, num_microbatches=effective_microbatches)
+                    if plan is None
+                    else _layouts_on_submesh(plan.output_layouts, submesh)
+                )
                 write_cost = max(
                     (
-                        _max_l2_write_cost(tensor, layout, num_microbatches, model)
+                        _max_l2_write_cost(tensor, layout, effective_microbatches, model)
                         for tensor, layout in zip(node.outputs, output_layouts)
                     ),
                     default=0.0,
@@ -402,9 +488,19 @@ def _edge_placement_mode_costs(
     dst_node: Node,
     dst_submesh: Submesh,
     num_microbatches: int,
+    src_plan: StagePlan | None = None,
+    dst_plan: StagePlan | None = None,
 ) -> dict[str, float]:
-    src_output_layout = src_node.payload.default_output_layouts(src_submesh, num_microbatches=num_microbatches)[0]
-    dst_input_layouts = dst_node.payload.default_input_layouts(dst_submesh, num_microbatches=num_microbatches)
+    src_output_layout = (
+        src_node.payload.default_output_layouts(src_submesh, num_microbatches=num_microbatches)[0]
+        if src_plan is None
+        else _layout_on_submesh(src_plan.output_layouts[0], src_submesh)
+    )
+    dst_input_layouts = (
+        dst_node.payload.default_input_layouts(dst_submesh, num_microbatches=num_microbatches)
+        if dst_plan is None
+        else _layouts_on_submesh(dst_plan.input_layouts, dst_submesh)
+    )
     dst_input_idx = _node_input_index(dst_node, tensor)
     dst_input_layout = dst_input_layouts[dst_input_idx]
 
@@ -437,7 +533,11 @@ def _edge_placement_mode_costs(
         )
 
     max_l2_to_tile_cost = 0.0
-    dst_output_layouts = dst_node.payload.default_output_layouts(dst_submesh, num_microbatches=num_microbatches)
+    dst_output_layouts = (
+        dst_node.payload.default_output_layouts(dst_submesh, num_microbatches=num_microbatches)
+        if dst_plan is None
+        else _layouts_on_submesh(dst_plan.output_layouts, dst_submesh)
+    )
     for tile in dst_submesh.tiles:
         tile_work = dst_node.payload.build_tile_work(
             input_layouts=dst_input_layouts,

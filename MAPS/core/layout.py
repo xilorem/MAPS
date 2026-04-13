@@ -43,10 +43,28 @@ class TensorLayout:
     mesh_y: LayoutAxis
     microbatch_axis: int | None
     num_microbatches: int
+    logical_width: int | None = None
+    logical_height: int | None = None
+
+    @property
+    def effective_logical_width(self) -> int:
+        return self.logical_width if self.logical_width is not None else self.submesh.width
+
+    @property
+    def effective_logical_height(self) -> int:
+        return self.logical_height if self.logical_height is not None else self.submesh.height
 
     def validate_for(self, tensor: Tensor) -> None:
         self.mesh_x.validate_for(tensor)
         self.mesh_y.validate_for(tensor)
+        logical_width = self.effective_logical_width
+        logical_height = self.effective_logical_height
+        if logical_width <= 0:
+            raise ValueError("logical_width must be > 0")
+        if logical_height <= 0:
+            raise ValueError("logical_height must be > 0")
+        if logical_width * logical_height != self.submesh.num_tiles:
+            raise ValueError("logical shape area must match submesh tile count")
         if self.microbatch_axis is not None and (
             self.microbatch_axis < 0 or self.microbatch_axis >= tensor.rank
         ):

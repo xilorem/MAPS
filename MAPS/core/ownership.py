@@ -64,7 +64,12 @@ def tile_tensor_slice(tensor: Tensor, layout: TensorLayout,
             f"tile {tile.tile_id} is not inside submesh {layout.submesh.submesh_id}"
         )
 
-    local_x, local_y = layout.submesh.local_coords(tile.tile_id)
+    logical_width = layout.effective_logical_width
+    logical_height = layout.effective_logical_height
+    tile_ids = tuple(candidate.tile_id for candidate in layout.submesh.tiles)
+    tile_ordinal = tile_ids.index(tile.tile_id)
+    logical_x = tile_ordinal % logical_width
+    logical_y = tile_ordinal // logical_width
     dims = [TensorRange(start=0, length=dim) for dim in tensor.dims]
 
     if layout.microbatch_axis is not None:
@@ -77,13 +82,13 @@ def tile_tensor_slice(tensor: Tensor, layout: TensorLayout,
     if layout.mesh_x.tensor_axis is not None:
         axis = layout.mesh_x.tensor_axis
         dims[axis] = _apply_layout_axis(
-            dims[axis], layout.mesh_x, layout.submesh.width, local_x
+            dims[axis], layout.mesh_x, logical_width, logical_x
         )
 
     if layout.mesh_y.tensor_axis is not None:
         axis = layout.mesh_y.tensor_axis
         dims[axis] = _apply_layout_axis(
-            dims[axis], layout.mesh_y, layout.submesh.height, local_y
+            dims[axis], layout.mesh_y, logical_height, logical_y
         )
 
     return TensorSlice(rank=tensor.rank, dims=tuple(dims))
