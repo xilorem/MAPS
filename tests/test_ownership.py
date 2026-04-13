@@ -17,73 +17,30 @@ def _format_slice_ranges(ranges: tuple[TensorRange, ...]) -> str:
     )
 
 
-def test_tile_tensor_slice_microbatches_one_axis_and_shards_both_axes() -> None:
+def test_tile_tensor_slice_shards_both_axes() -> None:
     mesh = Mesh(4, 4, l2_bytes=4096)
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=3)
     tensor = Tensor(name="x", rank=3, dims=(8, 8, 12), elem_bytes=2)
-    microbatch_idx = 1
     target_tile = mesh.tile(1, 2)
     layout = TensorLayout(
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=2),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
-        microbatch_axis=1,
-        num_microbatches=2,
     )
     expected = (
         TensorRange(start=0, length=8),
-        TensorRange(start=7, length=1),
+        TensorRange(start=6, length=2),
         TensorRange(start=6, length=6),
     )
-
-    print(
-        "\n=== Ownership Test: microbatch on one sharded axis, "
-        "and shard on both mesh axes ==="
-    )
-    print(f"mesh: {mesh.x_size}x{mesh.y_size}")
-    print(f"submesh: origin=({submesh.x0}, {submesh.y0}) size={submesh.width}x{submesh.height}")
-    print(f"tensor: name={tensor.name}, rank={tensor.rank}, dims={tensor.dims}")
-    print(
-        "layout: "
-        f"microbatch_axis={layout.microbatch_axis}, "
-        f"num_microbatches={layout.num_microbatches}, "
-        f"mesh_y=SHARD(axis={layout.mesh_y.tensor_axis}), "
-        f"mesh_x=SHARD(axis={layout.mesh_x.tensor_axis})"
-    )
-    print(f"selected microbatch: {microbatch_idx}")
-    print(
-        f"expected slice for tile {target_tile.tile_id} at ({target_tile.x}, {target_tile.y}): "
-        f"{_format_slice_ranges(expected)}"
-    )
-    print("computed slices for every tile:")
-
-    for y in range(mesh.y_size):
-        for x in range(mesh.x_size):
-            tile = mesh.tile(x, y)
-            if submesh.contains_tile_id(tile.tile_id):
-                tile_slice = tile_tensor_slice(
-                    tensor=tensor,
-                    layout=layout,
-                    tile=tile,
-                    microbatch_idx=microbatch_idx,
-                )
-                print(
-                    f"  tile {tile.tile_id:2d} ({tile.x}, {tile.y}) -> "
-                    f"{_format_slice_ranges(tile_slice.dims)}"
-                )
-            else:
-                print(f"  tile {tile.tile_id:2d} ({tile.x}, {tile.y}) -> outside submesh")
 
     result = tile_tensor_slice(
         tensor=tensor,
         layout=layout,
         tile=target_tile,
-        microbatch_idx=microbatch_idx,
     )
 
     assert result.rank == 3
     assert result.dims == expected
-    print("result: PASS")
 
 
 def test_tile_tensor_slice_uses_logical_shape_not_physical_shape() -> None:
@@ -94,8 +51,6 @@ def test_tile_tensor_slice_uses_logical_shape_not_physical_shape() -> None:
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-        microbatch_axis=None,
-        num_microbatches=1,
         logical_width=3,
         logical_height=2,
     )
@@ -104,7 +59,6 @@ def test_tile_tensor_slice_uses_logical_shape_not_physical_shape() -> None:
         tensor=tensor,
         layout=layout,
         tile=mesh.tile(4, 0),
-        microbatch_idx=0,
     )
 
     assert result.dims == (

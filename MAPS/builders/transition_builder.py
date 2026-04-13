@@ -23,9 +23,8 @@ def build_transition(
     dst_input_idx: int,
     src_layout: TensorLayout,
     dst_layout: TensorLayout,
-    microbatch_idx: int,
 ) -> Transition:
-    """Build one concrete transition instance for one microbatch."""
+    """Build one concrete transition instance."""
 
     src_layout.validate_for(tensor)
     dst_layout.validate_for(tensor)
@@ -48,7 +47,6 @@ def build_transition(
         tensor=tensor,
         src_layout=src_layout,
         dst_layout=dst_layout,
-        microbatch_idx=microbatch_idx,
     )
     return Transition(
         name=name,

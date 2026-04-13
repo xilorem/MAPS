@@ -20,25 +20,19 @@ def test_build_gemm_tile_work_derives_required_operand_slices() -> None:
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
     x_layout = TensorLayout(
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
     w_layout = TensorLayout(
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
 
-    work = op.build_tile_work((x_layout, w_layout), (output_layout,), tile, 0)
+    work = op.build_tile_work((x_layout, w_layout), (output_layout,), tile)
 
     assert work.output_slice == TensorSlice(
         rank=2,
@@ -76,12 +70,10 @@ def test_default_gemm_layouts_accept_logical_shape() -> None:
 
     input_layouts = op.default_input_layouts(
         submesh,
-        num_microbatches=1,
         logical_shape=(3, 2),
     )
     output_layouts = op.default_output_layouts(
         submesh,
-        num_microbatches=1,
         logical_shape=(3, 2),
     )
 

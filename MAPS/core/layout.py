@@ -41,8 +41,6 @@ class TensorLayout:
     submesh: Submesh
     mesh_x: LayoutAxis
     mesh_y: LayoutAxis
-    microbatch_axis: int | None
-    num_microbatches: int
     logical_width: int | None = None
     logical_height: int | None = None
 
@@ -65,12 +63,6 @@ class TensorLayout:
             raise ValueError("logical_height must be > 0")
         if logical_width * logical_height != self.submesh.num_tiles:
             raise ValueError("logical shape area must match submesh tile count")
-        if self.microbatch_axis is not None and (
-            self.microbatch_axis < 0 or self.microbatch_axis >= tensor.rank
-        ):
-            raise ValueError("microbatch_axis out of range for tensor rank")
-        if self.num_microbatches <= 0:
-            raise ValueError("num_microbatches must be > 0")
 
 
 @dataclass(frozen=True)

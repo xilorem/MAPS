@@ -21,7 +21,6 @@ class StagePlan:
     logical_shape: tuple[int, int]
     input_layouts: tuple
     output_layouts: tuple
-    num_microbatches: int
 
 
 def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int, int]:
@@ -198,18 +197,15 @@ def _planning_submesh(mesh: Mesh, stage_id: int, tile_count: int) -> Submesh:
 def _default_layouts_for_node(
     node: Node,
     submesh: Submesh,
-    num_microbatches: int,
     logical_shape: tuple[int, int],
 ) -> tuple[tuple, tuple]:
     return (
         node.payload.default_input_layouts(
             submesh,
-            num_microbatches=num_microbatches,
             logical_shape=logical_shape,
         ),
         node.payload.default_output_layouts(
             submesh,
-            num_microbatches=num_microbatches,
             logical_shape=logical_shape,
         ),
     )
@@ -221,12 +217,6 @@ def _build_stage_plans(
     tile_counts: dict[int, int],
     debug: bool,
 ) -> dict[int, StagePlan]:
-    local_num_microbatches = _estimate_local_num_microbatches(graph, mesh, tile_counts, debug=debug)
-    num_microbatches = _propagate_num_microbatches(
-        graph,
-        local_num_microbatches,
-        debug=debug,
-    )
     plans: dict[int, StagePlan] = {}
     for stage_id, node in enumerate(graph.nodes):
         plans[stage_id] = _best_stage_plan_for_tile_count(
@@ -234,7 +224,6 @@ def _build_stage_plans(
             mesh,
             stage_id,
             tile_counts[stage_id],
-            num_microbatches[stage_id],
             debug=debug,
         )
     return plans
@@ -245,7 +234,6 @@ def _best_stage_plan_for_tile_count(
     mesh: Mesh,
     stage_id: int,
     tile_count: int,
-    num_microbatches: int,
     debug: bool,
 ) -> StagePlan:
     submesh = _planning_submesh(mesh, stage_id, tile_count)
@@ -256,7 +244,6 @@ def _best_stage_plan_for_tile_count(
         input_layouts, output_layouts = _default_layouts_for_node(
             node,
             submesh,
-            num_microbatches,
             logical_shape,
         )
         if not _inputs_fit_in_tile_buffers(node, input_layouts, output_layouts):
@@ -268,7 +255,6 @@ def _best_stage_plan_for_tile_count(
             logical_shape=logical_shape,
             input_layouts=input_layouts,
             output_layouts=output_layouts,
-            num_microbatches=num_microbatches,
         )
         workload = _estimate_stage_workload(node, plan)
         _debug(
@@ -284,7 +270,7 @@ def _best_stage_plan_for_tile_count(
     if best_plan is None:
         raise ValueError(
             f"node {node.name} has no valid logical shape for tile_count={tile_count} "
-            f"and num_microbatches={num_microbatches}"
+            "using full input slices"
         )
     return best_plan
 
@@ -305,102 +291,8 @@ def _estimate_stage_workload(node: Node, plan: StagePlan) -> float:
         node=node,
         input_layouts=plan.input_layouts,
         output_layouts=plan.output_layouts,
-        microbatch_idx=0,
     )
-    return plan.num_microbatches * step_cost
-
-
-def _propagate_num_microbatches(
-    graph: Graph,
-    local_num_microbatches: dict[int, int],
-    debug: bool,
-) -> dict[int, int]:
-    producer_by_tensor = {tensor: stage_id for stage_id, node in enumerate(graph.nodes) for tensor in node.outputs}
-    num_microbatches: dict[int, int] = {}
-
-    for stage_id in _topological_stage_ids(graph):
-        node = graph.nodes[stage_id]
-        local_min = local_num_microbatches[stage_id]
-        predecessor_min = max(
-            (num_microbatches[producer_by_tensor[tensor]] for tensor in node.inputs if tensor in producer_by_tensor),
-            default=1,
-        )
-        num_microbatches[stage_id] = max(local_min, predecessor_min)
-        _debug(
-            debug,
-            "[balance_workload] "
-            f"stage={stage_id} node={node.name} "
-            f"local_num_microbatches={local_min} "
-            f"predecessor_num_microbatches={predecessor_min} "
-            f"propagated_num_microbatches={num_microbatches[stage_id]}",
-        )
-
-    return num_microbatches
-
-
-def _estimate_local_num_microbatches(
-    graph: Graph,
-    mesh: Mesh,
-    tile_counts: dict[int, int] | dict[int, tuple[int, int]],
-    debug: bool,
-) -> dict[int, int]:
-    local_num_microbatches: dict[int, int] = {}
-
-    for stage_id, node in enumerate(graph.nodes):
-        tile_count_or_shape = tile_counts[stage_id]
-        if isinstance(tile_count_or_shape, tuple):
-            logical_shapes = (tile_count_or_shape,)
-            tile_count = _shape_area(tile_count_or_shape)
-        else:
-            tile_count = tile_count_or_shape
-            logical_shapes = _logical_shape_options(tile_count)
-        submesh = _planning_submesh(mesh, stage_id, tile_count)
-        local_num_microbatches[stage_id] = min(
-            _estimate_node_num_microbatches(
-                node,
-                submesh,
-                logical_shape,
-                debug=debug,
-            )
-            for logical_shape in logical_shapes
-        )
-
-    return local_num_microbatches
-
-
-def _estimate_node_num_microbatches(
-    node: Node,
-    submesh: Submesh,
-    logical_shape: tuple[int, int] | None = None,
-    debug: bool = False,
-) -> int:
-    if logical_shape is None:
-        logical_shape = (submesh.width, submesh.height)
-    max_num_microbatches = _max_supported_num_microbatches(node)
-    num_microbatches = 1
-    while num_microbatches <= max_num_microbatches:
-        input_layouts, output_layouts = _default_layouts_for_node(
-            node,
-            submesh,
-            num_microbatches,
-            logical_shape,
-        )
-        if _inputs_fit_in_tile_buffers(node, input_layouts, output_layouts):
-            _debug(
-                debug,
-                "[balance_workload] "
-                f"node={node.name} logical_shape={logical_shape} "
-                f"num_microbatches={num_microbatches} fits_in_l1=True",
-            )
-            return num_microbatches
-        _debug(
-            debug,
-            "[balance_workload] "
-            f"node={node.name} logical_shape={logical_shape} "
-            f"num_microbatches={num_microbatches} fits_in_l1=False",
-        )
-        num_microbatches += 1
-    raise ValueError(f"node {node.name} inputs do not fit tile buffers for any supported num_microbatches")
+    return step_cost
 
 
 def _inputs_fit_in_tile_buffers(
@@ -414,7 +306,6 @@ def _inputs_fit_in_tile_buffers(
             input_layouts=input_layouts,
             output_layouts=output_layouts,
             tile=tile,
-            microbatch_idx=0,
         )
         if _input_tile_work_bytes(node, tile_work) > tile.l1_bytes:
             return False
@@ -437,11 +328,6 @@ def _tensor_slice_num_bytes(tensor: Tensor, tensor_slice: TensorSlice) -> int:
     for dim in tensor_slice.dims:
         num_elements *= dim.length
     return num_elements * tensor.elem_bytes
-
-
-def _max_supported_num_microbatches(node: Node) -> int:
-    candidate_dims = [tensor.dims[0] for tensor in (*node.inputs, *node.outputs) if tensor.rank > 2]
-    return min(candidate_dims) if candidate_dims else 1
 
 
 def _debug(enabled: bool, message: str) -> None:

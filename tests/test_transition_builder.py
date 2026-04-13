@@ -20,8 +20,6 @@ def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
 
     transition = build_transition(
@@ -34,7 +32,6 @@ def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
         dst_input_idx=0,
         src_layout=layout,
         dst_layout=layout,
-        microbatch_idx=0,
     )
 
     assert transition.mode is TransitionMode.LOCAL_REUSE
@@ -49,15 +46,11 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
     dst_layout = TensorLayout(
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
 
     transition = build_transition(
@@ -70,7 +63,6 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
         dst_input_idx=0,
         src_layout=src_layout,
         dst_layout=dst_layout,
-        microbatch_idx=0,
     )
 
     assert transition.mode is TransitionMode.DIRECT_REMAP
@@ -129,15 +121,11 @@ def test_build_transition_builds_direct_remap_between_different_submeshes() -> N
         submesh=src_submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
     dst_layout = TensorLayout(
         submesh=dst_submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
 
     transition = build_transition(
@@ -150,7 +138,6 @@ def test_build_transition_builds_direct_remap_between_different_submeshes() -> N
         dst_input_idx=0,
         src_layout=src_layout,
         dst_layout=dst_layout,
-        microbatch_idx=0,
     )
 
     assert transition.mode is TransitionMode.DIRECT_REMAP

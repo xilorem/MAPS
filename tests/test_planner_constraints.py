@@ -21,8 +21,6 @@ def _make_layout(submesh: Submesh) -> TensorLayout:
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
 
 
@@ -80,7 +78,6 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
     pipeline = Pipeline(
         name="p0",
         mesh=mesh,
-        num_microbatches=1,
         tensors=tensors,
         stages=(stage,),
         transitions=(),
@@ -90,22 +87,6 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
 
     assert report.is_valid
     assert report.violations == ()
-
-
-def test_validate_constraints_rejects_microbatch_range_violation() -> None:
-    mesh = _make_mesh(1, 1, l1_bytes=64, l2_bytes=4096)
-    pipeline = Pipeline(name="p0", mesh=mesh, num_microbatches=2)
-
-    report = validate_constraints(
-        pipeline,
-        PlannerConstraints(min_num_microbatches=1, max_num_microbatches=1),
-    )
-
-    assert not report.is_valid
-    assert any(
-        violation.kind == "num_microbatches_above_max"
-        for violation in report.violations
-    )
 
 
 def test_validate_constraints_counts_external_inputs_against_l2() -> None:
@@ -140,7 +121,6 @@ def test_validate_constraints_counts_external_inputs_against_l2() -> None:
     pipeline = Pipeline(
         name="p0",
         mesh=mesh,
-        num_microbatches=1,
         tensors=tensors,
         stages=(stage,),
         transitions=(),
@@ -200,7 +180,6 @@ def test_validate_constraints_does_not_count_local_inputs_against_l2() -> None:
     pipeline = Pipeline(
         name="p0",
         mesh=mesh,
-        num_microbatches=1,
         tensors=tensors,
         stages=(stage0, stage1),
         transitions=(),

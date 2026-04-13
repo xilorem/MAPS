@@ -51,14 +51,13 @@ class GemmLayerOp:
     def default_input_layouts(
         self,
         submesh: Submesh,
-        num_microbatches: int,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
         return tuple(
-            self._default_tensor_layout(tensor, submesh, num_microbatches, logical_shape)
+            self._default_tensor_layout(tensor, submesh, logical_shape)
             for tensor in (self.x, self.w)
         ) + (
-            (self._default_tensor_layout(self.y, submesh, num_microbatches, logical_shape),)
+            (self._default_tensor_layout(self.y, submesh, logical_shape),)
             if self.y is not None
             else ()
         )
@@ -66,16 +65,14 @@ class GemmLayerOp:
     def default_output_layouts(
         self,
         submesh: Submesh,
-        num_microbatches: int,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (self._default_tensor_layout(self.output, submesh, num_microbatches, logical_shape),)
+        return (self._default_tensor_layout(self.output, submesh, logical_shape),)
 
     def _default_tensor_layout(
         self,
         tensor: Tensor,
         submesh: Submesh,
-        num_microbatches: int,
         logical_shape: tuple[int, int] | None,
     ) -> TensorLayout:
         if tensor.rank < 2:
@@ -90,8 +87,6 @@ class GemmLayerOp:
             submesh=submesh,
             mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=tensor.rank - 1),
             mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=tensor.rank - 2),
-            microbatch_axis=0 if tensor.rank > 2 else None,
-            num_microbatches=num_microbatches,
             logical_width=logical_width,
             logical_height=logical_height,
         )
@@ -124,14 +119,12 @@ class GemmLayerOp:
         input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
-        microbatch_idx: int,
     ) -> GemmTileWork:
         del input_layouts
         output_slice = tile_tensor_slice(
             tensor=self.output,
             layout=output_layouts[0],
             tile=tile,
-            microbatch_idx=microbatch_idx,
         )
         return GemmTileWork(
             output_slice=output_slice,

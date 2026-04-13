@@ -10,7 +10,6 @@ def cost_estimator(
     node: Node,
     input_layouts: tuple[TensorLayout, ...],
     output_layouts: tuple[TensorLayout, ...],
-    microbatch_idx: int,
 ) -> float:
     """Estimate one node per-step cost from explicit execution assumptions."""
 
@@ -21,7 +20,6 @@ def cost_estimator(
             input_layouts=input_layouts,
             output_layouts=output_layouts,
             tile=tile,
-            microbatch_idx=microbatch_idx,
         )
         for tile in submesh.tiles
     )

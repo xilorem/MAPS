@@ -34,9 +34,7 @@ def _intersect_slice(a: TensorSlice, b: TensorSlice) -> TensorSlice | None:
     return TensorSlice(rank=a.rank, dims=tuple(dims))
 
 
-def tile_owned_slices(tensor: Tensor,
-                      layout: TensorLayout,
-                      microbatch_idx: int) -> tuple[tuple[Tile, TensorSlice], ...]:
+def tile_owned_slices(tensor: Tensor, layout: TensorLayout) -> tuple[tuple[Tile, TensorSlice], ...]:
     """Return the concrete slice owned by each tile in one submesh."""
 
     owned: list[tuple[Tile, TensorSlice]] = []
@@ -48,7 +46,6 @@ def tile_owned_slices(tensor: Tensor,
                     tensor=tensor,
                     layout=layout,
                     tile=tile,
-                    microbatch_idx=microbatch_idx,
                 ),
             )
         )
@@ -59,12 +56,11 @@ def build_direct_remap_fragments(
     tensor: Tensor,
     src_layout: TensorLayout,
     dst_layout: TensorLayout,
-    microbatch_idx: int,
 ) -> tuple[TransitionFragment, ...]:
-    """Build direct-remap fragments for one tensor and one microbatch."""
+    """Build direct-remap fragments for one tensor."""
 
-    src_owned = tile_owned_slices(tensor, src_layout, microbatch_idx)
-    dst_owned = tile_owned_slices(tensor, dst_layout, microbatch_idx)
+    src_owned = tile_owned_slices(tensor, src_layout)
+    dst_owned = tile_owned_slices(tensor, dst_layout)
 
     fragments: list[TransitionFragment] = []
     for src_tile, src_slice in src_owned:

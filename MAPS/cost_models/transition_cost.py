@@ -13,7 +13,7 @@ from MAPS.cost_models.transport_cost import TransferKind, TransferLeg, Transport
 
 @dataclass(frozen=True)
 class TransitionCost:
-    """Aggregated cost of one transition for one microbatch."""
+    """Aggregated cost of one transition."""
 
     mode: TransitionMode
     total_bytes: int
@@ -98,7 +98,7 @@ def estimate_transition_cost(transition: Transition,
                              mesh: Mesh,
                              model: TransportCostModel) -> TransitionCost:
     """
-    Estimate the cost of one transition for one microbatch.
+    Estimate the cost of one transition.
 
     LOCAL_REUSE:
     - zero-copy, zero transport cost

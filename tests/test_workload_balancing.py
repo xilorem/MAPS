@@ -6,10 +6,7 @@ from MAPS.ops.gemm import GemmLayerOp
 from MAPS.planner import balance_stage_plans, balance_workload
 from MAPS.planner.workload_balancing import (
     _best_stage_plan_for_tile_count,
-    _estimate_local_num_microbatches,
-    _estimate_node_num_microbatches,
     _tile_count_options_after_growth,
-    _propagate_num_microbatches,
     _topological_stage_ids,
 )
 
@@ -97,7 +94,6 @@ def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> No
         mesh=mesh,
         stage_id=0,
         tile_count=6,
-        num_microbatches=1,
         debug=False,
     )
 
@@ -117,71 +113,22 @@ def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:
     assert options == (4,)
 
 
-def test_estimate_node_num_microbatches_grows_until_inputs_fit() -> None:
+def test_best_stage_plan_rejects_inputs_that_do_not_fit() -> None:
     node = _batched_gemm_node("batched", b=4, m=4, k=4, n=4)
     mesh = _mesh_with_l1(1, 1, l1_bytes=64)
-    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
 
-    num_microbatches = _estimate_node_num_microbatches(node, submesh)
-
-    assert num_microbatches == 4
-
-
-def test_propagate_num_microbatches_respects_predecessor_requirement() -> None:
-    producer = _batched_gemm_node("producer", b=4, m=4, k=4, n=4)
-    consumer_input = producer.outputs[0]
-    consumer_w = Tensor(name="consumer_w", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_out = Tensor(name="consumer_out", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_op = GemmLayerOp(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
-    consumer = Node(
-        name="consumer",
-        kind=OpKind.GEMM,
-        inputs=(consumer_input, consumer_w),
-        outputs=(consumer_out,),
-        payload=consumer_op,
-    )
-    graph = Graph(name="g", nodes=(producer, consumer))
-    mesh = _mesh_with_l1(2, 1, l1_bytes=64)
-    local_num_microbatches = _estimate_local_num_microbatches(
-        graph,
-        mesh,
-        {0: (1, 1), 1: (1, 1)},
-        debug=False,
-    )
-
-    num_microbatches = _propagate_num_microbatches(
-        graph,
-        local_num_microbatches,
-        debug=False,
-    )
-
-    assert num_microbatches == {0: 4, 1: 4}
-
-
-def test_estimate_local_num_microbatches_is_node_local_only() -> None:
-    producer = _batched_gemm_node("producer", b=4, m=4, k=4, n=4)
-    consumer_input = producer.outputs[0]
-    consumer_w = Tensor(name="consumer_w", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_out = Tensor(name="consumer_out", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_op = GemmLayerOp(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
-    consumer = Node(
-        name="consumer",
-        kind=OpKind.GEMM,
-        inputs=(consumer_input, consumer_w),
-        outputs=(consumer_out,),
-        payload=consumer_op,
-    )
-    graph = Graph(name="g", nodes=(producer, consumer))
-    mesh = _mesh_with_l1(2, 1, l1_bytes=64)
-
-    local_num_microbatches = _estimate_local_num_microbatches(
-        graph,
-        mesh,
-        {0: (1, 1), 1: (1, 1)},
-        debug=False,
-    )
-
-    assert local_num_microbatches == {0: 4, 1: 4}
+    try:
+        _best_stage_plan_for_tile_count(
+            node=node,
+            mesh=mesh,
+            stage_id=0,
+            tile_count=1,
+            debug=False,
+        )
+    except ValueError as exc:
+        assert "full input slices" in str(exc)
+    else:
+        raise AssertionError("expected full-input L1 fit failure")
 
 
 def test_topological_stage_ids_follow_graph_edges_not_node_order() -> None:
@@ -206,38 +153,3 @@ def test_topological_stage_ids_follow_graph_edges_not_node_order() -> None:
     order = _topological_stage_ids(graph)
 
     assert order == (1, 0)
-
-
-def test_propagate_num_microbatches_uses_topological_graph_order() -> None:
-    producer = _batched_gemm_node("producer", b=4, m=4, k=4, n=4)
-    consumer_input = producer.outputs[0]
-    consumer_w = Tensor(name="consumer_w", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_out = Tensor(name="consumer_out", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_op = GemmLayerOp(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
-    consumer = Node(
-        name="consumer",
-        kind=OpKind.GEMM,
-        inputs=(consumer_input, consumer_w),
-        outputs=(consumer_out,),
-        payload=consumer_op,
-    )
-    graph = Graph(
-        name="g",
-        nodes=(consumer, producer),
-        edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
-    )
-    mesh = _mesh_with_l1(2, 1, l1_bytes=64)
-    local_num_microbatches = _estimate_local_num_microbatches(
-        graph,
-        mesh,
-        {0: (1, 1), 1: (1, 1)},
-        debug=False,
-    )
-
-    num_microbatches = _propagate_num_microbatches(
-        graph,
-        local_num_microbatches,
-        debug=False,
-    )
-
-    assert num_microbatches == {1: 4, 0: 4}

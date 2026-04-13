@@ -18,8 +18,6 @@ class PlannerConstraints:
     """Hard planner-side limits and policy switches."""
 
     max_stage_nodes: int = 1
-    min_num_microbatches: int = 1
-    max_num_microbatches: int = 1
     random_seed: int | None = None
     allow_cross_submesh_remap: bool = True
     enforce_l1_capacity: bool = True
@@ -28,12 +26,6 @@ class PlannerConstraints:
     def __post_init__(self) -> None:
         if self.max_stage_nodes <= 0:
             raise ValueError("max_stage_nodes must be > 0")
-        if self.min_num_microbatches <= 0:
-            raise ValueError("min_num_microbatches must be > 0")
-        if self.max_num_microbatches < self.min_num_microbatches:
-            raise ValueError(
-                "max_num_microbatches must be >= min_num_microbatches"
-            )
 
 
 @dataclass(frozen=True)
@@ -94,7 +86,6 @@ def _infer_input_slice_for_tile(
     binding_idx: int,
     pipeline: Pipeline,
     tile,
-    microbatch_idx: int,
 ) -> TensorSlice:
     tensor = pipeline.tensors[stage.inputs[binding_idx].tensor_id]
     node = stage.nodes[0] if len(stage.nodes) == 1 else None
@@ -110,7 +101,6 @@ def _infer_input_slice_for_tile(
             output_tensor,
             output_binding.layout,
             tile,
-            microbatch_idx,
         )
 
         if tensor == op.x:
@@ -130,7 +120,6 @@ def _estimate_stage_l1_bytes_for_tile(
     stage: Stage,
     pipeline: Pipeline,
     tile,
-    microbatch_idx: int,
 ) -> int:
     """Estimate L1-resident bytes required by one stage on one tile."""
 
@@ -142,7 +131,6 @@ def _estimate_stage_l1_bytes_for_tile(
             tensor,
             binding.layout,
             tile,
-            microbatch_idx,
         )
         l1_bytes += _tensor_slice_num_bytes(tensor, tensor_slice)
 
@@ -155,7 +143,6 @@ def _estimate_stage_l1_bytes_for_tile(
             binding_idx,
             pipeline,
             tile,
-            microbatch_idx,
         )
         l1_bytes += _tensor_slice_num_bytes(tensor, tensor_slice)
 
@@ -178,19 +165,16 @@ def _estimate_stage_l2_bytes(stage: Stage, pipeline: Pipeline) -> int:
         tensor = pipeline.tensors[binding.tensor_id]
         max_binding_bytes = 0
         for tile in stage.submesh.tiles:
-            # Use the largest per-microbatch slice to approximate peak shared-L2 demand.
-            for microbatch_idx in range(pipeline.num_microbatches):
-                tensor_slice = _infer_input_slice_for_tile(
-                    stage,
-                    binding_idx,
-                    pipeline,
-                    tile,
-                    microbatch_idx=microbatch_idx,
-                )
-                max_binding_bytes = max(
-                    max_binding_bytes,
-                    _tensor_slice_num_bytes(tensor, tensor_slice),
-                )
+            tensor_slice = _infer_input_slice_for_tile(
+                stage,
+                binding_idx,
+                pipeline,
+                tile,
+            )
+            max_binding_bytes = max(
+                max_binding_bytes,
+                _tensor_slice_num_bytes(tensor, tensor_slice),
+            )
         l2_bytes += max_binding_bytes
     return l2_bytes
 
@@ -200,51 +184,9 @@ def _estimate_stage_required_l1_bytes(
     pipeline: Pipeline,
     tile,
 ) -> int:
-    """Estimate peak L1 demand for one tile across all microbatches."""
+    """Estimate L1 demand for one tile."""
 
-    required_l1_bytes = 0
-    for microbatch_idx in range(pipeline.num_microbatches):
-        required_l1_bytes = max(
-            required_l1_bytes,
-            _estimate_stage_l1_bytes_for_tile(
-                stage,
-                pipeline,
-                tile,
-                microbatch_idx=microbatch_idx,
-            ),
-        )
-    return required_l1_bytes
-
-
-def validate_num_microbatches(
-    chosen_num_microbatches: int,
-    constraints: PlannerConstraints,
-) -> ConstraintReport:
-    """Validate one microbatching choice against planner limits."""
-
-    violations: list[ConstraintViolation] = []
-    # Enforce the planner-selected microbatch count range.
-    if chosen_num_microbatches < constraints.min_num_microbatches:
-        violations.append(
-            ConstraintViolation(
-                kind="num_microbatches_below_min",
-                message=(
-                    "chosen num_microbatches is below the minimum allowed by "
-                    "planner constraints"
-                ),
-            )
-        )
-    if chosen_num_microbatches > constraints.max_num_microbatches:
-        violations.append(
-            ConstraintViolation(
-                kind="num_microbatches_above_max",
-                message=(
-                    "chosen num_microbatches exceeds the maximum allowed by "
-                    "planner constraints"
-                ),
-            )
-        )
-    return ConstraintReport(violations=tuple(violations))
+    return _estimate_stage_l1_bytes_for_tile(stage, pipeline, tile)
 
 
 def _validate_stage(
@@ -600,20 +542,6 @@ def validate_constraints(
             message=str(exc),
         )
         return ConstraintReport(violations=tuple(violations))
-
-    # Enforce planner limits on the chosen number of microbatches.
-    try:
-        num_microbatch_report = validate_num_microbatches(
-            pipeline.num_microbatches,
-            constraints,
-        )
-        violations.extend(num_microbatch_report.violations)
-    except ValueError as exc:
-        _append_violation(
-            violations,
-            kind="num_microbatches_invalid",
-            message=str(exc),
-        )
 
     if constraints.enforce_l2_capacity and pipeline.mesh.l2_bytes <= 0:
         # Require the target mesh to advertise a positive shared L2 capacity.

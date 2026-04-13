@@ -73,12 +73,10 @@ def _print_mapping_details(
     chosen_costs = _edge_placement_costs(
         graph,
         placement_options=placement_options,
-        num_microbatches=1,
     )
     stage_io_costs = _stage_io_costs_for_placements(
         graph,
         placement_options=placement_options,
-        num_microbatches=1,
     )
 
     print(f"\n[spatial_mapping] chosen submeshes on 6x6 with {label} objective:")
@@ -159,7 +157,6 @@ def test_layout_on_submesh_preserves_logical_shape() -> None:
     node = _gemm_node("node", 8, 8, 8)
     layout = node.payload.default_output_layouts(
         planning_submesh,
-        num_microbatches=1,
         logical_shape=(3, 2),
     )[0]
     plan = StagePlan(
@@ -168,7 +165,6 @@ def test_layout_on_submesh_preserves_logical_shape() -> None:
         logical_shape=(3, 2),
         input_layouts=(),
         output_layouts=(layout,),
-        num_microbatches=1,
     )
 
     placed_layout = _layout_on_submesh(plan.output_layouts[0], placed_submesh)
@@ -185,12 +181,10 @@ def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
     node = _gemm_node("node", 8, 8, 8)
     input_layouts = node.payload.default_input_layouts(
         planning_submesh,
-        num_microbatches=1,
         logical_shape=(3, 2),
     )
     output_layouts = node.payload.default_output_layouts(
         planning_submesh,
-        num_microbatches=1,
         logical_shape=(3, 2),
     )
     plan = StagePlan(
@@ -199,7 +193,6 @@ def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
         logical_shape=(3, 2),
         input_layouts=input_layouts,
         output_layouts=output_layouts,
-        num_microbatches=1,
     )
 
     placed_plans = place_stage_plans({0: plan}, {0: placed_submesh})
@@ -238,7 +231,6 @@ def test_map_spatially_returns_non_overlapping_submeshes_on_4x4_mesh() -> None:
         graph,
         mesh,
         tile_counts={0: 4, 1: 4},
-        num_microbatches=1,
     )
 
     assert set(mapping) == {0, 1}
@@ -305,7 +297,6 @@ def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
         graph,
         mesh,
         tile_counts=tile_counts,
-        num_microbatches=1,
         objective="max",
     )
     with capsys.disabled():
@@ -317,7 +308,6 @@ def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
         graph,
         mesh,
         tile_counts=tile_counts,
-        num_microbatches=1,
         objective="sum",
     )
     with capsys.disabled():
@@ -348,7 +338,6 @@ def test_edge_shape_costs_include_l2_data_movement() -> None:
     costs = _edge_shape_costs(
         graph,
         shape_options={0: ((2, 1),), 1: ((2, 1),)},
-        num_microbatches=1,
     )
 
     edge_cost = costs[(0, 0, 1, 0, 0)]

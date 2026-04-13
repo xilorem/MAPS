@@ -19,8 +19,6 @@ def _make_layout(submesh: Submesh) -> TensorLayout:
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
         mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
-        microbatch_axis=None,
-        num_microbatches=1,
     )
 
 

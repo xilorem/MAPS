@@ -5,7 +5,6 @@ from .constraints import (
     ConstraintViolation,
     PlannerConstraints,
     validate_constraints,
-    validate_num_microbatches,
 )
 from .spatial_mapping import map_spatially, place_stage_plans
 from .workload_balancing import StagePlan, balance_stage_plans, balance_workload
@@ -20,5 +19,4 @@ __all__ = [
     "map_spatially",
     "place_stage_plans",
     "validate_constraints",
-    "validate_num_microbatches",
 ]
