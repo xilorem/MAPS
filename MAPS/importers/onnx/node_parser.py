@@ -59,21 +59,22 @@ def resolve_node_tensors(
 ) -> tuple[tuple[Tensor, ...], tuple[Tensor, ...]]:
     """Resolve ONNX input/output names to scheduler tensors."""
 
-    try:
-        inputs = tuple(tensors[name] for name in input_names)
-    except KeyError as exc:
+    missing_inputs = tuple(name for name in input_names if name not in tensors)
+    if missing_inputs:
         raise ValueError(
-            f"unknown input tensor for node '{node_name_value}': {exc.args[0]}"
-        ) from exc
+            f"unknown input tensor for node '{node_name_value}': {missing_inputs[0]}"
+        )
 
-    try:
-        outputs = tuple(tensors[name] for name in output_names)
-    except KeyError as exc:
+    missing_outputs = tuple(name for name in output_names if name not in tensors)
+    if missing_outputs:
         raise ValueError(
-            f"unknown output tensor for node '{node_name_value}': {exc.args[0]}"
-        ) from exc
+            f"unknown output tensor for node '{node_name_value}': {missing_outputs[0]}"
+        )
 
-    return inputs, outputs
+    return (
+        tuple(tensors[name] for name in input_names),
+        tuple(tensors[name] for name in output_names),
+    )
 
 
 def parse_node(
@@ -93,10 +94,10 @@ def parse_node(
         tensors,
     )
 
-    try:
-        lowerer = ONNX_OP_LOWERERS[node.op_type]
-    except KeyError as exc:
+    lowerer = ONNX_OP_LOWERERS.get(node.op_type)
+    if lowerer is None:
         raise NotImplementedError(f"unsupported ONNX op_type: {node.op_type}")
+
     kind, payload = lowerer(node_name_value, input_tensors, output_tensors)
 
     return Node(

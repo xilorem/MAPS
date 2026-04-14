@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from MAPS.arch import Mesh
+from MAPS.arch import L2Memory, Mesh
 from MAPS.builders.transition_builder import build_transition
 from MAPS.cost_models.transition_cost import estimate_transition_cost
 from MAPS.cost_models.transport_cost import TransportCostModel
@@ -309,9 +309,9 @@ def _stage_io_costs(
     for stage_id, node in enumerate(graph.nodes):
         io_costs[stage_id] = {}
         for shape_idx, shape in enumerate(shape_options[stage_id]):
-            mesh = Mesh(shape[0], shape[1], l2_bytes=1)
+            mesh = Mesh(shape[0], shape[1], l2_memory=L2Memory(size=1))
             submesh = Submesh(mesh=mesh, submesh_id=stage_id, x0=0, y0=0, width=shape[0], height=shape[1])
-            model = TransportCostModel()
+            model = TransportCostModel(mesh=mesh)
 
             read_cost = 0.0
             if stage_id not in consumer_stage_ids:
@@ -356,7 +356,7 @@ def _stage_io_costs_for_placements(
     for stage_id, node in enumerate(graph.nodes):
         io_costs[stage_id] = {}
         for placement_idx, submesh in enumerate(placement_options[stage_id]):
-            model = TransportCostModel()
+            model = TransportCostModel(mesh=submesh.mesh)
 
             read_cost = 0.0
             if stage_id not in consumer_stage_ids:
@@ -406,7 +406,7 @@ def _edge_shape_mode_costs(
     dst_node: Node,
     dst_shape: tuple[int, int],
 ) -> dict[str, float]:
-    mesh = Mesh(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1]), l2_bytes=1)
+    mesh = Mesh(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1]), l2_memory=L2Memory(size=1))
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=src_shape[0], height=src_shape[1])
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=0, width=dst_shape[0], height=dst_shape[1])
 
@@ -431,9 +431,9 @@ def _edge_shape_mode_costs(
         transition=transition,
         tensor=tensor,
         mesh=mesh,
-        model=TransportCostModel(),
+        model=TransportCostModel(mesh=mesh),
     )
-    model = TransportCostModel()
+    model = TransportCostModel(mesh=mesh)
 
     max_tile_to_l2_cost = 0.0
     for tile in src_submesh.tiles:
@@ -497,7 +497,7 @@ def _edge_placement_mode_costs(
         src_layout=src_output_layout,
         dst_layout=dst_input_layout,
     )
-    model = TransportCostModel()
+    model = TransportCostModel(mesh=src_submesh.mesh)
     transition_cost = estimate_transition_cost(
         transition=transition,
         tensor=tensor,

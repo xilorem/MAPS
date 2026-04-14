@@ -6,14 +6,14 @@ from MAPS.core.layout import (
     TensorRange,
     TensorSlice,
 )
-from MAPS.arch import Mesh
+from MAPS.arch import L2Memory, Mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import TransitionMode
 
 
 def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
     layout = TensorLayout(
@@ -39,7 +39,7 @@ def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
 
 
 def test_build_transition_builds_direct_remap_fragments() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
     src_layout = TensorLayout(
@@ -113,7 +113,7 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
 
 
 def test_build_transition_builds_direct_remap_between_different_submeshes() -> None:
-    mesh = Mesh(4, 4, l2_bytes=4096)
+    mesh = Mesh(4, 4, l2_memory=L2Memory(size=4096))
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=2, y0=2, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)

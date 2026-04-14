@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING
 from MAPS.core.tensor import Tensor
 
 if TYPE_CHECKING:
-    from onnx import ValueInfoProto, TensorProto, GraphProto
-    
+    from onnx import GraphProto, TensorProto, ValueInfoProto
 
 
 _ONNX_DTYPE_ELEM_BYTES: dict[int, int] = {
@@ -55,15 +54,11 @@ def parse_value_shape(value: "ValueInfoProto") -> tuple[int, ...]:
     return tuple(dims)
 
 
-def parse_value_tensor(value: "ValueInfoProto",
-                       *,
-                       is_input: bool = False,
-                       is_output: bool = False) -> tuple[str, tuple[int, ...], int | None]:
+def parse_value_tensor(value: "ValueInfoProto") -> tuple[str, tuple[int, ...], int | None]:
     """Extract tensor metadata from one ONNX value-info entry."""
 
     tensor_type = value.type.tensor_type
     elem_type = tensor_type.elem_type if tensor_type.HasField("elem_type") else 0
-    _ = is_input, is_output
     return value.name, parse_value_shape(value), onnx_dtype_elem_bytes(elem_type)
 
 
@@ -98,11 +93,11 @@ def collect_scheduler_tensors(graph: "GraphProto") -> dict[str, Tensor]:
     metadata: dict[str, dict[str, object]] = {}
 
     for value in graph.input:
-        name, shape, elem_bytes = parse_value_tensor(value, is_input=True)
+        name, shape, elem_bytes = parse_value_tensor(value)
         _merge_tensor_metadata(metadata, name, shape, elem_bytes)
 
     for value in graph.output:
-        name, shape, elem_bytes = parse_value_tensor(value, is_output=True)
+        name, shape, elem_bytes = parse_value_tensor(value)
         _merge_tensor_metadata(metadata, name, shape, elem_bytes)
 
     for value in graph.value_info:

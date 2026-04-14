@@ -307,7 +307,7 @@ def _inputs_fit_in_tile_buffers(
             output_layouts=output_layouts,
             tile=tile,
         )
-        if _input_tile_work_bytes(node, tile_work) > tile.l1_bytes:
+        if _input_tile_work_bytes(node, tile_work) > tile.memory.size:
             return False
     return True
 

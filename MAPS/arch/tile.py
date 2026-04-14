@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from MAPS.arch.memory import L1Memory
+
 
 @dataclass(frozen=True)
 class Tile:
@@ -12,7 +14,13 @@ class Tile:
     tile_id: int
     x: int
     y: int
-    l1_bytes: int = 1
+    memory: L1Memory = L1Memory(size=1)
+
+    def __post_init__(self) -> None:
+        if self.tile_id < 0:
+            raise ValueError("tile_id must be >= 0")
+        if self.x < 0 or self.y < 0:
+            raise ValueError("tile coordinates must be >= 0")
 
     @property
     def coords(self) -> tuple[int, int]:

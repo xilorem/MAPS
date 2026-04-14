@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from MAPS.arch import Tile
+from MAPS.arch import Mesh, Tile
 
 
 class TransferKind(Enum):
@@ -50,31 +50,60 @@ class TransferLeg:
             raise ValueError(f"unsupported transfer kind: {self.kind}")
 
 
+@dataclass(frozen=True)
 class TransportCostModel:
     """Primitive latency model for one transfer leg."""
 
+    mesh: Mesh | None = None
+    l1_to_l2_startup_cycles: float = 88.0
+    l2_to_l1_startup_cycles: float = 75.0
+    l1_to_l1_startup_cycles: float = 75.0
+    l2_access_hop_cycles: float = 0.5
+    l1_to_l1_hop_cycles: float = 0.5
+
     def l1_to_l2(self, src: Tile, bytes_: int) -> float:
-        return 88.0 + (1.5 + 0.5 * src.x) * bytes_
+        bandwidth = self._effective_l2_bandwidth(src)
+        return (
+            self.l1_to_l2_startup_cycles
+            + bytes_ / bandwidth
+            + self.l2_access_hop_cycles * self._nearest_l2_access_distance(src)
+        )
 
     def l2_to_l1(self, dst: Tile, bytes_: int) -> float:
-        return 75.0 + (1.5 + 0.5 * dst.x) * bytes_
+        bandwidth = self._effective_l2_bandwidth(dst)
+        return (
+            self.l2_to_l1_startup_cycles
+            + bytes_ / bandwidth
+            + self.l2_access_hop_cycles * self._nearest_l2_access_distance(dst)
+        )
 
     def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
-        return 75.0 + (
-            1.75
-            + 0.5 * abs(src.x - dst.x)
-            + 0.5 * abs(src.y - dst.y)
-        ) * bytes_
+        bandwidth = min(src.memory.bandwidth, dst.memory.bandwidth)
+        return (
+            self.l1_to_l1_startup_cycles
+            + bytes_ / bandwidth
+            + self.l1_to_l1_hop_cycles * src.manhattan_distance(dst)
+        )
 
     def cost(self, leg: TransferLeg) -> float:
         if leg.kind is TransferKind.L1_TO_L2:
-            assert leg.src_tile is not None
             return self.l1_to_l2(leg.src_tile, leg.bytes)
         if leg.kind is TransferKind.L2_TO_L1:
-            assert leg.dst_tile is not None
             return self.l2_to_l1(leg.dst_tile, leg.bytes)
         if leg.kind is TransferKind.L1_TO_L1:
-            assert leg.src_tile is not None and leg.dst_tile is not None
             return self.l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
         raise ValueError(f"unsupported transfer kind: {leg.kind}")
 
+    def _effective_l2_bandwidth(self, tile: Tile) -> int:
+        if self.mesh is None:
+            return tile.memory.bandwidth
+        return min(tile.memory.bandwidth, self.mesh.l2_memory.bandwidth)
+
+    def _nearest_l2_access_distance(self, tile: Tile) -> int:
+        if self.mesh is None or not self.mesh.l2_memory.access_points:
+            return 0
+
+        return min(
+            abs(tile.x - access_x) + abs(tile.y - access_y)
+            for access_x, access_y in self.mesh.l2_memory.access_points
+        )

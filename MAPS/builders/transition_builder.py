@@ -7,12 +7,6 @@ from MAPS.core.tensor import Tensor
 from MAPS.builders.remap_builder import build_direct_remap_fragments
 
 
-def can_use_local_reuse(src_layout: TensorLayout,
-                        dst_layout: TensorLayout) -> bool:
-    """Return whether the destination can reuse the source locally."""
-    return src_layout == dst_layout
-
-
 def build_transition(
     name: str,
     tensor: Tensor,
@@ -29,7 +23,7 @@ def build_transition(
     src_layout.validate_for(tensor)
     dst_layout.validate_for(tensor)
 
-    if can_use_local_reuse(src_layout, dst_layout):
+    if src_layout == dst_layout:
         return Transition(
             name=name,
             tensor_id=tensor_id,

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from MAPS.arch import Tile
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
-from MAPS.core.stage import StageInputBinding, StageOutputBinding
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+
+if TYPE_CHECKING:
+    from MAPS.core.stage import StageInputBinding, StageOutputBinding
 
 
 @dataclass(frozen=True)
@@ -133,18 +136,6 @@ class GemmLayerOp:
             y_slice=self.required_y_slice(output_slice),
         )
 
-    def validate_bindings(
-        self,
-        inputs: tuple[StageInputBinding, ...],
-        outputs: tuple[StageOutputBinding, ...],
-    ) -> None:
-        """Validate the minimum binding structure required by GEMM."""
-
-        if len(inputs) < 2:
-            raise ValueError("GEMM stages require at least two inputs")
-        if len(outputs) == 0:
-            raise ValueError("GEMM stages require at least one output")
-
     def validate_tensors(
         self,
         inputs: tuple[StageInputBinding, ...],
@@ -153,7 +144,10 @@ class GemmLayerOp:
     ) -> None:
         """Validate tensor availability against one GEMM stage instance."""
 
-        self.validate_bindings(inputs, outputs)
+        if len(inputs) < 2:
+            raise ValueError("GEMM stages require at least two inputs")
+        if len(outputs) == 0:
+            raise ValueError("GEMM stages require at least one output")
 
         bound_inputs = tuple(tensors[binding.tensor_id] for binding in inputs)
         bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)

@@ -1,4 +1,4 @@
-from MAPS.arch import Mesh, Tile
+from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.pipeline import Pipeline
@@ -24,13 +24,13 @@ def _make_layout(submesh: Submesh) -> TensorLayout:
     )
 
 
-def _make_mesh(width: int, height: int, l1_bytes: int, l2_bytes: int) -> Mesh:
+def _make_mesh(width: int, height: int, l1_size: int, l2_memory: L2Memory) -> Mesh:
     return Mesh(
         width=width,
         height=height,
-        l2_bytes=l2_bytes,
+        l2_memory=l2_memory,
         tiles=tuple(
-            Tile(tile_id=(y * width + x), x=x, y=y, l1_bytes=l1_bytes)
+            Tile(tile_id=(y * width + x), x=x, y=y, memory=L1Memory(size=l1_size))
             for y in range(height)
             for x in range(width)
         ),
@@ -38,7 +38,7 @@ def _make_mesh(width: int, height: int, l1_bytes: int, l2_bytes: int) -> Mesh:
 
 
 def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None:
-    mesh = _make_mesh(2, 2, l1_bytes=4096, l2_bytes=4096)
+    mesh = _make_mesh(2, 2, l1_size=4096, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     layout = _make_layout(submesh)
     tensors = (
@@ -90,7 +90,7 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
 
 
 def test_validate_constraints_counts_external_inputs_against_l2() -> None:
-    mesh = _make_mesh(1, 1, l1_bytes=4096, l2_bytes=32)
+    mesh = _make_mesh(1, 1, l1_size=4096, l2_memory=L2Memory(size=32))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
     layout = _make_layout(submesh)
     tensors = (
@@ -136,7 +136,7 @@ def test_validate_constraints_counts_external_inputs_against_l2() -> None:
 
 
 def test_validate_constraints_does_not_count_local_inputs_against_l2() -> None:
-    mesh = _make_mesh(1, 1, l1_bytes=64, l2_bytes=1)
+    mesh = _make_mesh(1, 1, l1_size=64, l2_memory=L2Memory(size=1))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
     layout = _make_layout(submesh)
     tensors = (

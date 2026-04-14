@@ -35,12 +35,6 @@ class ConstraintViolation:
     kind: str
     message: str
 
-    def __post_init__(self) -> None:
-        if not self.kind:
-            raise ValueError("constraint violation kind must not be empty")
-        if not self.message:
-            raise ValueError("constraint violation message must not be empty")
-
 
 @dataclass(frozen=True)
 class ConstraintReport:
@@ -108,22 +102,19 @@ def _infer_input_slice_for_tile(
         if tensor == op.w:
             return op.required_w_slice(output_slice)
         if op.y is not None and tensor == op.y:
-            y_slice = op.required_y_slice(output_slice)
-            assert y_slice is not None
-            return y_slice
+            return output_slice
 
-    # Fallback for unsupported payloads: treat the whole tensor as required.
     return _default_tensor_slice(tensor)
 
 
-def _estimate_stage_l1_bytes_for_tile(
+def _estimate_stage_l1_memory_for_tile(
     stage: Stage,
     pipeline: Pipeline,
     tile,
 ) -> int:
     """Estimate L1-resident bytes required by one stage on one tile."""
 
-    l1_bytes = 0
+    l1_memory = 0
 
     for binding in stage.outputs:
         tensor = pipeline.tensors[binding.tensor_id]
@@ -132,7 +123,7 @@ def _estimate_stage_l1_bytes_for_tile(
             binding.layout,
             tile,
         )
-        l1_bytes += _tensor_slice_num_bytes(tensor, tensor_slice)
+        l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
 
     for binding_idx, binding in enumerate(stage.inputs):
         if binding.source.kind is InputSourceKind.LOCAL:
@@ -144,21 +135,13 @@ def _estimate_stage_l1_bytes_for_tile(
             pipeline,
             tile,
         )
-        l1_bytes += _tensor_slice_num_bytes(tensor, tensor_slice)
+        l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
 
-    return l1_bytes
+    return l1_memory
 
 
-def _estimate_stage_l2_bytes(stage: Stage, pipeline: Pipeline) -> int:
-    """Estimate mesh-level L2 bytes required by one stage.
-
-    Current policy:
-    - EXTERNAL inputs are assumed to be sourced from shared L2
-    - LOCAL inputs do not consume additional L2
-    - TRANSITION inputs do not consume L2 for the currently supported remap modes
-    """
-
-    l2_bytes = 0
+def _estimate_stage_l2_memory(stage: Stage, pipeline: Pipeline) -> int:
+    l2_memory = 0
     for binding_idx, binding in enumerate(stage.inputs):
         if binding.source.kind is not InputSourceKind.EXTERNAL:
             continue
@@ -175,18 +158,91 @@ def _estimate_stage_l2_bytes(stage: Stage, pipeline: Pipeline) -> int:
                 max_binding_bytes,
                 _tensor_slice_num_bytes(tensor, tensor_slice),
             )
-        l2_bytes += max_binding_bytes
-    return l2_bytes
+        l2_memory += max_binding_bytes
+    return l2_memory
 
 
-def _estimate_stage_required_l1_bytes(
-    stage: Stage,
+def _validate_transition_input(
+    violations: list[ConstraintViolation],
+    stage_id: int,
+    binding_idx: int,
+    binding,
     pipeline: Pipeline,
-    tile,
-) -> int:
-    """Estimate L1 demand for one tile."""
+) -> None:
+    transition_id = binding.source.transition_id
+    if transition_id is None or transition_id >= len(pipeline.transitions):
+        _append_violation(
+            violations,
+            kind="transition_reference_out_of_range",
+            message=(
+                f"stage {stage_id} input {binding_idx} references "
+                f"missing transition {transition_id}"
+            ),
+        )
+        return
 
-    return _estimate_stage_l1_bytes_for_tile(stage, pipeline, tile)
+    transition = pipeline.transitions[transition_id]
+    if transition.dst_layer_id != stage_id:
+        _append_violation(
+            violations,
+            kind="transition_destination_mismatch",
+            message=(
+                f"stage {stage_id} input {binding_idx} references transition "
+                f"{transition_id} targeting stage {transition.dst_layer_id}"
+            ),
+        )
+    if transition.tensor_id != binding.tensor_id:
+        _append_violation(
+            violations,
+            kind="transition_tensor_mismatch",
+            message=(
+                f"stage {stage_id} input {binding_idx} tensor_id {binding.tensor_id} "
+                f"does not match transition tensor_id {transition.tensor_id}"
+            ),
+        )
+
+
+def _validate_local_input(
+    violations: list[ConstraintViolation],
+    stage_id: int,
+    binding_idx: int,
+    binding,
+    pipeline: Pipeline,
+) -> None:
+    local_output = binding.source.local_output
+    if local_output is None or local_output.stage_id >= len(pipeline.stages):
+        _append_violation(
+            violations,
+            kind="local_output_stage_out_of_range",
+            message=(
+                f"stage {stage_id} input {binding_idx} references "
+                f"missing local stage {None if local_output is None else local_output.stage_id}"
+            ),
+        )
+        return
+
+    local_stage = pipeline.stages[local_output.stage_id]
+    if local_output.output_idx >= len(local_stage.outputs):
+        _append_violation(
+            violations,
+            kind="local_output_index_out_of_range",
+            message=(
+                f"stage {stage_id} input {binding_idx} references missing output "
+                f"{local_output.output_idx} on stage {local_output.stage_id}"
+            ),
+        )
+        return
+
+    local_tensor_id = local_stage.outputs[local_output.output_idx].tensor_id
+    if local_tensor_id != binding.tensor_id:
+        _append_violation(
+            violations,
+            kind="local_output_tensor_mismatch",
+            message=(
+                f"stage {stage_id} input {binding_idx} tensor_id {binding.tensor_id} "
+                f"does not match referenced local output tensor_id {local_tensor_id}"
+            ),
+        )
 
 
 def _validate_stage(
@@ -197,18 +253,6 @@ def _validate_stage(
 ) -> ConstraintReport:
     violations: list[ConstraintViolation] = []
 
-    # Check the stage object is structurally well-formed.
-    try:
-        stage.__post_init__()
-    except ValueError as exc:
-        _append_violation(
-            violations,
-            kind="stage_invalid",
-            message=f"stage {stage_id}: {exc}",
-        )
-        return ConstraintReport(violations=tuple(violations))
-
-    # Ensure the stage placement belongs to the same hardware mesh as the pipeline.
     if stage.submesh.mesh != pipeline.mesh:
         _append_violation(
             violations,
@@ -216,7 +260,6 @@ def _validate_stage(
             message=f"stage {stage_id} submesh belongs to a different mesh",
         )
 
-    # Enforce the current planner limit on how many nodes may share a stage.
     if len(stage.nodes) > constraints.max_stage_nodes:
         _append_violation(
             violations,
@@ -227,7 +270,6 @@ def _validate_stage(
             ),
         )
 
-    # Validate tensor ids and output layouts against the pipeline tensor table.
     try:
         stage.validate_tensors(pipeline.tensors)
     except ValueError as exc:
@@ -241,7 +283,6 @@ def _validate_stage(
         validator = getattr(node.payload, "validate_tensors", None)
         if validator is None:
             continue
-        # Validate op-specific tensor semantics using the node payload contract.
         try:
             validator(stage.inputs, stage.outputs, pipeline.tensors)
         except ValueError as exc:
@@ -252,116 +293,25 @@ def _validate_stage(
             )
 
     for binding_idx, binding in enumerate(stage.inputs):
-        source = binding.source
-        # Validate the input-source descriptor itself before chasing references.
-        try:
-            source.__post_init__()
-        except ValueError as exc:
-            _append_violation(
-                violations,
-                kind="stage_input_source_invalid",
-                message=f"stage {stage_id} input {binding_idx}: {exc}",
-            )
-            continue
-
-        if source.kind is InputSourceKind.TRANSITION:
-            assert source.transition_id is not None
-            # Ensure transition-backed inputs point to a matching transition entry.
-            if source.transition_id >= len(pipeline.transitions):
-                _append_violation(
-                    violations,
-                    kind="transition_reference_out_of_range",
-                    message=(
-                        f"stage {stage_id} input {binding_idx} references "
-                        f"missing transition {source.transition_id}"
-                    ),
-                )
-            else:
-                transition = pipeline.transitions[source.transition_id]
-                if transition.dst_layer_id != stage_id:
-                    _append_violation(
-                        violations,
-                        kind="transition_destination_mismatch",
-                        message=(
-                            f"stage {stage_id} input {binding_idx} references "
-                            f"transition {source.transition_id} targeting "
-                            f"stage {transition.dst_layer_id}"
-                        ),
-                    )
-                if transition.tensor_id != binding.tensor_id:
-                    _append_violation(
-                        violations,
-                        kind="transition_tensor_mismatch",
-                        message=(
-                            f"stage {stage_id} input {binding_idx} tensor_id "
-                            f"{binding.tensor_id} does not match transition "
-                            f"tensor_id {transition.tensor_id}"
-                        ),
-                    )
-
-        if source.kind is InputSourceKind.LOCAL:
-            assert source.local_output is not None
-            # Ensure local-input references point to an existing stage output.
-            if source.local_output.stage_id >= len(pipeline.stages):
-                _append_violation(
-                    violations,
-                    kind="local_output_stage_out_of_range",
-                    message=(
-                        f"stage {stage_id} input {binding_idx} references "
-                        f"missing local stage {source.local_output.stage_id}"
-                    ),
-                )
-            else:
-                local_stage = pipeline.stages[source.local_output.stage_id]
-                if source.local_output.output_idx >= len(local_stage.outputs):
-                    _append_violation(
-                        violations,
-                        kind="local_output_index_out_of_range",
-                        message=(
-                            f"stage {stage_id} input {binding_idx} references "
-                            f"missing output {source.local_output.output_idx} "
-                            f"on stage {source.local_output.stage_id}"
-                        ),
-                    )
-                else:
-                    local_output = local_stage.outputs[source.local_output.output_idx]
-                    if local_output.tensor_id != binding.tensor_id:
-                        _append_violation(
-                            violations,
-                            kind="local_output_tensor_mismatch",
-                            message=(
-                                f"stage {stage_id} input {binding_idx} tensor_id "
-                                f"{binding.tensor_id} does not match referenced "
-                                f"local output tensor_id {local_output.tensor_id}"
-                            ),
-                        )
+        if binding.source.kind is InputSourceKind.TRANSITION:
+            _validate_transition_input(violations, stage_id, binding_idx, binding, pipeline)
+        elif binding.source.kind is InputSourceKind.LOCAL:
+            _validate_local_input(violations, stage_id, binding_idx, binding, pipeline)
 
     if constraints.enforce_l1_capacity:
-        # Require every tile used by the stage to advertise a positive L1 capacity.
         for tile in stage.submesh.tiles:
-            if tile.l1_bytes <= 0:
-                _append_violation(
-                    violations,
-                    kind="tile_l1_invalid",
-                    message=(
-                        f"stage {stage_id} submesh references tile {tile.tile_id} "
-                        "with non-positive l1_bytes"
-                    ),
-                )
-        # Check stage-local L1 demand using source-kind-aware residency rules.
-        for tile in stage.submesh.tiles:
-            required_l1_bytes = _estimate_stage_required_l1_bytes(
+            required_l1_memory = _estimate_stage_l1_memory_for_tile(
                 stage,
                 pipeline,
                 tile,
             )
-            if required_l1_bytes > tile.l1_bytes:
+            if required_l1_memory > tile.memory.size:
                 _append_violation(
                     violations,
                     kind="tile_l1_capacity_exceeded",
                     message=(
-                        f"stage {stage_id} requires {required_l1_bytes} L1 bytes "
-                        f"but tile {tile.tile_id} only provides {tile.l1_bytes}"
+                        f"stage {stage_id} requires {required_l1_memory} L1 memory "
+                        f"but tile {tile.tile_id} only provides {tile.memory.size}"
                     ),
                 )
 
@@ -376,18 +326,6 @@ def _validate_transition(
 ) -> ConstraintReport:
     violations: list[ConstraintViolation] = []
 
-    # Check the transition object is structurally well-formed.
-    try:
-        transition.__post_init__()
-    except ValueError as exc:
-        _append_violation(
-            violations,
-            kind="transition_invalid",
-            message=f"transition {transition_id}: {exc}",
-        )
-        return ConstraintReport(violations=tuple(violations))
-
-    # Ensure the transition points to a tensor that exists in the pipeline.
     if transition.tensor_id >= len(pipeline.tensors):
         _append_violation(
             violations,
@@ -399,7 +337,6 @@ def _validate_transition(
         )
         return ConstraintReport(violations=tuple(violations))
 
-    # Ensure producer and consumer stage references are in range.
     for attr_name, stage_id in (
         ("src_layer_id", transition.src_layer_id),
         ("dst_layer_id", transition.dst_layer_id),
@@ -418,7 +355,6 @@ def _validate_transition(
         return ConstraintReport(violations=tuple(violations))
 
     tensor = pipeline.tensors[transition.tensor_id]
-    # Validate source and destination layouts for the carried tensor.
     try:
         transition.validate_for(tensor)
     except ValueError as exc:
@@ -431,7 +367,6 @@ def _validate_transition(
     src_stage = pipeline.stages[transition.src_layer_id]
     dst_stage = pipeline.stages[transition.dst_layer_id]
 
-    # Ensure the transition source output exists and carries the right tensor.
     if transition.src_output_idx >= len(src_stage.outputs):
         _append_violation(
             violations,
@@ -453,7 +388,6 @@ def _validate_transition(
                 ),
             )
 
-    # Ensure the transition destination input exists and expects the right tensor.
     if transition.dst_input_idx >= len(dst_stage.inputs):
         _append_violation(
             violations,
@@ -479,7 +413,6 @@ def _validate_transition(
         not constraints.allow_cross_submesh_remap
         and transition.src_layout.submesh != transition.dst_layout.submesh
     ):
-        # Enforce the planner policy on remaps across different submeshes.
         _append_violation(
             violations,
             kind="cross_submesh_remap_disallowed",
@@ -490,17 +423,6 @@ def _validate_transition(
         )
 
     for fragment_idx, fragment in enumerate(transition.fragments):
-        # Validate fragment descriptors and ensure their hart ids are on the mesh.
-        try:
-            fragment.__post_init__()
-        except ValueError as exc:
-            _append_violation(
-                violations,
-                kind="transition_fragment_invalid",
-                message=f"transition {transition_id} fragment {fragment_idx}: {exc}",
-            )
-            continue
-
         if not pipeline.mesh.contains_tile_id(fragment.src_hartid):
             _append_violation(
                 violations,
@@ -532,46 +454,24 @@ def validate_constraints(
 
     violations: list[ConstraintViolation] = []
 
-    # Check the pipeline object is structurally well-formed.
-    try:
-        pipeline.__post_init__()
-    except ValueError as exc:
-        _append_violation(
-            violations,
-            kind="pipeline_invalid",
-            message=str(exc),
-        )
-        return ConstraintReport(violations=tuple(violations))
-
-    if constraints.enforce_l2_capacity and pipeline.mesh.l2_bytes <= 0:
-        # Require the target mesh to advertise a positive shared L2 capacity.
-        _append_violation(
-            violations,
-            kind="mesh_l2_invalid",
-            message="pipeline mesh has non-positive l2_bytes",
-        )
-
-    # Validate every scheduled stage against structure and policy constraints.
-    required_l2_bytes = 0
+    required_l2_memory = 0
     for stage_id, stage in enumerate(pipeline.stages):
         violations.extend(
             _validate_stage(stage, stage_id, pipeline, constraints).violations
         )
         if constraints.enforce_l2_capacity:
-            # Accumulate source-kind-aware L2 demand from externally sourced inputs.
-            required_l2_bytes += _estimate_stage_l2_bytes(stage, pipeline)
+            required_l2_memory += _estimate_stage_l2_memory(stage, pipeline)
 
-    if constraints.enforce_l2_capacity and required_l2_bytes > pipeline.mesh.l2_bytes:
+    if constraints.enforce_l2_capacity and required_l2_memory > pipeline.mesh.l2_memory.size:
         _append_violation(
             violations,
             kind="mesh_l2_capacity_exceeded",
             message=(
-                f"pipeline requires {required_l2_bytes} L2 bytes but mesh only "
-                f"provides {pipeline.mesh.l2_bytes}"
+                f"pipeline requires {required_l2_memory} L2 memory but mesh only "
+                f"provides {pipeline.mesh.l2_memory.size}"
             ),
         )
 
-    # Validate every transition against tensor, stage, and mesh consistency.
     for transition_id, transition in enumerate(pipeline.transitions):
         violations.extend(
             _validate_transition(

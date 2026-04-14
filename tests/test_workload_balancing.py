@@ -1,4 +1,4 @@
-from MAPS.arch import Mesh, Tile
+from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
 from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -39,20 +39,20 @@ def _batched_gemm_node(name: str, b: int, m: int, k: int, n: int) -> Node:
     )
 
 
-def _mesh_with_l1(width: int, height: int, l1_bytes: int) -> Mesh:
+def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
     tiles = tuple(
-        Tile(tile_id=(y * width + x), x=x, y=y, l1_bytes=l1_bytes)
+        Tile(tile_id=(y * width + x), x=x, y=y, memory=L1Memory(size=l1_size))
         for y in range(height)
         for x in range(width)
     )
-    return Mesh(width, height, l2_bytes=4096, tiles=tiles)
+    return Mesh(width, height, l2_memory=L2Memory(size=4096), tiles=tiles)
 
 
 def test_balance_workload_uses_full_tile_budget() -> None:
     node0 = _gemm_node("gemm0", m=16, k=16, n=16)
     node1 = _gemm_node("gemm1", m=16, k=16, n=16)
     graph = Graph(name="g", nodes=(node0, node1))
-    mesh = _mesh_with_l1(4, 4, l1_bytes=4096)
+    mesh = _mesh_with_l1(4, 4, l1_size=4096)
 
     allocation = balance_workload(graph, mesh)
 
@@ -64,7 +64,7 @@ def test_balance_workload_gives_more_tiles_to_heavier_gemm() -> None:
     heavy = _gemm_node("heavy", m=64, k=64, n=64)
     light = _gemm_node("light", m=8, k=8, n=8)
     graph = Graph(name="g", nodes=(heavy, light))
-    mesh = _mesh_with_l1(3, 2, l1_bytes=32768)
+    mesh = _mesh_with_l1(3, 2, l1_size=32768)
 
     allocation = balance_workload(graph, mesh)
 
@@ -75,7 +75,7 @@ def test_balance_workload_gives_more_tiles_to_heavier_gemm() -> None:
 def test_balance_stage_plans_preserve_layout_decisions() -> None:
     node = _gemm_node("gemm", m=16, k=16, n=16)
     graph = Graph(name="g", nodes=(node,))
-    mesh = _mesh_with_l1(4, 1, l1_bytes=32768)
+    mesh = _mesh_with_l1(4, 1, l1_size=32768)
 
     plans = balance_stage_plans(graph, mesh)
 
@@ -87,7 +87,7 @@ def test_balance_stage_plans_preserve_layout_decisions() -> None:
 
 def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> None:
     node = _gemm_node("gemm", m=4, k=16, n=7)
-    mesh = _mesh_with_l1(6, 1, l1_bytes=32768)
+    mesh = _mesh_with_l1(6, 1, l1_size=32768)
 
     plan = _best_stage_plan_for_tile_count(
         node=node,
@@ -102,7 +102,7 @@ def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> No
 
 
 def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
 
     options = _tile_count_options_after_growth(
         current_tile_count=2,
@@ -115,7 +115,7 @@ def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:
 
 def test_best_stage_plan_rejects_inputs_that_do_not_fit() -> None:
     node = _batched_gemm_node("batched", b=4, m=4, k=4, n=4)
-    mesh = _mesh_with_l1(1, 1, l1_bytes=64)
+    mesh = _mesh_with_l1(1, 1, l1_size=64)
 
     try:
         _best_stage_plan_for_tile_count(

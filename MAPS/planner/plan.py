@@ -49,6 +49,7 @@ def _build_pipeline_from_graph(
             src_stage_id = producer_by_tensor[tensor]
             src_node = graph.nodes[src_stage_id]
             src_plan = stage_plans[src_stage_id]
+            src_output_idx = _node_output_index(src_node, tensor)
             transition_id = len(transitions)
             transitions.append(
                 build_transition(
@@ -56,10 +57,10 @@ def _build_pipeline_from_graph(
                     tensor=tensor,
                     tensor_id=tensor_id_by_tensor[tensor],
                     src_layer_id=src_stage_id,
-                    src_output_idx=_node_output_index(src_node, tensor),
+                    src_output_idx=src_output_idx,
                     dst_layer_id=dst_stage_id,
                     dst_input_idx=dst_input_idx,
-                    src_layout=src_plan.output_layouts[_node_output_index(src_node, tensor)],
+                    src_layout=src_plan.output_layouts[src_output_idx],
                     dst_layout=dst_plan.input_layouts[dst_input_idx],
                 )
             )

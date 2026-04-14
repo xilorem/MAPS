@@ -1,4 +1,4 @@
-from MAPS.arch import Mesh
+from MAPS.arch import L2Memory, Mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -132,7 +132,7 @@ def _print_mapping_details(
     )
 
 def test_shape_options_for_area_two_on_2x2_mesh() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
 
     shapes = _shape_options(2, mesh)
 
@@ -140,7 +140,7 @@ def test_shape_options_for_area_two_on_2x2_mesh() -> None:
 
 
 def test_shape_options_raise_when_tile_count_cannot_fit_mesh() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
 
     try:
         _shape_options(3, mesh)
@@ -151,7 +151,7 @@ def test_shape_options_raise_when_tile_count_cannot_fit_mesh() -> None:
 
 
 def test_layout_on_submesh_preserves_logical_shape() -> None:
-    mesh = Mesh(6, 2, l2_bytes=4096)
+    mesh = Mesh(6, 2, l2_memory=L2Memory(size=4096))
     planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
     node = _gemm_node("node", 8, 8, 8)
@@ -175,7 +175,7 @@ def test_layout_on_submesh_preserves_logical_shape() -> None:
 
 
 def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
-    mesh = Mesh(6, 2, l2_bytes=4096)
+    mesh = Mesh(6, 2, l2_memory=L2Memory(size=4096))
     planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
     node = _gemm_node("node", 8, 8, 8)
@@ -225,7 +225,7 @@ def test_map_spatially_returns_non_overlapping_submeshes_on_4x4_mesh() -> None:
         nodes=(producer, consumer),
         edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
     )
-    mesh = Mesh(4, 4, l2_bytes=4096)
+    mesh = Mesh(4, 4, l2_memory=L2Memory(size=4096))
 
     mapping = map_spatially(
         graph,
@@ -290,7 +290,7 @@ def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
             Edge(tensor=node3_input, src=node2, dst=node3),
         ),
     )
-    mesh = Mesh(6, 6, l2_bytes=4096)
+    mesh = Mesh(6, 6, l2_memory=L2Memory(size=4096))
     tile_counts = {0: 3, 1: 4, 2: 5, 3: 6}
 
     mapping = map_spatially(

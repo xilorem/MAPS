@@ -1,12 +1,12 @@
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
-from MAPS.arch import Mesh
+from MAPS.arch import L2Memory, Mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
 
 
 def test_build_gemm_tile_work_derives_required_operand_slices() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tile = mesh.tile(1, 0)
 
@@ -59,7 +59,7 @@ def test_build_gemm_tile_work_derives_required_operand_slices() -> None:
 
 
 def test_default_gemm_layouts_accept_logical_shape() -> None:
-    mesh = Mesh(6, 1, l2_bytes=4096)
+    mesh = Mesh(6, 1, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     op = GemmLayerOp(
         x=Tensor(name="x", rank=2, dims=(8, 16), elem_bytes=2),

@@ -1,10 +1,9 @@
-from MAPS.core.graph import Node
+from MAPS.core.graph import Node, OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
-from MAPS.arch import Mesh
+from MAPS.arch import L2Memory, Mesh
 from MAPS.core.stage import (
     InputSource,
     InputSourceKind,
-    OpKind,
     Stage,
     StageInputBinding,
     StageOutputBinding,
@@ -30,7 +29,7 @@ def _make_input_binding(tensor_id: int) -> StageInputBinding:
 
 
 def test_stage_requires_at_least_one_node() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
 
     try:
@@ -42,7 +41,7 @@ def test_stage_requires_at_least_one_node() -> None:
 
 
 def test_stage_can_group_multiple_nodes() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     x = Tensor(name="x", rank=2, dims=(4, 8), elem_bytes=2)
     w0 = Tensor(name="w0", rank=2, dims=(8, 16), elem_bytes=2)
@@ -71,7 +70,7 @@ def test_stage_can_group_multiple_nodes() -> None:
 
 
 def test_gemm_payload_validates_binding_indices_and_tensor_shapes() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     layout = _make_layout(submesh)
     tensors = (
@@ -99,7 +98,7 @@ def test_gemm_payload_validates_binding_indices_and_tensor_shapes() -> None:
 
 
 def test_gemm_payload_rejects_missing_bound_tensor() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     layout = _make_layout(submesh)
     tensors = (
@@ -130,7 +129,7 @@ def test_gemm_payload_rejects_missing_bound_tensor() -> None:
 
 
 def test_gemm_payload_rejects_incompatible_tensor_element_sizes() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     layout = _make_layout(submesh)
     tensors = (
@@ -161,7 +160,7 @@ def test_gemm_payload_rejects_incompatible_tensor_element_sizes() -> None:
 
 
 def test_gemm_payload_rejects_incompatible_k_dimension() -> None:
-    mesh = Mesh(2, 2, l2_bytes=4096)
+    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     layout = _make_layout(submesh)
     tensors = (
