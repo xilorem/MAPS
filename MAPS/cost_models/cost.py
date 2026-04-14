@@ -16,11 +16,14 @@ def cost_estimator(
     cost_model = node.payload.cost_model
     submesh = output_layouts[0].submesh
     tile_work = tuple(
-        node.payload.build_tile_work(
-            input_layouts=input_layouts,
-            output_layouts=output_layouts,
-            tile=tile,
+        (
+            tile,
+            node.payload.build_tile_work(
+                input_layouts=input_layouts,
+                output_layouts=output_layouts,
+                tile=tile,
+            ),
         )
         for tile in submesh.tiles
     )
-    return max((cost_model.cost(work) for work in tile_work), default=0.0)
+    return max((cost_model.cost(work, tile) for tile, work in tile_work), default=0.0)

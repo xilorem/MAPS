@@ -4,7 +4,7 @@ from MAPS.core.layout import (
     TensorLayout,
     TensorRange,
 )
-from MAPS.arch import L2Memory, Mesh
+from MAPS.chips import magia_mesh
 from MAPS.core.ownership import _apply_layout_axis, tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -18,7 +18,7 @@ def _format_slice_ranges(ranges: tuple[TensorRange, ...]) -> str:
 
 
 def test_tile_tensor_slice_shards_both_axes() -> None:
-    mesh = Mesh(4, 4, l2_memory=L2Memory(size=4096))
+    mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=3)
     tensor = Tensor(name="x", rank=3, dims=(8, 8, 12), elem_bytes=2)
     target_tile = mesh.tile(1, 2)
@@ -44,7 +44,7 @@ def test_tile_tensor_slice_shards_both_axes() -> None:
 
 
 def test_tile_tensor_slice_uses_logical_shape_not_physical_shape() -> None:
-    mesh = Mesh(6, 1, l2_memory=L2Memory(size=4096))
+    mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     tensor = Tensor(name="x", rank=2, dims=(6, 12), elem_bytes=2)
     layout = TensorLayout(

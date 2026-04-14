@@ -2,6 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.chips import magia_mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.stage import InputSourceKind
@@ -28,7 +29,7 @@ def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
 
 
 def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -> None:
-    mesh = _mesh_with_l1(2, 2, l1_size=4096)
+    mesh = magia_mesh()
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1)
 
@@ -106,7 +107,7 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
     assert {
         (fragment.src_hartid, fragment.dst_hartid)
         for fragment in transition.fragments
-    } == {(0, 2), (1, 3)}
+    } == {(0, 8), (1, 9)}
     assert {
         fragment.src_slice
         for fragment in transition.fragments

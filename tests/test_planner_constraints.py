@@ -1,4 +1,5 @@
 from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.chips import magia_mesh
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.pipeline import Pipeline
@@ -38,7 +39,7 @@ def _make_mesh(width: int, height: int, l1_size: int, l2_memory: L2Memory) -> Me
 
 
 def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None:
-    mesh = _make_mesh(2, 2, l1_size=4096, l2_memory=L2Memory(size=4096))
+    mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     layout = _make_layout(submesh)
     tensors = (

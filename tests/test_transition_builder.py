@@ -6,14 +6,14 @@ from MAPS.core.layout import (
     TensorRange,
     TensorSlice,
 )
-from MAPS.arch import L2Memory, Mesh
+from MAPS.chips import magia_mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import TransitionMode
 
 
 def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
-    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
+    mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
     layout = TensorLayout(
@@ -39,7 +39,7 @@ def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
 
 
 def test_build_transition_builds_direct_remap_fragments() -> None:
-    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
+    mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
     src_layout = TensorLayout(
@@ -75,10 +75,10 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
         (0, 1),
         (1, 0),
         (1, 1),
-        (2, 2),
-        (2, 3),
-        (3, 2),
-        (3, 3),
+        (8, 8),
+        (8, 9),
+        (9, 8),
+        (9, 9),
     }
     assert {fragment.src_slice for fragment in transition.fragments} == {
         TensorSlice(
@@ -113,7 +113,7 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
 
 
 def test_build_transition_builds_direct_remap_between_different_submeshes() -> None:
-    mesh = Mesh(4, 4, l2_memory=L2Memory(size=4096))
+    mesh = magia_mesh()
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=2, y0=2, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
@@ -143,10 +143,10 @@ def test_build_transition_builds_direct_remap_between_different_submeshes() -> N
     assert transition.mode is TransitionMode.DIRECT_REMAP
     assert len(transition.fragments) == 4
     assert {(fragment.src_hartid, fragment.dst_hartid) for fragment in transition.fragments} == {
-        (0, 10),
-        (1, 11),
-        (4, 14),
-        (5, 15),
+        (0, 18),
+        (1, 19),
+        (8, 26),
+        (9, 27),
     }
     assert {fragment.src_slice for fragment in transition.fragments} == {
         TensorSlice(

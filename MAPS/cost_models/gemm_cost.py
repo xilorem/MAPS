@@ -4,27 +4,27 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from MAPS.arch import DeviceKind, Tile, WorkKind
 from MAPS.ops.gemm import GemmTileWork
 from MAPS.core.layout import TensorSlice
 
 
 @dataclass(frozen=True)
 class GemmCostModel:
-    """Placeholder compute-only GEMM cycle model."""
+    """Compute-only GEMM cycle model backed by tile devices."""
 
-    ops_per_cycle: float = 1.0
-    launch_overhead: float = 0.0
+    preferred_device_kind: DeviceKind = DeviceKind.SYSTOLIC
 
-    def __post_init__(self) -> None:
-        if self.ops_per_cycle <= 0:
-            raise ValueError("ops_per_cycle must be > 0")
-        if self.launch_overhead < 0:
-            raise ValueError("launch_overhead must be >= 0")
-
-    def cost(self, tile_work: GemmTileWork) -> float:
-        """Return a placeholder cycle estimate for one tile."""
-
-        return self.launch_overhead + _gemm_tile_num_ops(tile_work) / self.ops_per_cycle
+    def cost(self, tile_work: GemmTileWork, tile: Tile) -> float:
+        amount = _gemm_tile_num_ops(tile_work)
+        devices = tuple(device for device in tile.devices if device.supports(WorkKind.GEMM))
+        preferred = tuple(
+            device for device in devices if device.kind is self.preferred_device_kind
+        )
+        candidates = preferred or devices
+        if not candidates:
+            raise ValueError(f"tile {tile.tile_id} has no device for GEMM work")
+        return min(device.cycles(WorkKind.GEMM, amount) for device in candidates)
 
 
 def _tensor_slice_num_elements(tensor_slice: TensorSlice) -> int:
