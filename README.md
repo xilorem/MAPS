@@ -14,7 +14,6 @@ MAPS/
   cost_models/   GEMM, transport, and transition cost models
   planner/       Workload balancing, spatial mapping, and validation
 tests/           Unit and planner integration tests
-STATUS.md        Current development notes and next steps
 ```
 
 ## Core Concepts
