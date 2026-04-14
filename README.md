@@ -45,27 +45,78 @@ The architecture layer currently models:
 - physical tiles
 - per-tile L1 memory
 - mesh-level L2 memory
+- optional L2 access points
+- tile-local compute devices
 
 Example:
 
 ```python
-from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.arch import Device, DeviceKind, L1Memory, L2Memory, Mesh, Tile, WorkKind
+
+devices = (
+    Device(name="idma", kind=DeviceKind.DMA, throughput={WorkKind.DMA: 1.0}),
+    Device(
+        name="core",
+        kind=DeviceKind.SCALAR,
+        throughput={WorkKind.ELEMENTWISE: 1.0},
+    ),
+    Device(
+        name="redmule",
+        kind=DeviceKind.SYSTOLIC,
+        throughput={WorkKind.GEMM: 192.0},
+    ),
+)
 
 mesh = Mesh(
     width=2,
     height=2,
     l2_memory=L2Memory(size=16384, bandwidth=128, access_points=((0, 0),)),
     tiles=(
-        Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        Tile(tile_id=2, x=0, y=1, memory=L1Memory(size=4096, bandwidth=64)),
-        Tile(tile_id=3, x=1, y=1, memory=L1Memory(size=4096, bandwidth=64)),
+        Tile(
+            tile_id=0,
+            x=0,
+            y=0,
+            memory=L1Memory(size=4096, bandwidth=64),
+            devices=devices,
+        ),
+        Tile(
+            tile_id=1,
+            x=1,
+            y=0,
+            memory=L1Memory(size=4096, bandwidth=64),
+            devices=devices,
+        ),
+        Tile(
+            tile_id=2,
+            x=0,
+            y=1,
+            memory=L1Memory(size=4096, bandwidth=64),
+            devices=devices,
+        ),
+        Tile(
+            tile_id=3,
+            x=1,
+            y=1,
+            memory=L1Memory(size=4096, bandwidth=64),
+            devices=devices,
+        ),
     ),
 )
 ```
 
 Transport cost uses L1 bandwidth, L2 bandwidth, Manhattan distance, and the
 nearest L2 access point.
+
+Compute cost uses device capabilities. `redmule` is the device name; the device
+kind is `SYSTOLIC`.
+
+The concrete MAGIA chip definition is available as:
+
+```python
+from MAPS.chips import magia_mesh
+
+mesh = magia_mesh()
+```
 
 ## Install
 
