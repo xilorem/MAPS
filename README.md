@@ -2,6 +2,18 @@
 
 MAPS is a standalone planner for distributed execution on homogeneous multi-tile architectures.
 
+
+## Install
+
+Create a virtual environment and install the package with development
+dependencies:
+
+```bash
+python -m venv .venv
+./.venv/bin/python -m pip install -e '.[dev]'
+```
+
+
 ## Project Layout
 
 ```text
@@ -104,28 +116,7 @@ mesh = Mesh(
 )
 ```
 
-Transport cost uses L1 bandwidth, L2 bandwidth, Manhattan distance, and the
-nearest L2 access point.
 
-Compute cost uses device capabilities. `redmule` is the device name; the device
-kind is `SYSTOLIC`.
-
-The concrete MAGIA chip definition is available as:
-
-```python
-from MAPS.chips import magia_mesh
-
-mesh = magia_mesh()
-```
-
-## Install
-
-Create a virtual environment and install the package with development
-dependencies:
-
-```bash
-python -m venv .venv
-./.venv/bin/python -m pip install -e '.[dev]'
 ```
 
 ## Run Tests
