@@ -33,4 +33,5 @@ build/
 Thumbs.db
 
 STATUS.md
-tests/onnx_models/model.onnx
+AGENTS.md
+tests/onnx_models/
