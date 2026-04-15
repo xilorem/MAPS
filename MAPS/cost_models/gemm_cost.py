@@ -24,7 +24,7 @@ class GemmCostModel:
         candidates = preferred or devices
         if not candidates:
             raise ValueError(f"tile {tile.tile_id} has no device for GEMM work")
-        return min(device.cycles(WorkKind.GEMM, amount) for device in candidates)
+        return min(device.cycles(WorkKind.GEMM, amount, tile_work) for device in candidates)
 
 
 def _tensor_slice_num_elements(tensor_slice: TensorSlice) -> int:

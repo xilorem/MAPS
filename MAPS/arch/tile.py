@@ -4,22 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from MAPS.arch.device import Device, DeviceKind, WorkKind
+from MAPS.arch.device import Device, DeviceKind, WorkKind, throughput_cycle_estimator
 from MAPS.arch.memory import L1Memory
-
-DEFAULT_TILE_DEVICES = (
-    Device(
-        name="core",
-        kind=DeviceKind.SCALAR,
-        throughput={
-            WorkKind.GEMM: 1.0,
-            WorkKind.ELEMENTWISE: 1.0,
-            WorkKind.REDUCE_SUM: 1.0,
-            WorkKind.REDUCE_MAX: 1.0,
-            WorkKind.EXP: 1.0,
-        },
-    ),
-)
 
 
 @dataclass(frozen=True)
@@ -29,8 +15,8 @@ class Tile:
     tile_id: int
     x: int
     y: int
+    devices: tuple[Device, ...]
     memory: L1Memory = L1Memory(size=1)
-    devices: tuple[Device, ...] = DEFAULT_TILE_DEVICES
 
     def __post_init__(self) -> None:
         if self.tile_id < 0:

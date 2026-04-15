@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from MAPS.arch import Device, DeviceKind, L1Memory, L2Memory, Mesh, Tile, WorkKind
+from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.devices import IDMA_DEVICE, REDMULE_DEVICE, SCALAR_CORE_DEVICE
 
 MAGIA_MESH_WIDTH = 8
 MAGIA_MESH_HEIGHT = 8
@@ -15,28 +16,9 @@ MAGIA_L2_SIZE_BYTES = 1024 * 1024 * 1024
 
 MAGIA_L2_ACCESS_POINTS = tuple((0, y) for y in range(MAGIA_MESH_HEIGHT))
 
-MAGIA_IDMA_DEVICE = Device(
-    name="idma",
-    kind=DeviceKind.DMA,
-    throughput={WorkKind.DMA: 1.0},
-)
-
-MAGIA_CORE_DEVICE = Device(
-    name="core",
-    kind=DeviceKind.SCALAR,
-    throughput={
-        WorkKind.ELEMENTWISE: 1.0,
-        WorkKind.REDUCE_SUM: 1.0,
-        WorkKind.REDUCE_MAX: 1.0,
-        WorkKind.EXP: 1.0,
-    },
-)
-
-MAGIA_REDMULE_DEVICE = Device(
-    name="redmule",
-    kind=DeviceKind.SYSTOLIC,
-    throughput={WorkKind.GEMM: 192.0},
-)
+MAGIA_IDMA_DEVICE = IDMA_DEVICE
+MAGIA_CORE_DEVICE = SCALAR_CORE_DEVICE
+MAGIA_REDMULE_DEVICE = REDMULE_DEVICE
 
 MAGIA_TILE_DEVICES = (
     MAGIA_IDMA_DEVICE,
