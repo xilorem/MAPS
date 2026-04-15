@@ -13,9 +13,11 @@ def lower_gemm_node(
     node_name: str,
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
 ) -> tuple[OpKind, object]:
     """Lower one ONNX Gemm node into scheduler-side GEMM semantics."""
 
+    del attributes
     if len(inputs) not in (2, 3):
         raise ValueError(f"Gemm node '{node_name}' must have 2 or 3 inputs")
     if len(outputs) != 1:

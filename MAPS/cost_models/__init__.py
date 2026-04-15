@@ -1,6 +1,8 @@
 """Planner-side cost models."""
 
 from .cost import cost_estimator
+from .conv_cost import ConvCostModel
+from .exp_cost import ExpCostModel
 from .gemm_cost import (
     GemmCostModel,
 )
@@ -16,6 +18,8 @@ from .transition_cost import (
 
 __all__ = [
     "GemmCostModel",
+    "ConvCostModel",
+    "ExpCostModel",
     "TransferKind",
     "TransferLeg",
     "TransportCostModel",

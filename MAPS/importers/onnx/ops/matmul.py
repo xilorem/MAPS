@@ -13,9 +13,11 @@ def lower_matmul_node(
     node_name: str,
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
 ) -> tuple[OpKind, object]:
     """Lower one ONNX MatMul node into scheduler-side GEMM semantics."""
 
+    del attributes
     if len(inputs) != 2:
         raise ValueError(f"MatMul node '{node_name}' must have exactly 2 inputs")
     if len(outputs) != 1:

@@ -94,11 +94,12 @@ def parse_node(
         tensors,
     )
 
+    attributes = parse_node_attributes(node)
     lowerer = ONNX_OP_LOWERERS.get(node.op_type)
     if lowerer is None:
         raise NotImplementedError(f"unsupported ONNX op_type: {node.op_type}")
 
-    kind, payload = lowerer(node_name_value, input_tensors, output_tensors)
+    kind, payload = lowerer(node_name_value, input_tensors, output_tensors, attributes)
 
     return Node(
         name=node_name_value,
@@ -106,5 +107,5 @@ def parse_node(
         inputs=input_tensors,
         outputs=output_tensors,
         payload=payload,
-        attributes=parse_node_attributes(node),
+        attributes=attributes,
     )

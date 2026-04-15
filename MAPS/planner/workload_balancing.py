@@ -315,7 +315,7 @@ def _inputs_fit_in_tile_buffers(
 def _input_tile_work_bytes(node: Node, tile_work: object) -> int:
     op = node.payload
     total = 0
-    for tensor_name in ("x", "w", "y"):
+    for tensor_name in ("x", "w", "y", "b"):
         tensor = getattr(op, tensor_name, None)
         tensor_slice = getattr(tile_work, f"{tensor_name}_slice", None)
         if tensor is not None and tensor_slice is not None:

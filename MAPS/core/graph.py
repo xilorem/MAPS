@@ -12,6 +12,8 @@ class OpKind(IntEnum):
     GEMM = 0
     ELEMENTWISE = 1
     REDUCTION = 2
+    CONV = 3
+    EXP = 4
     CUSTOM = 255
 
 

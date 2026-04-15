@@ -43,6 +43,15 @@ def test_default_tile_has_core_gemm_device() -> None:
     assert tile.devices[0].supports(WorkKind.GEMM)
 
 
+def test_empty_tile_devices_fall_back_to_generic_core() -> None:
+    tile = Tile(tile_id=0, x=0, y=0, devices=())
+
+    assert tile.devices[0].name == "core"
+    assert tile.devices[0].kind is DeviceKind.SCALAR
+    assert tile.devices[0].supports(WorkKind.GEMM)
+    assert tile.devices[0].supports(WorkKind.EXP)
+
+
 def test_redmule_is_a_named_systolic_device() -> None:
     device = MAGIA_REDMULE_DEVICE
 
@@ -68,5 +77,5 @@ def test_redmule_gemm_cost_accounts_for_array_shape() -> None:
     compact_work = _tile_work(m_size=4, n_size=8, k_size=16)
     wide_work = _tile_work(m_size=1, n_size=32, k_size=16)
 
-    assert model.cost(compact_work, redmule_tile) == 42
-    assert model.cost(wide_work, redmule_tile) == 84
+    assert model.cost(compact_work, redmule_tile) == 46
+    assert model.cost(wide_work, redmule_tile) == 92

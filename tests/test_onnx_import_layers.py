@@ -3,6 +3,8 @@
 from MAPS.core.graph import OpKind
 from MAPS.importers.onnx.graph_parser import parse_graph
 from MAPS.importers.onnx.utils import build_tensor_producer_table
+from MAPS.ops.conv import ConvLayerOp
+from MAPS.ops.exp import ExpLayerOp
 from MAPS.ops.gemm import GemmLayerOp
 
 
@@ -57,6 +59,57 @@ def test_parse_graph_supports_gemm_bias() -> None:
     assert isinstance(lowered_graph.nodes[0].payload, GemmLayerOp)
     assert lowered_graph.nodes[0].payload.y is not None
     assert lowered_graph.nodes[0].payload.y.name == "b"
+
+
+def test_parse_graph_lowers_conv_to_graph_node() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 8, 8])
+    w = helper.make_tensor_value_info("w", TensorProto.FLOAT, [8, 3, 3, 3])
+    b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 4, 4])
+    node = helper.make_node(
+        "Conv",
+        inputs=["x", "w", "b"],
+        outputs=["y"],
+        name="conv_0",
+        strides=[2, 2],
+        pads=[1, 1, 1, 1],
+    )
+    graph = helper.make_graph([node], "tiny_conv", [x, w, b], [y])
+
+    lowered_graph = parse_graph(graph)
+
+    assert len(lowered_graph.nodes) == 1
+    assert lowered_graph.nodes[0].kind is OpKind.CONV
+    assert isinstance(lowered_graph.nodes[0].payload, ConvLayerOp)
+    assert lowered_graph.nodes[0].payload.strides == (2, 2)
+    assert lowered_graph.nodes[0].payload.pads == (1, 1, 1, 1)
+    assert lowered_graph.nodes[0].payload.b is not None
+    assert lowered_graph.nodes[0].attributes["strides"] == (2, 2)
+
+
+def test_parse_graph_lowers_exp_to_graph_node() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 8])
+    node = helper.make_node("Exp", inputs=["x"], outputs=["y"], name="exp_0")
+    graph = helper.make_graph([node], "tiny_exp", [x], [y])
+
+    lowered_graph = parse_graph(graph)
+
+    assert len(lowered_graph.nodes) == 1
+    assert lowered_graph.nodes[0].kind is OpKind.EXP
+    assert isinstance(lowered_graph.nodes[0].payload, ExpLayerOp)
+    assert lowered_graph.nodes[0].payload.x.name == "x"
+    assert lowered_graph.nodes[0].payload.output.name == "y"
 
 
 def test_build_tensor_producer_table_tracks_outputs() -> None:

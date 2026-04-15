@@ -10,6 +10,8 @@ from MAPS.core.pipeline import Pipeline
 from MAPS.core.stage import InputSourceKind, Stage
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import Transition
+from MAPS.ops.conv import ConvLayerOp
+from MAPS.ops.exp import ExpLayerOp
 from MAPS.ops.gemm import GemmLayerOp
 
 
@@ -103,6 +105,44 @@ def _infer_input_slice_for_tile(
             return op.required_w_slice(output_slice)
         if op.y is not None and tensor == op.y:
             return output_slice
+
+    if node is not None and isinstance(node.payload, ConvLayerOp):
+        op = node.payload
+        if len(stage.outputs) == 0:
+            return _default_tensor_slice(tensor)
+
+        output_binding = stage.outputs[0]
+        output_tensor = pipeline.tensors[output_binding.tensor_id]
+        output_slice = tile_tensor_slice(
+            output_tensor,
+            output_binding.layout,
+            tile,
+        )
+
+        if tensor == op.x:
+            return op.required_x_slice(output_slice)
+        if tensor == op.w:
+            return op.required_w_slice(output_slice)
+        if op.b is not None and tensor == op.b:
+            bias_slice = op.required_b_slice(output_slice)
+            if bias_slice is not None:
+                return bias_slice
+
+    if node is not None and isinstance(node.payload, ExpLayerOp):
+        op = node.payload
+        if len(stage.outputs) == 0:
+            return _default_tensor_slice(tensor)
+
+        output_binding = stage.outputs[0]
+        output_tensor = pipeline.tensors[output_binding.tensor_id]
+        output_slice = tile_tensor_slice(
+            output_tensor,
+            output_binding.layout,
+            tile,
+        )
+
+        if tensor == op.x:
+            return op.required_x_slice(output_slice)
 
     return _default_tensor_slice(tensor)
 
