@@ -1,16 +1,9 @@
 """Reusable tile-local device definitions."""
 
-from .generic import IDMA_DEVICE, SCALAR_CORE_DEVICE
-from .redmule import (
-    REDMULE_ARRAY_HEIGHT,
-    REDMULE_ARRAY_WIDTH,
-    REDMULE_DEVICE,
-)
+from .generic import GENERIC_CORE_DEVICE, IDMA_DEVICE, SCALAR_CORE_DEVICE
 
 __all__ = [
+    "GENERIC_CORE_DEVICE",
     "IDMA_DEVICE",
-    "REDMULE_ARRAY_HEIGHT",
-    "REDMULE_ARRAY_WIDTH",
-    "REDMULE_DEVICE",
     "SCALAR_CORE_DEVICE",
 ]

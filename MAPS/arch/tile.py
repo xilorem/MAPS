@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from MAPS.arch.device import Device, DeviceKind, WorkKind, throughput_cycle_estimator
+from MAPS.arch.device import Device
 from MAPS.arch.memory import L1Memory
+from MAPS.devices.generic import GENERIC_CORE_DEVICE
+
+DEFAULT_TILE_DEVICES = (GENERIC_CORE_DEVICE,)
 
 
 @dataclass(frozen=True)
@@ -15,7 +18,7 @@ class Tile:
     tile_id: int
     x: int
     y: int
-    devices: tuple[Device, ...]
+    devices: tuple[Device, ...] = DEFAULT_TILE_DEVICES
     memory: L1Memory = L1Memory(size=1)
 
     def __post_init__(self) -> None:
@@ -24,7 +27,7 @@ class Tile:
         if self.x < 0 or self.y < 0:
             raise ValueError("tile coordinates must be >= 0")
         if not self.devices:
-            raise ValueError("tile must expose at least one device")
+            object.__setattr__(self, "devices", DEFAULT_TILE_DEVICES)
 
     @property
     def coords(self) -> tuple[int, int]:

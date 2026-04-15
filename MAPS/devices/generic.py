@@ -22,3 +22,16 @@ SCALAR_CORE_DEVICE = Device(
     },
     cycle_estimator=throughput_cycle_estimator,
 )
+
+GENERIC_CORE_DEVICE = Device(
+    name="core",
+    kind=DeviceKind.SCALAR,
+    throughput={
+        WorkKind.GEMM: 1.0,
+        WorkKind.ELEMENTWISE: 1.0,
+        WorkKind.REDUCE_SUM: 1.0,
+        WorkKind.REDUCE_MAX: 1.0,
+        WorkKind.EXP: 1.0,
+    },
+    cycle_estimator=throughput_cycle_estimator,
+)

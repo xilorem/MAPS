@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
-from MAPS.devices import IDMA_DEVICE, REDMULE_DEVICE, SCALAR_CORE_DEVICE
+from MAPS.devices import IDMA_DEVICE, SCALAR_CORE_DEVICE
+from MAPS.devices.redmule import REDMULE_DEVICE
 
 MAGIA_MESH_WIDTH = 8
 MAGIA_MESH_HEIGHT = 8
