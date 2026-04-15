@@ -1,15 +1,18 @@
+from MAPS.arch import WorkKind
 from MAPS.chips import magia_mesh
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.cost_models.exp_cost import ExpCostModel
-from MAPS.ops.exp import ExpLayerOp
+from MAPS.cost_models.elementwise_cost import ElementwiseCostModel
+from MAPS.ops.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
 
 
-def _make_exp_op() -> ExpLayerOp:
-    return ExpLayerOp(
+def _make_exp_op() -> UnaryElementwiseOp:
+    return UnaryElementwiseOp(
+        op_name="Exp",
         x=Tensor(name="x", rank=2, dims=(4, 8), elem_bytes=2),
         output=Tensor(name="out", rank=2, dims=(4, 8), elem_bytes=2),
+        work_kind=WorkKind.EXP,
     )
 
 
@@ -29,7 +32,7 @@ def test_exp_tile_work_uses_output_slice_as_input_slice() -> None:
         tile=submesh.tiles[0],
     )
 
-    assert tile_work.x_slice == tile_work.output_slice
+    assert tile_work.input_tile_slices[0] == tile_work.output_slice
     assert tuple((dim.start, dim.length) for dim in tile_work.output_slice.dims) == (
         (0, 4),
         (0, 4),
@@ -51,4 +54,36 @@ def test_exp_cost_uses_exp_capable_device() -> None:
         tile=submesh.tiles[0],
     )
 
-    assert ExpCostModel().cost(tile_work, submesh.tiles[0]) == 32
+    assert ElementwiseCostModel(work_kind=WorkKind.EXP).cost(tile_work, submesh.tiles[0]) == 32
+
+
+def test_binary_elementwise_tile_work_supports_broadcasting() -> None:
+    mesh = magia_mesh()
+    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
+    lhs = Tensor(name="lhs", rank=2, dims=(4, 8), elem_bytes=2)
+    rhs = Tensor(name="rhs", rank=1, dims=(8,), elem_bytes=2)
+    output = Tensor(name="out", rank=2, dims=(4, 8), elem_bytes=2)
+    op = BinaryElementwiseOp(op_name="Add", lhs=lhs, rhs=rhs, output=output)
+    output_layout = TensorLayout(
+        submesh=submesh,
+        mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
+        mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
+    )
+
+    tile_work = op.build_tile_work(
+        input_layouts=(output_layout, output_layout),
+        output_layouts=(output_layout,),
+        tile=submesh.tiles[1],
+    )
+
+    assert tuple((dim.start, dim.length) for dim in tile_work.output_slice.dims) == (
+        (0, 4),
+        (4, 4),
+    )
+    assert tuple((dim.start, dim.length) for dim in tile_work.input_tile_slices[0].dims) == (
+        (0, 4),
+        (4, 4),
+    )
+    assert tuple((dim.start, dim.length) for dim in tile_work.input_tile_slices[1].dims) == (
+        (4, 4),
+    )

@@ -10,6 +10,7 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRan
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+from MAPS.ops.base import TensorSliceRef
 
 if TYPE_CHECKING:
     from MAPS.core.stage import StageInputBinding, StageOutputBinding
@@ -23,6 +24,27 @@ class GemmTileWork:
     x_slice: TensorSlice
     w_slice: TensorSlice
     y_slice: TensorSlice | None
+    x: Tensor | None = None
+    w: Tensor | None = None
+    y: Tensor | None = None
+    output: Tensor | None = None
+
+    @property
+    def input_slices(self) -> tuple[TensorSliceRef, ...]:
+        refs = []
+        if self.x is not None:
+            refs.append(TensorSliceRef(tensor=self.x, tensor_slice=self.x_slice))
+        if self.w is not None:
+            refs.append(TensorSliceRef(tensor=self.w, tensor_slice=self.w_slice))
+        if self.y is not None and self.y_slice is not None:
+            refs.append(TensorSliceRef(tensor=self.y, tensor_slice=self.y_slice))
+        return tuple(refs)
+
+    @property
+    def output_slices(self) -> tuple[TensorSliceRef, ...]:
+        if self.output is None:
+            return ()
+        return (TensorSliceRef(tensor=self.output, tensor_slice=self.output_slice),)
 
 
 def _full_range(dim: int) -> TensorRange:
@@ -134,6 +156,10 @@ class GemmLayerOp:
             x_slice=self.required_x_slice(output_slice),
             w_slice=self.required_w_slice(output_slice),
             y_slice=self.required_y_slice(output_slice),
+            x=self.x,
+            w=self.w,
+            y=self.y,
+            output=self.output,
         )
 
     def validate_tensors(

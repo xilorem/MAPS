@@ -4,7 +4,7 @@ from MAPS.core.graph import OpKind
 from MAPS.importers.onnx.graph_parser import parse_graph
 from MAPS.importers.onnx.utils import build_tensor_producer_table
 from MAPS.ops.conv import ConvLayerOp
-from MAPS.ops.exp import ExpLayerOp
+from MAPS.ops.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
 from MAPS.ops.gemm import GemmLayerOp
 
 
@@ -106,10 +106,31 @@ def test_parse_graph_lowers_exp_to_graph_node() -> None:
     lowered_graph = parse_graph(graph)
 
     assert len(lowered_graph.nodes) == 1
-    assert lowered_graph.nodes[0].kind is OpKind.EXP
-    assert isinstance(lowered_graph.nodes[0].payload, ExpLayerOp)
+    assert lowered_graph.nodes[0].kind is OpKind.ELEMENTWISE
+    assert isinstance(lowered_graph.nodes[0].payload, UnaryElementwiseOp)
+    assert lowered_graph.nodes[0].payload.op_name == "Exp"
     assert lowered_graph.nodes[0].payload.x.name == "x"
     assert lowered_graph.nodes[0].payload.output.name == "y"
+
+
+def test_parse_graph_lowers_binary_elementwise_to_graph_node() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [4, 8])
+    b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 8])
+    node = helper.make_node("Add", inputs=["x", "b"], outputs=["y"], name="add_0")
+    graph = helper.make_graph([node], "tiny_add", [x, b], [y])
+
+    lowered_graph = parse_graph(graph)
+
+    assert len(lowered_graph.nodes) == 1
+    assert lowered_graph.nodes[0].kind is OpKind.ELEMENTWISE
+    assert isinstance(lowered_graph.nodes[0].payload, BinaryElementwiseOp)
+    assert lowered_graph.nodes[0].payload.op_name == "Add"
 
 
 def test_build_tensor_producer_table_tracks_outputs() -> None:

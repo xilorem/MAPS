@@ -11,7 +11,7 @@ from MAPS.core.stage import InputSourceKind, Stage
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import Transition
 from MAPS.ops.conv import ConvLayerOp
-from MAPS.ops.exp import ExpLayerOp
+from MAPS.ops.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
 from MAPS.ops.gemm import GemmLayerOp
 
 
@@ -128,7 +128,7 @@ def _infer_input_slice_for_tile(
             if bias_slice is not None:
                 return bias_slice
 
-    if node is not None and isinstance(node.payload, ExpLayerOp):
+    if node is not None and isinstance(node.payload, UnaryElementwiseOp | BinaryElementwiseOp):
         op = node.payload
         if len(stage.outputs) == 0:
             return _default_tensor_slice(tensor)
@@ -141,8 +141,14 @@ def _infer_input_slice_for_tile(
             tile,
         )
 
-        if tensor == op.x:
-            return op.required_x_slice(output_slice)
+        tile_work = op.build_tile_work(
+            input_layouts=tuple(binding.layout for binding in stage.outputs),
+            output_layouts=(output_binding.layout,),
+            tile=tile,
+        )
+        for ref in tile_work.input_slices:
+            if tensor == ref.tensor:
+                return ref.tensor_slice
 
     return _default_tensor_slice(tensor)
 

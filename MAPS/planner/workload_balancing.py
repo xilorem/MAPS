@@ -313,6 +313,13 @@ def _inputs_fit_in_tile_buffers(
 
 
 def _input_tile_work_bytes(node: Node, tile_work: object) -> int:
+    input_slices = getattr(tile_work, "input_slices", None)
+    if input_slices is not None:
+        return sum(
+            _tensor_slice_num_bytes(ref.tensor, ref.tensor_slice)
+            for ref in input_slices
+        )
+
     op = node.payload
     total = 0
     for tensor_name in ("x", "w", "y", "b"):

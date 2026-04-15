@@ -2,7 +2,7 @@
 
 from .cost import cost_estimator
 from .conv_cost import ConvCostModel
-from .exp_cost import ExpCostModel
+from .elementwise_cost import ElementwiseCostModel
 from .gemm_cost import (
     GemmCostModel,
 )
@@ -19,7 +19,7 @@ from .transition_cost import (
 __all__ = [
     "GemmCostModel",
     "ConvCostModel",
-    "ExpCostModel",
+    "ElementwiseCostModel",
     "TransferKind",
     "TransferLeg",
     "TransportCostModel",

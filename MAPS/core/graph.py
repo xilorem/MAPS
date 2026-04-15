@@ -13,7 +13,6 @@ class OpKind(IntEnum):
     ELEMENTWISE = 1
     REDUCTION = 2
     CONV = 3
-    EXP = 4
     CUSTOM = 255
 
 
@@ -25,7 +24,7 @@ class Node:
     kind: OpKind
     inputs: tuple[Tensor, ...] = field(default_factory=tuple)
     outputs: tuple[Tensor, ...] = field(default_factory=tuple)
-    payload: object | None = None
+    payload: object | None = None # <operation>LayerOp class
     attributes: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
