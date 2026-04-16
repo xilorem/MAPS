@@ -16,12 +16,30 @@ from MAPS.planner.spatial_mapping import map_spatially, place_stage_plans
 from MAPS.planner.workload_balancing import StagePlan, balance_stage_plans
 
 
-def build_pipeline(model_path: str | Path, mesh: Mesh) -> Pipeline:
+def build_pipeline(
+    model_path: str | Path,
+    mesh: Mesh,
+    print_workload_balancing: bool = False,
+    print_spatial_mapping_costs: bool = False,
+    require_l2_input_access_point: bool = False,
+    require_l2_output_access_point: bool = False,
+) -> Pipeline:
     """Build a pipeline plan from one ONNX model."""
 
     graph = import_onnx_graph(model_path)
-    stage_plans = balance_stage_plans(graph, mesh)
-    mapping = map_spatially(graph, mesh, stage_plans)
+    stage_plans = balance_stage_plans(
+        graph,
+        mesh,
+        debug=print_workload_balancing,
+    )
+    mapping = map_spatially(
+        graph,
+        mesh,
+        stage_plans,
+        print_costs=print_spatial_mapping_costs,
+        require_l2_input_access_point=require_l2_input_access_point,
+        require_l2_output_access_point=require_l2_output_access_point,
+    )
     placed_plans = place_stage_plans(stage_plans, mapping)
     return _build_pipeline_from_graph(graph, mesh, placed_plans)
 

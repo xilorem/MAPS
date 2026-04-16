@@ -141,6 +141,7 @@ def balance_stage_plans(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[i
     _debug(debug, f"[balance_workload] final_tile_counts={tile_counts}")
     _debug(debug, f"[balance_workload] final_logical_shapes={ {stage_id: plan.logical_shape for stage_id, plan in plans.items()} }")
     _debug(debug, f"[balance_workload] final_allocation={ {stage_id: plan.tile_count for stage_id, plan in plans.items()} }")
+    _debug_final_workloads(debug, graph, plans)
     return plans
 
 
@@ -340,6 +341,27 @@ def _tensor_slice_num_bytes(tensor: Tensor, tensor_slice: TensorSlice) -> int:
 def _debug(enabled: bool, message: str) -> None:
     if enabled:
         print(message)
+
+
+def _debug_final_workloads(
+    enabled: bool,
+    graph: Graph,
+    plans: dict[int, StagePlan],
+) -> None:
+    if not enabled:
+        return
+
+    print("[balance_workload] final_stage_workloads:")
+    for stage_id, node in enumerate(graph.nodes):
+        plan = plans[stage_id]
+        workload = _estimate_stage_workload(node, plan)
+        print(
+            "  "
+            f"stage={stage_id} node={node.name} "
+            f"tile_count={plan.tile_count} "
+            f"logical_shape={plan.logical_shape} "
+            f"workload={workload}"
+        )
 
 
 def _topological_stage_ids(graph: Graph) -> tuple[int, ...]:
