@@ -4,12 +4,9 @@ from MAPS.core.graph import Node, OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.pipeline import Pipeline
 from MAPS.core.stage import (
-    InputSource,
-    InputSourceKind,
     Stage,
-    StageInputBinding,
-    StageOutputBinding,
-    StageOutputRef,
+    StageInput,
+    StageOutput,
 )
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -59,22 +56,10 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
         submesh=submesh,
         nodes=(node,),
         inputs=(
-            StageInputBinding(
-                tensor_id=0,
-                source=InputSource(
-                    kind=InputSourceKind.EXTERNAL,
-                    external_base_addr=1,
-                ),
-            ),
-            StageInputBinding(
-                tensor_id=1,
-                source=InputSource(
-                    kind=InputSourceKind.EXTERNAL,
-                    external_base_addr=2,
-                ),
-            ),
+            StageInput.external(tensor_id=0, base_addr=1),
+            StageInput.external(tensor_id=1, base_addr=2),
         ),
-        outputs=(StageOutputBinding(tensor_id=2, layout=layout),),
+        outputs=(StageOutput(tensor_id=2, layout=layout),),
     )
     pipeline = Pipeline(
         name="p0",
@@ -109,15 +94,9 @@ def test_validate_constraints_counts_external_inputs_against_l2() -> None:
         submesh=submesh,
         nodes=(node,),
         inputs=(
-            StageInputBinding(
-                tensor_id=0,
-                source=InputSource(
-                    kind=InputSourceKind.EXTERNAL,
-                    external_base_addr=1,
-                ),
-            ),
+            StageInput.external(tensor_id=0, base_addr=1),
         ),
-        outputs=(StageOutputBinding(tensor_id=1, layout=layout),),
+        outputs=(StageOutput(tensor_id=1, layout=layout),),
     )
     pipeline = Pipeline(
         name="p0",
@@ -161,22 +140,16 @@ def test_validate_constraints_does_not_count_local_inputs_against_l2() -> None:
         submesh=submesh,
         nodes=(producer,),
         inputs=(),
-        outputs=(StageOutputBinding(tensor_id=0, layout=layout),),
+        outputs=(StageOutput(tensor_id=0, layout=layout),),
     )
     stage1 = Stage(
         name="stage1",
         submesh=submesh,
         nodes=(consumer,),
         inputs=(
-            StageInputBinding(
-                tensor_id=0,
-                source=InputSource(
-                    kind=InputSourceKind.LOCAL,
-                    local_output=StageOutputRef(stage_id=0, output_idx=0),
-                ),
-            ),
+            StageInput.local(tensor_id=0, stage_id=0, output_idx=0),
         ),
-        outputs=(StageOutputBinding(tensor_id=1, layout=layout),),
+        outputs=(StageOutput(tensor_id=1, layout=layout),),
     )
     pipeline = Pipeline(
         name="p0",

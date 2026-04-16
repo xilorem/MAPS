@@ -416,24 +416,26 @@ def _edge_shape_mode_costs(
     dst_input_idx = _node_input_index(dst_node, tensor)
     dst_input_layout = dst_input_layouts[dst_input_idx]
 
-    transition = build_transition(
-        name=f"spatial_map_{src_node.name}_to_{dst_node.name}_{tensor.name}",
-        tensor=tensor,
-        tensor_id=0,
-        src_layer_id=0,
-        src_output_idx=0,
-        dst_layer_id=1,
-        dst_input_idx=dst_input_idx,
-        src_layout=src_output_layout,
-        dst_layout=dst_input_layout,
-    )
-    transition_cost = estimate_transition_cost(
-        transition=transition,
-        tensor=tensor,
-        mesh=mesh,
-        model=TransportCostModel(mesh=mesh),
-    )
     model = TransportCostModel(mesh=mesh)
+    l1_cost = 0.0
+    if src_output_layout != dst_input_layout:
+        transition = build_transition(
+            name=f"spatial_map_{src_node.name}_to_{dst_node.name}_{tensor.name}",
+            tensor=tensor,
+            tensor_id=0,
+            src_layer_id=0,
+            src_output_idx=0,
+            dst_layer_id=1,
+            dst_input_idx=dst_input_idx,
+            src_layout=src_output_layout,
+            dst_layout=dst_input_layout,
+        )
+        l1_cost = estimate_transition_cost(
+            transition=transition,
+            tensor=tensor,
+            mesh=mesh,
+            model=model,
+        ).total_cost
 
     max_tile_to_l2_cost = 0.0
     for tile in src_submesh.tiles:
@@ -459,7 +461,7 @@ def _edge_shape_mode_costs(
         )
 
     return {
-        "l1": float(transition_cost.total_cost),
+        "l1": float(l1_cost),
         "l2": float(max_tile_to_l2_cost + max_l2_to_tile_cost),
     }
 
@@ -486,24 +488,26 @@ def _edge_placement_mode_costs(
     dst_input_idx = _node_input_index(dst_node, tensor)
     dst_input_layout = dst_input_layouts[dst_input_idx]
 
-    transition = build_transition(
-        name=f"spatial_map_{src_node.name}_to_{dst_node.name}_{tensor.name}",
-        tensor=tensor,
-        tensor_id=0,
-        src_layer_id=0,
-        src_output_idx=0,
-        dst_layer_id=1,
-        dst_input_idx=dst_input_idx,
-        src_layout=src_output_layout,
-        dst_layout=dst_input_layout,
-    )
     model = TransportCostModel(mesh=src_submesh.mesh)
-    transition_cost = estimate_transition_cost(
-        transition=transition,
-        tensor=tensor,
-        mesh=src_submesh.mesh,
-        model=model,
-    )
+    l1_cost = 0.0
+    if src_output_layout != dst_input_layout:
+        transition = build_transition(
+            name=f"spatial_map_{src_node.name}_to_{dst_node.name}_{tensor.name}",
+            tensor=tensor,
+            tensor_id=0,
+            src_layer_id=0,
+            src_output_idx=0,
+            dst_layer_id=1,
+            dst_input_idx=dst_input_idx,
+            src_layout=src_output_layout,
+            dst_layout=dst_input_layout,
+        )
+        l1_cost = estimate_transition_cost(
+            transition=transition,
+            tensor=tensor,
+            mesh=src_submesh.mesh,
+            model=model,
+        ).total_cost
 
     max_tile_to_l2_cost = 0.0
     for tile in src_submesh.tiles:
@@ -534,7 +538,7 @@ def _edge_placement_mode_costs(
         )
 
     return {
-        "l1": float(transition_cost.total_cost),
+        "l1": float(l1_cost),
         "l2": float(max_tile_to_l2_cost + max_l2_to_tile_cost),
     }
 

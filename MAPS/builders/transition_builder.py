@@ -24,18 +24,7 @@ def build_transition(
     dst_layout.validate_for(tensor)
 
     if src_layout == dst_layout:
-        return Transition(
-            name=name,
-            tensor_id=tensor_id,
-            src_layer_id=src_layer_id,
-            src_output_idx=src_output_idx,
-            dst_layer_id=dst_layer_id,
-            dst_input_idx=dst_input_idx,
-            mode=TransitionMode.LOCAL_REUSE,
-            src_layout=src_layout,
-            dst_layout=dst_layout,
-            fragments=(),
-        )
+        raise ValueError("identical layouts do not require a transition")
 
     fragments = build_direct_remap_fragments(
         tensor=tensor,

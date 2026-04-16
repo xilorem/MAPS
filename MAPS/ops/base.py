@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+
+if TYPE_CHECKING:
+    from MAPS.arch import Tile
+    from MAPS.core.stage import StageInput, StageOutput
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,39 @@ class TileWork(Protocol):
 
     @property
     def output_slices(self) -> tuple[TensorSliceRef, ...]: ...
+
+
+class OpPayload(Protocol):
+    """Planner-facing operation payload interface."""
+
+    @property
+    def cost_model(self) -> object: ...
+
+    def default_input_layouts(
+        self,
+        submesh: Submesh,
+        logical_shape: tuple[int, int] | None = None,
+    ) -> tuple[TensorLayout, ...]: ...
+
+    def default_output_layouts(
+        self,
+        submesh: Submesh,
+        logical_shape: tuple[int, int] | None = None,
+    ) -> tuple[TensorLayout, ...]: ...
+
+    def build_tile_work(
+        self,
+        input_layouts: tuple[TensorLayout, ...],
+        output_layouts: tuple[TensorLayout, ...],
+        tile: "Tile",
+    ) -> TileWork: ...
+
+    def validate_tensors(
+        self,
+        inputs: tuple["StageInput", ...],
+        outputs: tuple["StageOutput", ...],
+        tensors: tuple[Tensor, ...],
+    ) -> None: ...
 
 
 def default_sharded_layout(

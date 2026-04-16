@@ -10,12 +10,13 @@ from .layout import (
     TensorSlice,
 )
 from .stage import (
+    ExternalInput,
     InputSource,
-    InputSourceKind,
+    LocalInput,
     Stage,
-    StageInputBinding,
-    StageOutputBinding,
-    StageOutputRef,
+    StageInput,
+    StageOutput,
+    TransitionInput,
 )
 from .pipeline import Pipeline
 from .submesh import Submesh
@@ -23,10 +24,11 @@ from .tensor import TENSOR_MAX_DIMS, Tensor
 from .transition import Transition, TransitionFragment, TransitionMode
 
 __all__ = [
+    "ExternalInput",
     "Edge",
     "Graph",
     "InputSource",
-    "InputSourceKind",
+    "LocalInput",
     "LayoutAxis",
     "LayoutAxisMode",
     "Mesh",
@@ -34,9 +36,8 @@ __all__ = [
     "OpKind",
     "Pipeline",
     "Stage",
-    "StageInputBinding",
-    "StageOutputBinding",
-    "StageOutputRef",
+    "StageInput",
+    "StageOutput",
     "Submesh",
     "TENSOR_AXIS_NONE",
     "TENSOR_MAX_DIMS",
@@ -47,5 +48,6 @@ __all__ = [
     "Tile",
     "Transition",
     "TransitionFragment",
+    "TransitionInput",
     "TransitionMode",
 ]

@@ -32,6 +32,8 @@ build/
 .DS_Store
 Thumbs.db
 
+# dev files
+dev/
 STATUS.md
 AGENTS.md
 tests/onnx_models/

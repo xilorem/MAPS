@@ -7,12 +7,9 @@ from dataclasses import dataclass, field
 from MAPS.core.layout import TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.pipeline import Pipeline
-from MAPS.core.stage import InputSourceKind, Stage
+from MAPS.core.stage import ExternalInput, LocalInput, Stage, TransitionInput
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import Transition
-from MAPS.ops.conv import ConvLayerOp
-from MAPS.ops.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
-from MAPS.ops.gemm import GemmLayerOp
 
 
 @dataclass(frozen=True)
@@ -86,64 +83,10 @@ def _infer_input_slice_for_tile(
     tensor = pipeline.tensors[stage.inputs[binding_idx].tensor_id]
     node = stage.nodes[0] if len(stage.nodes) == 1 else None
 
-    if node is not None and isinstance(node.payload, GemmLayerOp):
-        op = node.payload
-        if len(stage.outputs) == 0:
-            return _default_tensor_slice(tensor)
-
-        output_binding = stage.outputs[0]
-        output_tensor = pipeline.tensors[output_binding.tensor_id]
-        output_slice = tile_tensor_slice(
-            output_tensor,
-            output_binding.layout,
-            tile,
-        )
-
-        if tensor == op.x:
-            return op.required_x_slice(output_slice)
-        if tensor == op.w:
-            return op.required_w_slice(output_slice)
-        if op.y is not None and tensor == op.y:
-            return output_slice
-
-    if node is not None and isinstance(node.payload, ConvLayerOp):
-        op = node.payload
-        if len(stage.outputs) == 0:
-            return _default_tensor_slice(tensor)
-
-        output_binding = stage.outputs[0]
-        output_tensor = pipeline.tensors[output_binding.tensor_id]
-        output_slice = tile_tensor_slice(
-            output_tensor,
-            output_binding.layout,
-            tile,
-        )
-
-        if tensor == op.x:
-            return op.required_x_slice(output_slice)
-        if tensor == op.w:
-            return op.required_w_slice(output_slice)
-        if op.b is not None and tensor == op.b:
-            bias_slice = op.required_b_slice(output_slice)
-            if bias_slice is not None:
-                return bias_slice
-
-    if node is not None and isinstance(node.payload, UnaryElementwiseOp | BinaryElementwiseOp):
-        op = node.payload
-        if len(stage.outputs) == 0:
-            return _default_tensor_slice(tensor)
-
-        output_binding = stage.outputs[0]
-        output_tensor = pipeline.tensors[output_binding.tensor_id]
-        output_slice = tile_tensor_slice(
-            output_tensor,
-            output_binding.layout,
-            tile,
-        )
-
-        tile_work = op.build_tile_work(
-            input_layouts=tuple(binding.layout for binding in stage.outputs),
-            output_layouts=(output_binding.layout,),
+    if node is not None and node.payload is not None and len(stage.outputs) > 0:
+        tile_work = node.payload.build_tile_work(
+            input_layouts=(),
+            output_layouts=tuple(output.layout for output in stage.outputs),
             tile=tile,
         )
         for ref in tile_work.input_slices:
@@ -172,7 +115,7 @@ def _estimate_stage_l1_memory_for_tile(
         l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
 
     for binding_idx, binding in enumerate(stage.inputs):
-        if binding.source.kind is InputSourceKind.LOCAL:
+        if isinstance(binding.source, LocalInput):
             continue
         tensor = pipeline.tensors[binding.tensor_id]
         tensor_slice = _infer_input_slice_for_tile(
@@ -189,7 +132,7 @@ def _estimate_stage_l1_memory_for_tile(
 def _estimate_stage_l2_memory(stage: Stage, pipeline: Pipeline) -> int:
     l2_memory = 0
     for binding_idx, binding in enumerate(stage.inputs):
-        if binding.source.kind is not InputSourceKind.EXTERNAL:
+        if not isinstance(binding.source, ExternalInput):
             continue
         tensor = pipeline.tensors[binding.tensor_id]
         max_binding_bytes = 0
@@ -215,8 +158,16 @@ def _validate_transition_input(
     binding,
     pipeline: Pipeline,
 ) -> None:
+    if not isinstance(binding.source, TransitionInput):
+        _append_violation(
+            violations,
+            kind="transition_input_source_invalid",
+            message=f"stage {stage_id} input {binding_idx} is not a transition input",
+        )
+        return
+
     transition_id = binding.source.transition_id
-    if transition_id is None or transition_id >= len(pipeline.transitions):
+    if transition_id >= len(pipeline.transitions):
         _append_violation(
             violations,
             kind="transition_reference_out_of_range",
@@ -255,14 +206,22 @@ def _validate_local_input(
     binding,
     pipeline: Pipeline,
 ) -> None:
-    local_output = binding.source.local_output
-    if local_output is None or local_output.stage_id >= len(pipeline.stages):
+    if not isinstance(binding.source, LocalInput):
+        _append_violation(
+            violations,
+            kind="local_input_source_invalid",
+            message=f"stage {stage_id} input {binding_idx} is not a local input",
+        )
+        return
+
+    local_output = binding.source
+    if local_output.stage_id >= len(pipeline.stages):
         _append_violation(
             violations,
             kind="local_output_stage_out_of_range",
             message=(
                 f"stage {stage_id} input {binding_idx} references "
-                f"missing local stage {None if local_output is None else local_output.stage_id}"
+                f"missing local stage {local_output.stage_id}"
             ),
         )
         return
@@ -339,9 +298,9 @@ def _validate_stage(
             )
 
     for binding_idx, binding in enumerate(stage.inputs):
-        if binding.source.kind is InputSourceKind.TRANSITION:
+        if isinstance(binding.source, TransitionInput):
             _validate_transition_input(violations, stage_id, binding_idx, binding, pipeline)
-        elif binding.source.kind is InputSourceKind.LOCAL:
+        elif isinstance(binding.source, LocalInput):
             _validate_local_input(violations, stage_id, binding_idx, binding, pipeline)
 
     if constraints.enforce_l1_capacity:

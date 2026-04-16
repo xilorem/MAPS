@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
+from typing import TYPE_CHECKING
 
 from .tensor import Tensor
+
+if TYPE_CHECKING:
+    from MAPS.ops.base import OpPayload
 
 
 class OpKind(IntEnum):
@@ -24,7 +28,7 @@ class Node:
     kind: OpKind
     inputs: tuple[Tensor, ...] = field(default_factory=tuple)
     outputs: tuple[Tensor, ...] = field(default_factory=tuple)
-    payload: object | None = None # <operation>LayerOp class
+    payload: "OpPayload | None" = None
     attributes: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

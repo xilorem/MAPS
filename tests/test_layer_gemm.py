@@ -2,11 +2,9 @@ from MAPS.core.graph import Node, OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.chips import magia_mesh
 from MAPS.core.stage import (
-    InputSource,
-    InputSourceKind,
     Stage,
-    StageInputBinding,
-    StageOutputBinding,
+    StageInput,
+    StageOutput,
 )
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -21,11 +19,8 @@ def _make_layout(submesh: Submesh) -> TensorLayout:
     )
 
 
-def _make_input_binding(tensor_id: int) -> StageInputBinding:
-    return StageInputBinding(
-        tensor_id=tensor_id,
-        source=InputSource(kind=InputSourceKind.EXTERNAL, external_base_addr=1),
-    )
+def _make_input_binding(tensor_id: int) -> StageInput:
+    return StageInput.external(tensor_id=tensor_id, base_addr=1)
 
 
 def test_stage_requires_at_least_one_node() -> None:
@@ -92,7 +87,7 @@ def test_gemm_payload_validates_binding_indices_and_tensor_shapes() -> None:
             _make_input_binding(1),
             _make_input_binding(3),
         ),
-        outputs=(StageOutputBinding(tensor_id=2, layout=layout),),
+        outputs=(StageOutput(tensor_id=2, layout=layout),),
         tensors=tensors,
     )
 
@@ -119,7 +114,7 @@ def test_gemm_payload_rejects_missing_bound_tensor() -> None:
                 _make_input_binding(0),
                 _make_input_binding(1),
             ),
-            outputs=(StageOutputBinding(tensor_id=2, layout=layout),),
+            outputs=(StageOutput(tensor_id=2, layout=layout),),
             tensors=tensors,
         )
     except ValueError as exc:
@@ -150,7 +145,7 @@ def test_gemm_payload_rejects_incompatible_tensor_element_sizes() -> None:
                 _make_input_binding(0),
                 _make_input_binding(1),
             ),
-            outputs=(StageOutputBinding(tensor_id=2, layout=layout),),
+            outputs=(StageOutput(tensor_id=2, layout=layout),),
             tensors=tensors,
         )
     except ValueError as exc:
@@ -181,7 +176,7 @@ def test_gemm_payload_rejects_incompatible_k_dimension() -> None:
                 _make_input_binding(0),
                 _make_input_binding(1),
             ),
-            outputs=(StageOutputBinding(tensor_id=2, layout=layout),),
+            outputs=(StageOutput(tensor_id=2, layout=layout),),
             tensors=tensors,
         )
     except ValueError as exc:

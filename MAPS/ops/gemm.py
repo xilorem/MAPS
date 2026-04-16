@@ -13,7 +13,7 @@ from MAPS.core.tensor import Tensor
 from MAPS.ops.base import TensorSliceRef
 
 if TYPE_CHECKING:
-    from MAPS.core.stage import StageInputBinding, StageOutputBinding
+    from MAPS.core.stage import StageInput, StageOutput
 
 
 @dataclass(frozen=True)
@@ -164,8 +164,8 @@ class GemmLayerOp:
 
     def validate_tensors(
         self,
-        inputs: tuple[StageInputBinding, ...],
-        outputs: tuple[StageOutputBinding, ...],
+        inputs: tuple[StageInput, ...],
+        outputs: tuple[StageOutput, ...],
         tensors: tuple[Tensor, ...],
     ) -> None:
         """Validate tensor availability against one GEMM stage instance."""

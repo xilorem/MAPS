@@ -10,7 +10,6 @@ from .tensor import Tensor
 
 
 class TransitionMode(IntEnum):
-    LOCAL_REUSE = 0
     DIRECT_REMAP = 1
 
 

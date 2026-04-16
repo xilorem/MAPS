@@ -1,3 +1,5 @@
+import pytest
+
 from MAPS.builders.transition_builder import build_transition
 from MAPS.core.layout import (
     LayoutAxis,
@@ -12,7 +14,7 @@ from MAPS.core.tensor import Tensor
 from MAPS.core.transition import TransitionMode
 
 
-def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
+def test_build_transition_rejects_identical_layouts() -> None:
     mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
@@ -22,20 +24,18 @@ def test_build_transition_uses_local_reuse_for_identical_layouts() -> None:
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
     )
 
-    transition = build_transition(
-        name="reuse",
-        tensor=tensor,
-        tensor_id=0,
-        src_layer_id=0,
-        src_output_idx=0,
-        dst_layer_id=1,
-        dst_input_idx=0,
-        src_layout=layout,
-        dst_layout=layout,
-    )
-
-    assert transition.mode is TransitionMode.LOCAL_REUSE
-    assert transition.fragments == ()
+    with pytest.raises(ValueError, match="identical layouts"):
+        build_transition(
+            name="reuse",
+            tensor=tensor,
+            tensor_id=0,
+            src_layer_id=0,
+            src_output_idx=0,
+            dst_layer_id=1,
+            dst_input_idx=0,
+            src_layout=layout,
+            dst_layout=layout,
+        )
 
 
 def test_build_transition_builds_direct_remap_fragments() -> None:

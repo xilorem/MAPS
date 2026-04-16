@@ -100,26 +100,14 @@ def estimate_transition_cost(transition: Transition,
     """
     Estimate the cost of one transition.
 
-    LOCAL_REUSE:
-    - zero-copy, zero transport cost
-
     DIRECT_REMAP:
     - one round of L1-to-L1 fragment transfers
     """
 
     transition.validate_for(tensor)
 
-    if transition.mode is TransitionMode.LOCAL_REUSE:
-        return TransitionCost(
-            mode=transition.mode,
-            total_bytes=0,
-            legs=(),
-            total_cost=0.0,
-        )
-
     if transition.mode is TransitionMode.DIRECT_REMAP:
         legs = _build_direct_remap_legs(transition, tensor, mesh)
         return _aggregate_transition(legs, model)
-
 
     raise ValueError(f"unsupported transition mode: {transition.mode}")

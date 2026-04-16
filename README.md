@@ -19,11 +19,13 @@ python -m venv .venv
 ```text
 MAPS/
   arch/          Mesh, tile, and memory-system descriptions
+  devices/       Reusable tile-local device definitions
+  chips/         Concrete chip descriptions
   core/          Logical graph IR and scheduled pipeline IR
-  ops/           Operation payloads, currently focused on GEMM
+  ops/           Operation payloads and shared tile-work helpers
   importers/     ONNX frontend
   builders/      Transition and remap builders
-  cost_models/   GEMM, transport, and transition cost models
+  cost_models/   Compute, transport, and transition cost models
   planner/       Workload balancing, spatial mapping, and validation
 tests/           Unit and planner integration tests
 ```
@@ -44,10 +46,16 @@ Scheduled IR describes placed execution:
 - `Stage`: one scheduled layer on a physical submesh
 - `Pipeline`: scheduled stages, tensors, and transitions
 - `Transition`: movement of one tensor between producer and consumer stages
+- `ExternalInput`, `TransitionInput`, and `LocalInput`: typed stage input sources
 
 Tensor layout is separate from physical placement. A physical submesh can be
 interpreted through a different logical shape, as long as the logical area
 matches the number of physical tiles.
+
+Operation behavior lives in `Node.payload`. Payloads implement the planner-facing
+methods for default layouts, tile work, tensor validation, and cost-model
+selection. Simple unary and binary elementwise operations share reusable payloads;
+specialized operations such as GEMM and Conv keep dedicated payloads.
 
 ## Hardware Model
 
@@ -60,25 +68,22 @@ The architecture layer currently models:
 - optional L2 access points
 - tile-local compute devices
 
-Example:
+Tiles get a generic scalar core by default when no device list is provided. For
+MAGIA, use the chip helper:
 
 ```python
-from MAPS.arch import Device, DeviceKind, L1Memory, L2Memory, Mesh, Tile, WorkKind
+from MAPS.chips import magia_mesh
 
-devices = (
-    Device(name="idma", kind=DeviceKind.DMA, throughput={WorkKind.DMA: 1.0}),
-    Device(
-        name="core",
-        kind=DeviceKind.SCALAR,
-        throughput={WorkKind.ELEMENTWISE: 1.0},
-    ),
-    Device(
-        name="redmule",
-        kind=DeviceKind.SYSTOLIC,
-        throughput={WorkKind.GEMM: 192.0},
-    ),
-)
+mesh = magia_mesh()
+```
 
+Custom meshes can provide explicit devices:
+
+```python
+from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.devices import GENERIC_CORE_DEVICE
+
+devices = (GENERIC_CORE_DEVICE,)
 mesh = Mesh(
     width=2,
     height=2,
@@ -124,8 +129,7 @@ mesh = Mesh(
 ./.venv/bin/python -m pytest -q
 ```
 
-Some spatial mapping tests perform exhaustive placement searches and may be
-slower than the rest of the suite.
+
 
 ## Current Planner Flow
 

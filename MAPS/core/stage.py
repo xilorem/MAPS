@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import IntEnum
 from typing import TYPE_CHECKING
 
 from .layout import TensorLayout
@@ -14,15 +13,31 @@ if TYPE_CHECKING:
     from .tensor import Tensor
 
 
-class InputSourceKind(IntEnum):
-    EXTERNAL = 0
-    TRANSITION = 1
-    LOCAL = 2
+@dataclass(frozen=True)
+class ExternalInput:
+    """Stage input read from an external base address."""
+
+    base_addr: int
+
+    def __post_init__(self) -> None:
+        if self.base_addr <= 0:
+            raise ValueError("external inputs require base_addr > 0")
 
 
 @dataclass(frozen=True)
-class StageOutputRef:
-    """Reference to a specific output of another stage."""
+class TransitionInput:
+    """Stage input produced by an explicit transition."""
+
+    transition_id: int
+
+    def __post_init__(self) -> None:
+        if self.transition_id < 0:
+            raise ValueError("transition inputs require transition_id >= 0")
+
+
+@dataclass(frozen=True)
+class LocalInput:
+    """Stage input read from another output in the same pipeline."""
 
     stage_id: int
     output_idx: int
@@ -32,30 +47,12 @@ class StageOutputRef:
             raise ValueError("stage_id and output_idx must be >= 0")
 
 
-@dataclass(frozen=True)
-class InputSource:
-    """How one stage input is wired."""
-
-    kind: InputSourceKind
-    external_base_addr: int | None = None
-    transition_id: int | None = None
-    local_output: StageOutputRef | None = None
-
-    def __post_init__(self) -> None:
-        if self.kind is InputSourceKind.EXTERNAL:
-            if self.external_base_addr is None or self.external_base_addr <= 0:
-                raise ValueError("external inputs require external_base_addr > 0")
-        elif self.kind is InputSourceKind.TRANSITION:
-            if self.transition_id is None or self.transition_id < 0:
-                raise ValueError("transition inputs require transition_id >= 0")
-        elif self.kind is InputSourceKind.LOCAL:
-            if self.local_output is None:
-                raise ValueError("local inputs require a local_output reference")
+InputSource = ExternalInput | TransitionInput | LocalInput
 
 
 @dataclass(frozen=True)
-class StageInputBinding:
-    """One input binding of a stage."""
+class StageInput:
+    """One input of a stage."""
 
     tensor_id: int
     source: InputSource
@@ -64,10 +61,28 @@ class StageInputBinding:
         if self.tensor_id < 0:
             raise ValueError("tensor_id must be >= 0")
 
+    @classmethod
+    def external(cls, tensor_id: int, base_addr: int) -> "StageInput":
+        return cls(tensor_id=tensor_id, source=ExternalInput(base_addr=base_addr))
+
+    @classmethod
+    def transition(cls, tensor_id: int, transition_id: int) -> "StageInput":
+        return cls(
+            tensor_id=tensor_id,
+            source=TransitionInput(transition_id=transition_id),
+        )
+
+    @classmethod
+    def local(cls, tensor_id: int, stage_id: int, output_idx: int) -> "StageInput":
+        return cls(
+            tensor_id=tensor_id,
+            source=LocalInput(stage_id=stage_id, output_idx=output_idx),
+        )
+
 
 @dataclass(frozen=True)
-class StageOutputBinding:
-    """One output binding of a stage."""
+class StageOutput:
+    """One output of a stage."""
 
     tensor_id: int
     layout: TensorLayout
@@ -84,8 +99,8 @@ class Stage:
     name: str
     submesh: Submesh
     nodes: tuple["Node", ...] = field(default_factory=tuple)
-    inputs: tuple[StageInputBinding, ...] = field(default_factory=tuple)
-    outputs: tuple[StageOutputBinding, ...] = field(default_factory=tuple)
+    inputs: tuple[StageInput, ...] = field(default_factory=tuple)
+    outputs: tuple[StageOutput, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -96,10 +111,10 @@ class Stage:
     def validate_tensors(self, tensors: tuple["Tensor", ...]) -> None:
         """Validate bound tensor ids and output layout compatibility."""
 
-        for binding in self.inputs:
-            if binding.tensor_id >= len(tensors):
-                raise ValueError(f"input tensor_id out of range: {binding.tensor_id}")
-        for binding in self.outputs:
-            if binding.tensor_id >= len(tensors):
-                raise ValueError(f"output tensor_id out of range: {binding.tensor_id}")
-            binding.layout.validate_for(tensors[binding.tensor_id])
+        for stage_input in self.inputs:
+            if stage_input.tensor_id >= len(tensors):
+                raise ValueError(f"input tensor_id out of range: {stage_input.tensor_id}")
+        for stage_output in self.outputs:
+            if stage_output.tensor_id >= len(tensors):
+                raise ValueError(f"output tensor_id out of range: {stage_output.tensor_id}")
+            stage_output.layout.validate_for(tensors[stage_output.tensor_id])
