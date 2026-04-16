@@ -9,15 +9,16 @@ from .layout import (
     TensorRange,
     TensorSlice,
 )
-from .stage import (
+from .layer import (
     ExternalInput,
-    InputSource,
+    Layer,
+    LayerInput,
+    LayerInputSource,
+    LayerOutput,
     LocalInput,
-    Stage,
-    StageInput,
-    StageOutput,
     TransitionInput,
 )
+from .stage import Stage
 from .pipeline import Pipeline
 from .submesh import Submesh
 from .tensor import TENSOR_MAX_DIMS, Tensor
@@ -27,7 +28,10 @@ __all__ = [
     "ExternalInput",
     "Edge",
     "Graph",
-    "InputSource",
+    "Layer",
+    "LayerInput",
+    "LayerInputSource",
+    "LayerOutput",
     "LocalInput",
     "LayoutAxis",
     "LayoutAxisMode",
@@ -36,8 +40,6 @@ __all__ = [
     "OpKind",
     "Pipeline",
     "Stage",
-    "StageInput",
-    "StageOutput",
     "Submesh",
     "TENSOR_AXIS_NONE",
     "TENSOR_MAX_DIMS",

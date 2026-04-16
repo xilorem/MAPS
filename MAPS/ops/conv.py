@@ -13,7 +13,7 @@ from MAPS.core.tensor import Tensor
 from MAPS.ops.base import TensorSliceRef
 
 if TYPE_CHECKING:
-    from MAPS.core.stage import StageInput, StageOutput
+    from MAPS.core.layer import LayerInput, LayerOutput
 
 
 @dataclass(frozen=True)
@@ -266,8 +266,8 @@ class ConvLayerOp:
 
     def validate_tensors(
         self,
-        inputs: tuple[StageInput, ...],
-        outputs: tuple[StageOutput, ...],
+        inputs: tuple[LayerInput, ...],
+        outputs: tuple[LayerOutput, ...],
         tensors: tuple[Tensor, ...],
     ) -> None:
         if len(inputs) < 2:

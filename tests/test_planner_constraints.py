@@ -1,13 +1,10 @@
 from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
 from MAPS.chips import magia_mesh
 from MAPS.core.graph import Node, OpKind
+from MAPS.core.layer import Layer, LayerInput, LayerOutput
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.pipeline import Pipeline
-from MAPS.core.stage import (
-    Stage,
-    StageInput,
-    StageOutput,
-)
+from MAPS.core.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
@@ -54,12 +51,16 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
     stage = Stage(
         name="stage0",
         submesh=submesh,
-        nodes=(node,),
-        inputs=(
-            StageInput.external(tensor_id=0, base_addr=1),
-            StageInput.external(tensor_id=1, base_addr=2),
+        layers=(
+            Layer(
+                node=node,
+                inputs=(
+                    LayerInput.external(tensor_id=0, base_addr=1),
+                    LayerInput.external(tensor_id=1, base_addr=2),
+                ),
+                outputs=(LayerOutput(tensor_id=2, layout=layout),),
+            ),
         ),
-        outputs=(StageOutput(tensor_id=2, layout=layout),),
     )
     pipeline = Pipeline(
         name="p0",
@@ -69,7 +70,7 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
         transitions=(),
     )
 
-    report = validate_constraints(pipeline, PlannerConstraints())
+    report = validate_constraints(pipeline, PlannerConstraints(max_stage_nodes=2))
 
     assert report.is_valid
     assert report.violations == ()
@@ -92,11 +93,15 @@ def test_validate_constraints_counts_external_inputs_against_l2() -> None:
     stage = Stage(
         name="stage0",
         submesh=submesh,
-        nodes=(node,),
-        inputs=(
-            StageInput.external(tensor_id=0, base_addr=1),
+        layers=(
+            Layer(
+                node=node,
+                inputs=(
+                    LayerInput.external(tensor_id=0, base_addr=1),
+                ),
+                outputs=(LayerOutput(tensor_id=1, layout=layout),),
+            ),
         ),
-        outputs=(StageOutput(tensor_id=1, layout=layout),),
     )
     pipeline = Pipeline(
         name="p0",
@@ -106,7 +111,7 @@ def test_validate_constraints_counts_external_inputs_against_l2() -> None:
         transitions=(),
     )
 
-    report = validate_constraints(pipeline, PlannerConstraints())
+    report = validate_constraints(pipeline, PlannerConstraints(max_stage_nodes=2))
 
     assert not report.is_valid
     assert any(
@@ -115,7 +120,7 @@ def test_validate_constraints_counts_external_inputs_against_l2() -> None:
     )
 
 
-def test_validate_constraints_does_not_count_local_inputs_against_l2() -> None:
+def test_validate_constraints_does_not_count_local_layer_inputs_against_l2() -> None:
     mesh = _make_mesh(1, 1, l1_size=64, l2_memory=L2Memory(size=1))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
     layout = _make_layout(submesh)
@@ -135,30 +140,31 @@ def test_validate_constraints_does_not_count_local_inputs_against_l2() -> None:
         inputs=(tensors[0],),
         outputs=(tensors[1],),
     )
-    stage0 = Stage(
+    stage = Stage(
         name="stage0",
         submesh=submesh,
-        nodes=(producer,),
-        inputs=(),
-        outputs=(StageOutput(tensor_id=0, layout=layout),),
-    )
-    stage1 = Stage(
-        name="stage1",
-        submesh=submesh,
-        nodes=(consumer,),
-        inputs=(
-            StageInput.local(tensor_id=0, stage_id=0, output_idx=0),
+        layers=(
+            Layer(
+                node=producer,
+                outputs=(LayerOutput(tensor_id=0, layout=layout),),
+            ),
+            Layer(
+                node=consumer,
+                inputs=(
+                    LayerInput.local(tensor_id=0, layer_idx=0),
+                ),
+                outputs=(LayerOutput(tensor_id=1, layout=layout),),
+            ),
         ),
-        outputs=(StageOutput(tensor_id=1, layout=layout),),
     )
     pipeline = Pipeline(
         name="p0",
         mesh=mesh,
         tensors=tensors,
-        stages=(stage0, stage1),
+        stages=(stage,),
         transitions=(),
     )
 
-    report = validate_constraints(pipeline, PlannerConstraints())
+    report = validate_constraints(pipeline, PlannerConstraints(max_stage_nodes=2))
 
     assert report.is_valid

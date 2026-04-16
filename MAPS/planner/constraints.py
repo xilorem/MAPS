@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from MAPS.core.layout import TensorRange, TensorSlice
+from MAPS.core.layer import ExternalInput, Layer, LocalInput, TransitionInput
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.pipeline import Pipeline
-from MAPS.core.stage import ExternalInput, LocalInput, Stage, TransitionInput
+from MAPS.core.stage import Stage
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import Transition
 
@@ -75,18 +76,18 @@ def _default_tensor_slice(tensor: Tensor) -> TensorSlice:
 
 
 def _infer_input_slice_for_tile(
-    stage: Stage,
+    layer: Layer,
     binding_idx: int,
     pipeline: Pipeline,
     tile,
 ) -> TensorSlice:
-    tensor = pipeline.tensors[stage.inputs[binding_idx].tensor_id]
-    node = stage.nodes[0] if len(stage.nodes) == 1 else None
+    tensor = pipeline.tensors[layer.inputs[binding_idx].tensor_id]
+    node = layer.node
 
-    if node is not None and node.payload is not None and len(stage.outputs) > 0:
+    if node.payload is not None and len(layer.outputs) > 0:
         tile_work = node.payload.build_tile_work(
             input_layouts=(),
-            output_layouts=tuple(output.layout for output in stage.outputs),
+            output_layouts=tuple(output.layout for output in layer.outputs),
             tile=tile,
         )
         for ref in tile_work.input_slices:
@@ -105,55 +106,58 @@ def _estimate_stage_l1_memory_for_tile(
 
     l1_memory = 0
 
-    for binding in stage.outputs:
-        tensor = pipeline.tensors[binding.tensor_id]
-        tensor_slice = tile_tensor_slice(
-            tensor,
-            binding.layout,
-            tile,
-        )
-        l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
+    for layer in stage.layers:
+        for binding in layer.outputs:
+            tensor = pipeline.tensors[binding.tensor_id]
+            tensor_slice = tile_tensor_slice(
+                tensor,
+                binding.layout,
+                tile,
+            )
+            l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
 
-    for binding_idx, binding in enumerate(stage.inputs):
-        if isinstance(binding.source, LocalInput):
-            continue
-        tensor = pipeline.tensors[binding.tensor_id]
-        tensor_slice = _infer_input_slice_for_tile(
-            stage,
-            binding_idx,
-            pipeline,
-            tile,
-        )
-        l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
+        for binding_idx, binding in enumerate(layer.inputs):
+            if isinstance(binding.source, LocalInput):
+                continue
+            tensor = pipeline.tensors[binding.tensor_id]
+            tensor_slice = _infer_input_slice_for_tile(
+                layer,
+                binding_idx,
+                pipeline,
+                tile,
+            )
+            l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
 
     return l1_memory
 
 
 def _estimate_stage_l2_memory(stage: Stage, pipeline: Pipeline) -> int:
     l2_memory = 0
-    for binding_idx, binding in enumerate(stage.inputs):
-        if not isinstance(binding.source, ExternalInput):
-            continue
-        tensor = pipeline.tensors[binding.tensor_id]
-        max_binding_bytes = 0
-        for tile in stage.submesh.tiles:
-            tensor_slice = _infer_input_slice_for_tile(
-                stage,
-                binding_idx,
-                pipeline,
-                tile,
-            )
-            max_binding_bytes = max(
-                max_binding_bytes,
-                _tensor_slice_num_bytes(tensor, tensor_slice),
-            )
-        l2_memory += max_binding_bytes
+    for layer in stage.layers:
+        for binding_idx, binding in enumerate(layer.inputs):
+            if not isinstance(binding.source, ExternalInput):
+                continue
+            tensor = pipeline.tensors[binding.tensor_id]
+            max_binding_bytes = 0
+            for tile in stage.submesh.tiles:
+                tensor_slice = _infer_input_slice_for_tile(
+                    layer,
+                    binding_idx,
+                    pipeline,
+                    tile,
+                )
+                max_binding_bytes = max(
+                    max_binding_bytes,
+                    _tensor_slice_num_bytes(tensor, tensor_slice),
+                )
+            l2_memory += max_binding_bytes
     return l2_memory
 
 
 def _validate_transition_input(
     violations: list[ConstraintViolation],
     stage_id: int,
+    layer_idx: int,
     binding_idx: int,
     binding,
     pipeline: Pipeline,
@@ -162,7 +166,10 @@ def _validate_transition_input(
         _append_violation(
             violations,
             kind="transition_input_source_invalid",
-            message=f"stage {stage_id} input {binding_idx} is not a transition input",
+            message=(
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} "
+                "is not a transition input"
+            ),
         )
         return
 
@@ -172,7 +179,7 @@ def _validate_transition_input(
             violations,
             kind="transition_reference_out_of_range",
             message=(
-                f"stage {stage_id} input {binding_idx} references "
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} references "
                 f"missing transition {transition_id}"
             ),
         )
@@ -184,7 +191,7 @@ def _validate_transition_input(
             violations,
             kind="transition_destination_mismatch",
             message=(
-                f"stage {stage_id} input {binding_idx} references transition "
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} references transition "
                 f"{transition_id} targeting stage {transition.dst_layer_id}"
             ),
         )
@@ -193,7 +200,8 @@ def _validate_transition_input(
             violations,
             kind="transition_tensor_mismatch",
             message=(
-                f"stage {stage_id} input {binding_idx} tensor_id {binding.tensor_id} "
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} "
+                f"tensor_id {binding.tensor_id} "
                 f"does not match transition tensor_id {transition.tensor_id}"
             ),
         )
@@ -202,50 +210,54 @@ def _validate_transition_input(
 def _validate_local_input(
     violations: list[ConstraintViolation],
     stage_id: int,
+    layer_idx: int,
     binding_idx: int,
     binding,
-    pipeline: Pipeline,
+    stage: Stage,
 ) -> None:
     if not isinstance(binding.source, LocalInput):
         _append_violation(
             violations,
             kind="local_input_source_invalid",
-            message=f"stage {stage_id} input {binding_idx} is not a local input",
+            message=(
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} "
+                "is not a local input"
+            ),
         )
         return
 
     local_output = binding.source
-    if local_output.stage_id >= len(pipeline.stages):
+    if local_output.tensor_id != binding.tensor_id:
         _append_violation(
             violations,
-            kind="local_output_stage_out_of_range",
+            kind="local_input_tensor_mismatch",
             message=(
-                f"stage {stage_id} input {binding_idx} references "
-                f"missing local stage {local_output.stage_id}"
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} "
+                f"tensor_id {binding.tensor_id} does not match local source "
+                f"tensor_id {local_output.tensor_id}"
+            ),
+        )
+
+    if local_output.layer_idx >= layer_idx:
+        _append_violation(
+            violations,
+            kind="local_output_layer_not_previous",
+            message=(
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} "
+                f"references non-previous local layer {local_output.layer_idx}"
             ),
         )
         return
 
-    local_stage = pipeline.stages[local_output.stage_id]
-    if local_output.output_idx >= len(local_stage.outputs):
+    local_layer = stage.layers[local_output.layer_idx]
+    if not any(output.tensor_id == local_output.tensor_id for output in local_layer.outputs):
         _append_violation(
             violations,
-            kind="local_output_index_out_of_range",
+            kind="local_output_tensor_missing",
             message=(
-                f"stage {stage_id} input {binding_idx} references missing output "
-                f"{local_output.output_idx} on stage {local_output.stage_id}"
-            ),
-        )
-        return
-
-    local_tensor_id = local_stage.outputs[local_output.output_idx].tensor_id
-    if local_tensor_id != binding.tensor_id:
-        _append_violation(
-            violations,
-            kind="local_output_tensor_mismatch",
-            message=(
-                f"stage {stage_id} input {binding_idx} tensor_id {binding.tensor_id} "
-                f"does not match referenced local output tensor_id {local_tensor_id}"
+                f"stage {stage_id} layer {layer_idx} input {binding_idx} "
+                f"references tensor_id {local_output.tensor_id} missing from "
+                f"layer {local_output.layer_idx} outputs"
             ),
         )
 
@@ -265,12 +277,12 @@ def _validate_stage(
             message=f"stage {stage_id} submesh belongs to a different mesh",
         )
 
-    if len(stage.nodes) > constraints.max_stage_nodes:
+    if len(stage.layers) > constraints.max_stage_nodes:
         _append_violation(
             violations,
             kind="stage_node_limit_exceeded",
             message=(
-                f"stage {stage_id} has {len(stage.nodes)} nodes, exceeding "
+                f"stage {stage_id} has {len(stage.layers)} layers, exceeding "
                 f"max_stage_nodes={constraints.max_stage_nodes}"
             ),
         )
@@ -284,24 +296,40 @@ def _validate_stage(
             message=f"stage {stage_id}: {exc}",
         )
 
-    for node in stage.nodes:
+    for layer_idx, layer in enumerate(stage.layers):
+        node = layer.node
         validator = getattr(node.payload, "validate_tensors", None)
         if validator is None:
             continue
         try:
-            validator(stage.inputs, stage.outputs, pipeline.tensors)
+            validator(layer.inputs, layer.outputs, pipeline.tensors)
         except ValueError as exc:
             _append_violation(
                 violations,
                 kind="stage_payload_invalid",
-                message=f"stage {stage_id} node '{node.name}': {exc}",
+                message=f"stage {stage_id} layer {layer_idx} node '{node.name}': {exc}",
             )
 
-    for binding_idx, binding in enumerate(stage.inputs):
-        if isinstance(binding.source, TransitionInput):
-            _validate_transition_input(violations, stage_id, binding_idx, binding, pipeline)
-        elif isinstance(binding.source, LocalInput):
-            _validate_local_input(violations, stage_id, binding_idx, binding, pipeline)
+    for layer_idx, layer in enumerate(stage.layers):
+        for binding_idx, binding in enumerate(layer.inputs):
+            if isinstance(binding.source, TransitionInput):
+                _validate_transition_input(
+                    violations,
+                    stage_id,
+                    layer_idx,
+                    binding_idx,
+                    binding,
+                    pipeline,
+                )
+            elif isinstance(binding.source, LocalInput):
+                _validate_local_input(
+                    violations,
+                    stage_id,
+                    layer_idx,
+                    binding_idx,
+                    binding,
+                    stage,
+                )
 
     if constraints.enforce_l1_capacity:
         for tile in stage.submesh.tiles:
@@ -371,8 +399,10 @@ def _validate_transition(
 
     src_stage = pipeline.stages[transition.src_layer_id]
     dst_stage = pipeline.stages[transition.dst_layer_id]
+    src_outputs = src_stage.layers[-1].outputs
+    dst_inputs = dst_stage.layers[0].inputs
 
-    if transition.src_output_idx >= len(src_stage.outputs):
+    if transition.src_output_idx >= len(src_outputs):
         _append_violation(
             violations,
             kind="transition_src_output_out_of_range",
@@ -382,7 +412,7 @@ def _validate_transition(
             ),
         )
     else:
-        src_output = src_stage.outputs[transition.src_output_idx]
+        src_output = src_outputs[transition.src_output_idx]
         if src_output.tensor_id != transition.tensor_id:
             _append_violation(
                 violations,
@@ -393,7 +423,7 @@ def _validate_transition(
                 ),
             )
 
-    if transition.dst_input_idx >= len(dst_stage.inputs):
+    if transition.dst_input_idx >= len(dst_inputs):
         _append_violation(
             violations,
             kind="transition_dst_input_out_of_range",
@@ -403,7 +433,7 @@ def _validate_transition(
             ),
         )
     else:
-        dst_input = dst_stage.inputs[transition.dst_input_idx]
+        dst_input = dst_inputs[transition.dst_input_idx]
         if dst_input.tensor_id != transition.tensor_id:
             _append_violation(
                 violations,

@@ -11,7 +11,7 @@ from MAPS.core.tensor import Tensor
 
 if TYPE_CHECKING:
     from MAPS.arch import Tile
-    from MAPS.core.stage import StageInput, StageOutput
+    from MAPS.core.layer import LayerInput, LayerOutput
 
 
 @dataclass(frozen=True)
@@ -59,8 +59,8 @@ class OpPayload(Protocol):
 
     def validate_tensors(
         self,
-        inputs: tuple["StageInput", ...],
-        outputs: tuple["StageOutput", ...],
+        inputs: tuple["LayerInput", ...],
+        outputs: tuple["LayerOutput", ...],
         tensors: tuple[Tensor, ...],
     ) -> None: ...
 

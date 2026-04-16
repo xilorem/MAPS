@@ -1,11 +1,8 @@
 from MAPS.core.graph import Node, OpKind
+from MAPS.core.layer import Layer, LayerInput, LayerOutput
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.chips import magia_mesh
-from MAPS.core.stage import (
-    Stage,
-    StageInput,
-    StageOutput,
-)
+from MAPS.core.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
@@ -19,18 +16,18 @@ def _make_layout(submesh: Submesh) -> TensorLayout:
     )
 
 
-def _make_input_binding(tensor_id: int) -> StageInput:
-    return StageInput.external(tensor_id=tensor_id, base_addr=1)
+def _make_input_binding(tensor_id: int) -> LayerInput:
+    return LayerInput.external(tensor_id=tensor_id, base_addr=1)
 
 
-def test_stage_requires_at_least_one_node() -> None:
+def test_stage_requires_at_least_one_layer() -> None:
     mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
 
     try:
-        Stage(name="empty", submesh=submesh, nodes=())
+        Stage(name="empty", submesh=submesh, layers=())
     except ValueError as exc:
-        assert "at least one node" in str(exc)
+        assert "at least one layer" in str(exc)
     else:
         raise AssertionError("expected empty stage construction to fail")
 
@@ -59,9 +56,16 @@ def test_stage_can_group_multiple_nodes() -> None:
         payload=GemmLayerOp(x=y0, w=w1, y=None, output=y1),
     )
 
-    stage = Stage(name="stage0", submesh=submesh, nodes=(node0, node1))
+    stage = Stage(
+        name="stage0",
+        submesh=submesh,
+        layers=(
+            Layer(node=node0),
+            Layer(node=node1),
+        ),
+    )
 
-    assert len(stage.nodes) == 2
+    assert tuple(layer.node for layer in stage.layers) == (node0, node1)
 
 
 def test_gemm_payload_validates_binding_indices_and_tensor_shapes() -> None:
@@ -87,7 +91,7 @@ def test_gemm_payload_validates_binding_indices_and_tensor_shapes() -> None:
             _make_input_binding(1),
             _make_input_binding(3),
         ),
-        outputs=(StageOutput(tensor_id=2, layout=layout),),
+        outputs=(LayerOutput(tensor_id=2, layout=layout),),
         tensors=tensors,
     )
 
@@ -114,7 +118,7 @@ def test_gemm_payload_rejects_missing_bound_tensor() -> None:
                 _make_input_binding(0),
                 _make_input_binding(1),
             ),
-            outputs=(StageOutput(tensor_id=2, layout=layout),),
+            outputs=(LayerOutput(tensor_id=2, layout=layout),),
             tensors=tensors,
         )
     except ValueError as exc:
@@ -145,7 +149,7 @@ def test_gemm_payload_rejects_incompatible_tensor_element_sizes() -> None:
                 _make_input_binding(0),
                 _make_input_binding(1),
             ),
-            outputs=(StageOutput(tensor_id=2, layout=layout),),
+            outputs=(LayerOutput(tensor_id=2, layout=layout),),
             tensors=tensors,
         )
     except ValueError as exc:
@@ -176,7 +180,7 @@ def test_gemm_payload_rejects_incompatible_k_dimension() -> None:
                 _make_input_binding(0),
                 _make_input_binding(1),
             ),
-            outputs=(StageOutput(tensor_id=2, layout=layout),),
+            outputs=(LayerOutput(tensor_id=2, layout=layout),),
             tensors=tensors,
         )
     except ValueError as exc:

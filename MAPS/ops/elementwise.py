@@ -13,7 +13,7 @@ from MAPS.core.tensor import Tensor
 from MAPS.ops.base import TensorSliceRef, default_sharded_layout
 
 if TYPE_CHECKING:
-    from MAPS.core.stage import StageInput, StageOutput
+    from MAPS.core.layer import LayerInput, LayerOutput
 
 
 @dataclass(frozen=True)
@@ -88,8 +88,8 @@ class UnaryElementwiseOp:
 
     def validate_tensors(
         self,
-        inputs: tuple[StageInput, ...],
-        outputs: tuple[StageOutput, ...],
+        inputs: tuple[LayerInput, ...],
+        outputs: tuple[LayerOutput, ...],
         tensors: tuple[Tensor, ...],
     ) -> None:
         if len(inputs) != 1:
@@ -167,8 +167,8 @@ class BinaryElementwiseOp:
 
     def validate_tensors(
         self,
-        inputs: tuple[StageInput, ...],
-        outputs: tuple[StageOutput, ...],
+        inputs: tuple[LayerInput, ...],
+        outputs: tuple[LayerOutput, ...],
         tensors: tuple[Tensor, ...],
     ) -> None:
         if len(inputs) != 2:

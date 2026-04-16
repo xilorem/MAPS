@@ -7,8 +7,9 @@ from pathlib import Path
 from MAPS.arch import Mesh
 from MAPS.builders.transition_builder import build_transition
 from MAPS.core.graph import Graph, Node
+from MAPS.core.layer import Layer, LayerInput, LayerOutput
 from MAPS.core.pipeline import Pipeline
-from MAPS.core.stage import Stage, StageInput, StageOutput
+from MAPS.core.stage import Stage
 from MAPS.core.transition import Transition
 from MAPS.importers.onnx.importer import import_onnx_graph
 from MAPS.planner.spatial_mapping import map_spatially, place_stage_plans
@@ -39,7 +40,6 @@ def _build_pipeline_from_graph(
 
     transitions: list[Transition] = []
     transition_id_by_stage_input: dict[tuple[int, int], int] = {}
-    local_ref_by_stage_input: dict[tuple[int, int], tuple[int, int]] = {}
 
     for dst_stage_id, dst_node in enumerate(graph.nodes):
         dst_plan = stage_plans[dst_stage_id]
@@ -51,13 +51,6 @@ def _build_pipeline_from_graph(
             src_node = graph.nodes[src_stage_id]
             src_plan = stage_plans[src_stage_id]
             src_output_idx = _node_output_index(src_node, tensor)
-            if src_plan.output_layouts[src_output_idx] == dst_plan.input_layouts[dst_input_idx]:
-                local_ref_by_stage_input[(dst_stage_id, dst_input_idx)] = (
-                    src_stage_id,
-                    src_output_idx,
-                )
-                continue
-
             transition_id = len(transitions)
             transitions.append(
                 build_transition(
@@ -81,7 +74,6 @@ def _build_pipeline_from_graph(
             plan=stage_plans[stage_id],
             tensor_id_by_tensor=tensor_id_by_tensor,
             transition_id_by_stage_input=transition_id_by_stage_input,
-            local_ref_by_stage_input=local_ref_by_stage_input,
         )
         for stage_id in range(len(graph.nodes))
     )
@@ -101,22 +93,20 @@ def _build_stage(
     plan: StagePlan,
     tensor_id_by_tensor: dict[object, int],
     transition_id_by_stage_input: dict[tuple[int, int], int],
-    local_ref_by_stage_input: dict[tuple[int, int], tuple[int, int]],
 ) -> Stage:
     node = graph.nodes[stage_id]
     inputs = tuple(
-        StageInput(
+        LayerInput(
             tensor_id=tensor_id_by_tensor[tensor],
             source=_input_source(
                 tensor_id=tensor_id_by_tensor[tensor],
                 transition_id=transition_id_by_stage_input.get((stage_id, input_idx)),
-                local_ref=local_ref_by_stage_input.get((stage_id, input_idx)),
             ),
         )
         for input_idx, tensor in enumerate(node.inputs)
     )
     outputs = tuple(
-        StageOutput(
+        LayerOutput(
             tensor_id=tensor_id_by_tensor[tensor],
             layout=plan.output_layouts[output_idx],
         )
@@ -125,27 +115,17 @@ def _build_stage(
     return Stage(
         name=node.name,
         submesh=plan.output_layouts[0].submesh,
-        nodes=(node,),
-        inputs=inputs,
-        outputs=outputs,
+        layers=(Layer(node=node, inputs=inputs, outputs=outputs),),
     )
 
 
 def _input_source(
     tensor_id: int,
     transition_id: int | None,
-    local_ref: tuple[int, int] | None,
 ):
-    if local_ref is not None:
-        stage_id, output_idx = local_ref
-        return StageInput.local(
-            tensor_id=tensor_id,
-            stage_id=stage_id,
-            output_idx=output_idx,
-        ).source
     if transition_id is None:
-        return StageInput.external(tensor_id=tensor_id, base_addr=tensor_id + 1).source
-    return StageInput.transition(tensor_id=tensor_id, transition_id=transition_id).source
+        return LayerInput.external(tensor_id=tensor_id, base_addr=tensor_id + 1).source
+    return LayerInput.transition(tensor_id=tensor_id, transition_id=transition_id).source
 
 
 def _node_output_index(node: Node, tensor: object) -> int:
