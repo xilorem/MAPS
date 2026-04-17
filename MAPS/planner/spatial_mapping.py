@@ -43,7 +43,7 @@ def map_spatially(
         for stage_id in stage_ids
     }
 
-    progress = _ProgressBar("spatial_mapping placements", len(stage_ids), show_progress)
+    progress = _ProgressBar("evaluating placements", len(stage_ids), show_progress)
     placement_options = {}
     for stage_id in stage_ids:
         placement_options[stage_id] = _placement_options(stage_id, resolved_tile_counts[stage_id], mesh)
@@ -93,7 +93,7 @@ def map_spatially(
     stage_io_cost = {}
     pair_selected = {}
     edge_pair_count = _edge_placement_pair_count(graph, placement_options)
-    progress = _ProgressBar("spatial_mapping variables", edge_pair_count, show_progress)
+    progress = _ProgressBar("creating MILP variables", edge_pair_count, show_progress)
     for edge_idx, edge in enumerate(graph.edges):
         if edge.src is None or edge.dst is None:
             continue
@@ -150,7 +150,7 @@ def map_spatially(
                             <= 1
                         )
 
-    progress = _ProgressBar("spatial_mapping constraints", edge_pair_count, show_progress)
+    progress = _ProgressBar("adding MILP constraints", edge_pair_count, show_progress)
     for edge_idx, edge in enumerate(graph.edges):
         if edge.src is None or edge.dst is None:
             continue
@@ -393,7 +393,7 @@ class _ProgressBar:
         width = 28
         filled = width if self.total == 0 else min(width, int(width * self.current / self.total))
         bar = "#" * filled + "-" * (width - filled)
-        print(f"\r[{self.label}] [{bar}] {self.current}/{self.total}", end="", flush=True)
+        print(f"\r[spatial_mapping] {self.label} [{bar}] {self.current}/{self.total}", end="", flush=True)
 
 
 def _prune_placement_options_losslessly(
@@ -407,7 +407,7 @@ def _prune_placement_options_losslessly(
     }
     pruned: dict[int, tuple[Submesh, ...]] = {}
     progress = _ProgressBar(
-        "spatial_mapping lossless pruning",
+        "applying lossless pruning",
         sum(len(placements) for placements in placement_options.values()),
         show_progress,
     )
@@ -711,7 +711,7 @@ def _edge_placement_costs(
     """Estimate communication costs for every edge and placement-pair combination."""
     costs: dict[tuple[int, int, int, int, int], dict[str, float]] = {}
     progress = _ProgressBar(
-        "spatial_mapping edge costs",
+        "estimating edge costs",
         _edge_placement_pair_count(graph, placement_options),
         show_progress,
     )
@@ -791,7 +791,7 @@ def _stage_io_costs_for_placements(
 
     io_costs: dict[int, dict[int, dict[str, float]]] = {}
     progress = _ProgressBar(
-        "spatial_mapping stage I/O costs",
+        "estimating stage I/O costs",
         sum(len(placements) for placements in placement_options.values()),
         show_progress,
     )
