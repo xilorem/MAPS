@@ -73,7 +73,7 @@ def _write_example_model(model_path: Path) -> None:
 
 
 def main():
-    mesh = magia_mesh()
+    mesh = magia_mesh(width=16, height=16)
     with TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "magia_example.onnx"
         _write_example_model(model_path)
@@ -82,9 +82,12 @@ def main():
             model_path,
             mesh,
             print_workload_balancing=True,
-            print_spatial_mapping_costs=True,
-            require_l2_input_access_point=True,
-            require_l2_output_access_point=True,
+            print_spatial_mapping=True,
+            print_spatial_mapping_progress=True,
+            require_l2_input_access_point=False,
+            require_l2_output_access_point=False,
+            enable_lossless_spatial_mapping_pruning=True,
+            enable_lossy_spatial_mapping_pruning=False,
         )
         report = validate_constraints(pipeline, PlannerConstraints())
 
