@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from MAPS.arch import Device, DeviceKind, WorkKind, throughput_cycle_estimator
+from MAPS.arch import CoreDevice, DMADevice, DeviceKind, WorkKind
 
-IDMA_DEVICE = Device(
+IDMA_DEVICE = DMADevice(
     name="idma",
     kind=DeviceKind.DMA,
     throughput={WorkKind.DMA: 1.0},
-    cycle_estimator=throughput_cycle_estimator,
 )
 
-SCALAR_CORE_DEVICE = Device(
+SCALAR_CORE_DEVICE = CoreDevice(
     name="core",
     kind=DeviceKind.SCALAR,
     throughput={
@@ -20,10 +19,9 @@ SCALAR_CORE_DEVICE = Device(
         WorkKind.REDUCE_MAX: 1.0,
         WorkKind.EXP: 1.0,
     },
-    cycle_estimator=throughput_cycle_estimator,
 )
 
-GENERIC_CORE_DEVICE = Device(
+GENERIC_CORE_DEVICE = CoreDevice(
     name="core",
     kind=DeviceKind.SCALAR,
     throughput={
@@ -33,5 +31,4 @@ GENERIC_CORE_DEVICE = Device(
         WorkKind.REDUCE_MAX: 1.0,
         WorkKind.EXP: 1.0,
     },
-    cycle_estimator=throughput_cycle_estimator,
 )

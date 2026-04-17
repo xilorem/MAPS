@@ -1,4 +1,4 @@
-from MAPS.arch import DeviceKind
+from MAPS.arch import CoreDevice, DMADevice, DeviceKind, SystolicDevice
 from MAPS.chips.magia import (
     MAGIA_L1_RESERVED_BYTES,
     MAGIA_L1_SIZE_BYTES,
@@ -35,8 +35,11 @@ def test_magia_tiles_have_idma_core_and_redmule_devices() -> None:
         devices = {device.name: device for device in tile.devices}
         assert set(devices) == {"idma", "core", "redmule"}
         assert devices["idma"].kind is DeviceKind.DMA
+        assert isinstance(devices["idma"], DMADevice)
         assert devices["core"].kind is DeviceKind.SCALAR
+        assert isinstance(devices["core"], CoreDevice)
         assert devices["redmule"].kind is DeviceKind.SYSTOLIC
+        assert isinstance(devices["redmule"], SystolicDevice)
 
 
 def test_magia_mesh_accepts_custom_shape() -> None:

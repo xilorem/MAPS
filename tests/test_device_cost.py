@@ -1,4 +1,4 @@
-from MAPS.arch import DeviceKind, Tile, WorkKind
+from MAPS.arch import CoreDevice, Device, DeviceKind, SystolicDevice, Tile, WorkKind
 from MAPS.chips import magia_mesh
 from MAPS.chips.magia import MAGIA_REDMULE_DEVICE
 from MAPS.core.layout import TensorRange, TensorSlice
@@ -35,11 +35,25 @@ def _tile_work(m_size: int = 4, n_size: int = 8, k_size: int = 16) -> GemmTileWo
     )
 
 
+def test_device_base_class_is_not_directly_instantiable() -> None:
+    try:
+        Device(
+            name="base",
+            kind=DeviceKind.SCALAR,
+            throughput={WorkKind.ELEMENTWISE: 1.0},
+        )
+    except TypeError as exc:
+        assert "concrete device type" in str(exc)
+    else:
+        raise AssertionError("expected Device base class construction to fail")
+
+
 def test_default_tile_has_core_gemm_device() -> None:
     tile = Tile(tile_id=0, x=0, y=0)
 
     assert tile.devices[0].name == "core"
     assert tile.devices[0].kind is DeviceKind.SCALAR
+    assert isinstance(tile.devices[0], CoreDevice)
     assert tile.devices[0].supports(WorkKind.GEMM)
 
 
@@ -48,6 +62,7 @@ def test_empty_tile_devices_fall_back_to_generic_core() -> None:
 
     assert tile.devices[0].name == "core"
     assert tile.devices[0].kind is DeviceKind.SCALAR
+    assert isinstance(tile.devices[0], CoreDevice)
     assert tile.devices[0].supports(WorkKind.GEMM)
     assert tile.devices[0].supports(WorkKind.EXP)
 
@@ -57,6 +72,9 @@ def test_redmule_is_a_named_systolic_device() -> None:
 
     assert device.name == "redmule"
     assert device.kind is DeviceKind.SYSTOLIC
+    assert isinstance(device, SystolicDevice)
+    assert device.array_width == REDMULE_ARRAY_WIDTH
+    assert device.array_height == REDMULE_ARRAY_HEIGHT
     assert device.supports(WorkKind.GEMM)
     assert device.throughput[WorkKind.GEMM] == REDMULE_ARRAY_WIDTH * REDMULE_ARRAY_HEIGHT
 

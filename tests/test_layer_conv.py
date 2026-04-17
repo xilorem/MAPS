@@ -1,4 +1,4 @@
-from MAPS.arch import Device, DeviceKind, Tile, WorkKind, throughput_cycle_estimator
+from MAPS.arch import CoreDevice, DeviceKind, Tile, WorkKind
 from MAPS.chips import magia_mesh
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
@@ -78,11 +78,10 @@ def test_conv_cost_uses_im2col_gemm_amount() -> None:
         x=0,
         y=0,
         devices=(
-            Device(
+            CoreDevice(
                 name="scalar_gemm",
                 kind=DeviceKind.SCALAR,
                 throughput={WorkKind.GEMM: 1.0},
-                cycle_estimator=throughput_cycle_estimator,
             ),
         ),
     )
