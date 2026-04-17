@@ -37,6 +37,10 @@ def test_exp_tile_work_uses_output_slice_as_input_slice() -> None:
         (0, 4),
         (0, 4),
     )
+    assert tile_work.l1_bytes == sum(
+        ref.num_bytes for ref in tile_work.input_slices + tile_work.output_slices
+    )
+    assert tile_work.fits_l1(submesh.tiles[0])
 
 
 def test_exp_cost_uses_exp_capable_device() -> None:

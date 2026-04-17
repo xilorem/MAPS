@@ -3,6 +3,7 @@ from MAPS.core.layout import (
     LayoutAxisMode,
     TensorLayout,
     TensorRange,
+    TensorSlice,
 )
 from MAPS.chips import magia_mesh
 from MAPS.core.ownership import _apply_layout_axis, tile_tensor_slice
@@ -15,6 +16,37 @@ def _format_slice_ranges(ranges: tuple[TensorRange, ...]) -> str:
         f"axis{axis}=[{dim.start}:{dim.start + dim.length})"
         for axis, dim in enumerate(ranges)
     )
+
+
+def test_tensor_slice_num_elements_and_bytes_use_slice_shape() -> None:
+    tensor = Tensor(name="x", rank=3, dims=(8, 8, 12), elem_bytes=2)
+    tensor_slice = TensorSlice(
+        rank=3,
+        dims=(
+            TensorRange(start=0, length=8),
+            TensorRange(start=2, length=3),
+            TensorRange(start=6, length=4),
+        ),
+    )
+
+    assert tensor_slice.num_elements == 8 * 3 * 4
+    assert tensor.slice_num_bytes(tensor_slice) == tensor_slice.num_elements * 2
+
+
+def test_submesh_tile_helpers_use_global_tile_ids() -> None:
+    mesh = magia_mesh(width=4, height=3)
+    submesh = Submesh(mesh=mesh, submesh_id=0, x0=1, y0=1, width=2, height=2)
+
+    assert submesh.tile_mask == (
+        (1 << mesh.tile_id(1, 1))
+        | (1 << mesh.tile_id(2, 1))
+        | (1 << mesh.tile_id(1, 2))
+        | (1 << mesh.tile_id(2, 2))
+    )
+    assert submesh.intersects_tile_ids({mesh.tile_id(0, 0), mesh.tile_id(2, 1)})
+    assert not submesh.intersects_tile_ids({mesh.tile_id(0, 0), mesh.tile_id(3, 2)})
+    assert submesh.global_to_local(mesh.tile_id(2, 1)) == (1, 0)
+    assert submesh.local_to_global(1, 0) == mesh.tile_id(2, 1)
 
 
 def test_tile_tensor_slice_shards_both_axes() -> None:

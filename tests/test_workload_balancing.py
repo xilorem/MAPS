@@ -3,11 +3,11 @@ from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
-from MAPS.planner import balance_stage_plans, balance_workload
+from MAPS.planner import balance_workload
 from MAPS.planner.workload_balancing import (
     _best_stage_plan_for_tile_count,
+    _has_feasible_submesh_placement,
     _tile_count_options_after_growth,
-    _topological_stage_ids,
 )
 
 
@@ -54,7 +54,10 @@ def test_balance_workload_uses_full_tile_budget() -> None:
     graph = Graph(name="g", nodes=(node0, node1))
     mesh = _mesh_with_l1(4, 4, l1_size=4096)
 
-    allocation = balance_workload(graph, mesh)
+    allocation = {
+        stage_id: plan.tile_count
+        for stage_id, plan in balance_workload(graph, mesh).items()
+    }
 
     assert allocation == {0: 8, 1: 8}
     assert sum(allocation.values()) == mesh.num_tiles
@@ -66,23 +69,36 @@ def test_balance_workload_gives_more_tiles_to_heavier_gemm() -> None:
     graph = Graph(name="g", nodes=(heavy, light))
     mesh = _mesh_with_l1(3, 2, l1_size=32768)
 
-    allocation = balance_workload(graph, mesh)
+    allocation = {
+        stage_id: plan.tile_count
+        for stage_id, plan in balance_workload(graph, mesh).items()
+    }
 
     assert allocation[0] > allocation[1]
     assert sum(allocation.values()) == mesh.num_tiles
 
 
-def test_balance_stage_plans_preserve_layout_decisions() -> None:
+def test_balance_workload_preserves_layout_decisions() -> None:
     node = _gemm_node("gemm", m=16, k=16, n=16)
     graph = Graph(name="g", nodes=(node,))
     mesh = _mesh_with_l1(4, 1, l1_size=32768)
 
-    plans = balance_stage_plans(graph, mesh)
+    plans = balance_workload(graph, mesh)
 
     assert plans[0].tile_count == 4
     assert plans[0].logical_shape[0] * plans[0].logical_shape[1] == 4
     assert plans[0].output_layouts[0].logical_width == plans[0].logical_shape[0]
     assert plans[0].output_layouts[0].logical_height == plans[0].logical_shape[1]
+
+
+def test_balance_workload_starts_from_minimum_l1_feasible_tile_count() -> None:
+    node = _gemm_node("gemm", m=4, k=4, n=4)
+    graph = Graph(name="g", nodes=(node,))
+    mesh = _mesh_with_l1(2, 1, l1_size=80)
+
+    plans = balance_workload(graph, mesh)
+
+    assert plans[0].tile_count == 2
 
 
 def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> None:
@@ -113,7 +129,20 @@ def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:
     assert options == (4,)
 
 
-def test_best_stage_plan_rejects_inputs_that_do_not_fit() -> None:
+def test_submesh_placement_feasibility_requires_global_rectangle_packing() -> None:
+    mesh = Mesh(3, 3, l2_memory=L2Memory(size=4096))
+
+    feasible = _has_feasible_submesh_placement(
+        {0: 4, 1: 4, 2: 1},
+        mesh,
+        placement_masks_by_tile_count={},
+        feasibility_cache={},
+    )
+
+    assert not feasible
+
+
+def test_best_stage_plan_rejects_tile_work_that_does_not_fit() -> None:
     node = _batched_gemm_node("batched", b=4, m=4, k=4, n=4)
     mesh = _mesh_with_l1(1, 1, l1_size=64)
 
@@ -126,30 +155,24 @@ def test_best_stage_plan_rejects_inputs_that_do_not_fit() -> None:
             debug=False,
         )
     except ValueError as exc:
-        assert "full input slices" in str(exc)
+        assert "full tile-work slices" in str(exc)
     else:
-        raise AssertionError("expected full-input L1 fit failure")
+        raise AssertionError("expected tile-work L1 fit failure")
 
 
-def test_topological_stage_ids_follow_graph_edges_not_node_order() -> None:
-    producer = _batched_gemm_node("producer", b=4, m=4, k=4, n=4)
-    consumer_input = producer.outputs[0]
-    consumer_w = Tensor(name="consumer_w", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_out = Tensor(name="consumer_out", rank=3, dims=(4, 4, 4), elem_bytes=2)
-    consumer_op = GemmLayerOp(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
-    consumer = Node(
-        name="consumer",
-        kind=OpKind.GEMM,
-        inputs=(consumer_input, consumer_w),
-        outputs=(consumer_out,),
-        payload=consumer_op,
-    )
-    graph = Graph(
-        name="g",
-        nodes=(consumer, producer),
-        edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
-    )
+def test_best_stage_plan_counts_outputs_in_l1_fit() -> None:
+    node = _gemm_node("gemm", m=4, k=4, n=4)
+    mesh = _mesh_with_l1(1, 1, l1_size=80)
 
-    order = _topological_stage_ids(graph)
-
-    assert order == (1, 0)
+    try:
+        _best_stage_plan_for_tile_count(
+            node=node,
+            mesh=mesh,
+            stage_id=0,
+            tile_count=1,
+            debug=False,
+        )
+    except ValueError as exc:
+        assert "full tile-work slices" in str(exc)
+    else:
+        raise AssertionError("expected output slice to be included in L1 fit")

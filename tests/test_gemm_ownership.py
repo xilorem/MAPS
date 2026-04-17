@@ -56,6 +56,8 @@ def test_build_gemm_tile_work_derives_required_operand_slices() -> None:
         ),
     )
     assert work.y_slice == work.output_slice
+    assert work.l1_bytes == sum(ref.num_bytes for ref in work.input_slices + work.output_slices)
+    assert work.fits_l1(tile)
 
 
 def test_default_gemm_layouts_accept_logical_shape() -> None:

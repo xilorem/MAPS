@@ -56,6 +56,10 @@ def test_conv_tile_work_uses_required_im2col_slices() -> None:
     )
     assert tile_work.b_slice is not None
     assert tuple((dim.start, dim.length) for dim in tile_work.b_slice.dims) == ((0, 8),)
+    assert tile_work.l1_bytes == sum(
+        ref.num_bytes for ref in tile_work.input_slices + tile_work.output_slices
+    )
+    assert tile_work.fits_l1(submesh.tiles[0])
 
 
 def test_conv_cost_uses_im2col_gemm_amount() -> None:

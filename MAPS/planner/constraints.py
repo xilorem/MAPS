@@ -55,13 +55,6 @@ def _append_violation(
     violations.append(ConstraintViolation(kind=kind, message=message))
 
 
-def _tensor_slice_num_bytes(tensor: Tensor, tensor_slice: TensorSlice) -> int:
-    num_elements = 1
-    for dim in tensor_slice.dims:
-        num_elements *= dim.length
-    return num_elements * tensor.elem_bytes
-
-
 def _default_tensor_slice(tensor: Tensor) -> TensorSlice:
     return TensorSlice(
         rank=tensor.rank,
@@ -114,7 +107,7 @@ def _estimate_stage_l1_memory_for_tile(
                 binding.layout,
                 tile,
             )
-            l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
+            l1_memory += tensor.slice_num_bytes(tensor_slice)
 
         for binding_idx, binding in enumerate(layer.inputs):
             if isinstance(binding.source, LocalInput):
@@ -126,7 +119,7 @@ def _estimate_stage_l1_memory_for_tile(
                 pipeline,
                 tile,
             )
-            l1_memory += _tensor_slice_num_bytes(tensor, tensor_slice)
+            l1_memory += tensor.slice_num_bytes(tensor_slice)
 
     return l1_memory
 
@@ -148,7 +141,7 @@ def _estimate_stage_l2_memory(stage: Stage, pipeline: Pipeline) -> int:
                 )
                 max_binding_bytes = max(
                     max_binding_bytes,
-                    _tensor_slice_num_bytes(tensor, tensor_slice),
+                    tensor.slice_num_bytes(tensor_slice),
                 )
             l2_memory += max_binding_bytes
     return l2_memory

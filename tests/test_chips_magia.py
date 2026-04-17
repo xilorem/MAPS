@@ -37,3 +37,13 @@ def test_magia_tiles_have_idma_core_and_redmule_devices() -> None:
         assert devices["idma"].kind is DeviceKind.DMA
         assert devices["core"].kind is DeviceKind.SCALAR
         assert devices["redmule"].kind is DeviceKind.SYSTOLIC
+
+
+def test_magia_mesh_accepts_custom_shape() -> None:
+    mesh = magia_mesh(width=4, height=3)
+
+    assert mesh.shape == (4, 3)
+    assert mesh.num_tiles == 12
+    assert mesh.l2_memory.access_points == ((0, 0), (0, 1), (0, 2))
+    assert [tile.tile_id for tile in mesh.tiles] == list(range(12))
+    assert mesh.tile(3, 2).tile_id == 11

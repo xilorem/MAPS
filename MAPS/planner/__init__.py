@@ -8,14 +8,13 @@ from .constraints import (
 )
 from .plan import build_pipeline
 from .spatial_mapping import map_spatially, place_stage_plans
-from .workload_balancing import StagePlan, balance_stage_plans, balance_workload
+from .workload_balancing import StagePlan, balance_workload
 
 __all__ = [
     "ConstraintReport",
     "ConstraintViolation",
     "PlannerConstraints",
     "StagePlan",
-    "balance_stage_plans",
     "balance_workload",
     "build_pipeline",
     "map_spatially",

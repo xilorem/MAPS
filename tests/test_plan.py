@@ -11,6 +11,7 @@ from MAPS.core.tensor import Tensor
 from MAPS.core.transition import TransitionMode
 from MAPS.ops.gemm import GemmLayerOp
 from MAPS.planner import PlannerConstraints, validate_constraints
+import MAPS.planner.plan as plan_module
 from MAPS.planner.plan import _build_pipeline_from_graph, build_pipeline
 from MAPS.planner.workload_balancing import StagePlan
 
@@ -184,3 +185,101 @@ def test_build_pipeline_parses_balances_maps_and_builds_transitions() -> None:
 
     report = validate_constraints(pipeline, PlannerConstraints())
     assert report.is_valid, report.violations
+
+
+def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch) -> None:
+    try:
+        import onnx
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    seen = {}
+
+    def fake_map_spatially(graph, mesh, stage_plans, **kwargs):
+        seen["enable_lossless_pruning"] = kwargs["enable_lossless_pruning"]
+        seen["max_placements_per_stage"] = kwargs["max_placements_per_stage"]
+        seen["show_progress"] = kwargs["show_progress"]
+        return {
+            0: Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1),
+            1: Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1),
+        }
+
+    monkeypatch.setattr(plan_module, "map_spatially", fake_map_spatially)
+
+    with TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "two_matmuls.onnx"
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+        w0 = helper.make_tensor_value_info("w0", TensorProto.FLOAT, [3, 4])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4])
+        w1 = helper.make_tensor_value_info("w1", TensorProto.FLOAT, [4, 5])
+        z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 5])
+        node0 = helper.make_node("MatMul", inputs=["x", "w0"], outputs=["y"], name="matmul_0")
+        node1 = helper.make_node("MatMul", inputs=["y", "w1"], outputs=["z"], name="matmul_1")
+        graph = helper.make_graph(
+            [node0, node1],
+            "two_matmuls",
+            [x, w0, w1],
+            [z],
+            value_info=[y],
+        )
+        model = helper.make_model(graph)
+        onnx.save(model, model_path)
+
+        build_pipeline(model_path, _mesh_with_l1(2, 2, l1_size=4096))
+
+    assert seen["enable_lossless_pruning"] is False
+    assert seen["max_placements_per_stage"] is None
+    assert seen["show_progress"] is False
+
+
+def test_build_pipeline_can_enable_spatial_mapping_pruning(monkeypatch) -> None:
+    try:
+        import onnx
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    seen = {}
+
+    def fake_map_spatially(graph, mesh, stage_plans, **kwargs):
+        seen["enable_lossless_pruning"] = kwargs["enable_lossless_pruning"]
+        seen["max_placements_per_stage"] = kwargs["max_placements_per_stage"]
+        seen["show_progress"] = kwargs["show_progress"]
+        return {
+            0: Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1),
+            1: Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1),
+        }
+
+    monkeypatch.setattr(plan_module, "map_spatially", fake_map_spatially)
+
+    with TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "two_matmuls.onnx"
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 3])
+        w0 = helper.make_tensor_value_info("w0", TensorProto.FLOAT, [3, 4])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4])
+        w1 = helper.make_tensor_value_info("w1", TensorProto.FLOAT, [4, 5])
+        z = helper.make_tensor_value_info("z", TensorProto.FLOAT, [2, 5])
+        node0 = helper.make_node("MatMul", inputs=["x", "w0"], outputs=["y"], name="matmul_0")
+        node1 = helper.make_node("MatMul", inputs=["y", "w1"], outputs=["z"], name="matmul_1")
+        graph = helper.make_graph(
+            [node0, node1],
+            "two_matmuls",
+            [x, w0, w1],
+            [z],
+            value_info=[y],
+        )
+        model = helper.make_model(graph)
+        onnx.save(model, model_path)
+
+        build_pipeline(
+            model_path,
+            _mesh_with_l1(2, 2, l1_size=4096),
+            print_spatial_mapping_progress=True,
+            enable_lossless_spatial_mapping_pruning=True,
+            enable_lossy_spatial_mapping_pruning=True,
+        )
+
+    assert seen["enable_lossless_pruning"] is True
+    assert seen["max_placements_per_stage"] == 16
+    assert seen["show_progress"] is True
