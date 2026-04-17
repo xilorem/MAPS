@@ -28,23 +28,26 @@ MAGIA_TILE_DEVICES = (
 )
 
 
-def magia_mesh() -> Mesh:
+def magia_mesh(
+    width: int = MAGIA_MESH_WIDTH,
+    height: int = MAGIA_MESH_HEIGHT,
+) -> Mesh:
     return Mesh(
-        width=MAGIA_MESH_WIDTH,
-        height=MAGIA_MESH_HEIGHT,
+        width=width,
+        height=height,
         l2_memory=L2Memory(
             size=MAGIA_L2_SIZE_BYTES,
-            access_points=MAGIA_L2_ACCESS_POINTS,
+            access_points=tuple((0, y) for y in range(height)),
         ),
         tiles=tuple(
             Tile(
-                tile_id=y * MAGIA_MESH_WIDTH + x,
+                tile_id=y * width + x,
                 x=x,
                 y=y,
-                memory=L1Memory(size=MAGIA_L1_SIZE_BYTES),
+                memory=L1Memory(size=MAGIA_L1_USABLE_BYTES),
                 devices=MAGIA_TILE_DEVICES,
             )
-            for y in range(MAGIA_MESH_HEIGHT)
-            for x in range(MAGIA_MESH_WIDTH)
+            for y in range(height)
+            for x in range(width)
         ),
     )
