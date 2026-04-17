@@ -36,6 +36,13 @@ class ElementwiseTileWork:
     def output_slices(self) -> tuple[TensorSliceRef, ...]:
         return (TensorSliceRef(tensor=self.output, tensor_slice=self.output_slice),)
 
+    @property
+    def l1_bytes(self) -> int:
+        return sum(ref.num_bytes for ref in self.input_slices + self.output_slices)
+
+    def fits_l1(self, tile: Tile) -> bool:
+        return self.l1_bytes <= tile.memory.size
+
 
 @dataclass(frozen=True)
 class UnaryElementwiseOp:

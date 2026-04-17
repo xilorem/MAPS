@@ -21,6 +21,10 @@ class TensorSliceRef:
     tensor: Tensor
     tensor_slice: TensorSlice
 
+    @property
+    def num_bytes(self) -> int:
+        return self.tensor.slice_num_bytes(self.tensor_slice)
+
 
 class TileWork(Protocol):
     """Planner-facing tile-work interface."""
@@ -30,6 +34,11 @@ class TileWork(Protocol):
 
     @property
     def output_slices(self) -> tuple[TensorSliceRef, ...]: ...
+
+    @property
+    def l1_bytes(self) -> int: ...
+
+    def fits_l1(self, tile: "Tile") -> bool: ...
 
 
 class OpPayload(Protocol):
