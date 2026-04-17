@@ -10,7 +10,7 @@ dependencies:
 
 ```bash
 python -m venv .venv
-./.venv/bin/python -m pip install -e '.[dev]'
+pip install -e '.[dev]'
 ```
 
 
@@ -68,8 +68,14 @@ The architecture layer currently models:
 - optional L2 access points
 - tile-local compute devices
 
-Tiles get a generic scalar core by default when no device list is provided. For
-MAGIA, use the chip helper:
+Device models are concrete architecture types. `CoreDevice` and `DMADevice`
+currently use throughput-based timing, while `SystolicDevice` owns systolic array
+dimensions and provides GEMM-specific timing. RedMulE is modeled as a
+`SystolicDevice`; IDMA is modeled as a `DMADevice`; scalar cores are modeled as
+`CoreDevice`.
+
+Tiles get a generic scalar `CoreDevice` by default when no device list is
+provided. For MAGIA, use the chip helper:
 
 ```python
 from MAPS.chips import magia_mesh
@@ -144,8 +150,15 @@ pipeline = build_pipeline("model.onnx", mesh)
 Internally this:
 
 1. imports the ONNX graph
-2. balances stage tile counts
-3. searches logical layouts
-4. maps stages to physical submeshes
-5. builds inter-stage transitions
-6. returns a scheduled `Pipeline`
+2. seeds each stage with the smallest L1-feasible tile count
+3. greedily grows the current bottleneck stage while preserving rectangular placement feasibility
+4. chooses logical layouts for the selected stage tile counts
+5. maps stages to physical submeshes
+6. builds inter-stage transitions
+7. returns a scheduled `Pipeline`
+
+Workload balancing returns `StagePlan` objects, not just tile counts. Each plan
+keeps the chosen tile count, logical mesh shape, and input/output layouts. The
+planner debug output can be enabled with `print_workload_balancing=True` to show
+L1 seeding, candidate rejection reasons, committed growth decisions, and the
+final tile-count/workload timeline.
