@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from MAPS.core.layout import TensorSlice
 
 TENSOR_MAX_DIMS = 4
 
@@ -34,3 +38,6 @@ class Tensor:
         for dim in self.dims:
             total *= dim
         return total
+
+    def slice_num_bytes(self, tensor_slice: TensorSlice) -> int:
+        return tensor_slice.num_elements * self.elem_bytes

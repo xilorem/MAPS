@@ -91,3 +91,10 @@ class TensorSlice:
             raise ValueError(f"rank must be in [0, {TENSOR_MAX_DIMS}]")
         if len(self.dims) != self.rank:
             raise ValueError("dims length must match rank")
+
+    @property
+    def num_elements(self) -> int:
+        total = 1
+        for dim in self.dims:
+            total *= dim.length
+        return total
