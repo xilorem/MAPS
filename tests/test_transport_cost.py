@@ -169,3 +169,104 @@ def test_l1_to_l1_transfer_cost_respects_transfer_traffic_policy_channel_selecti
     narrow_cost = TransportCostModel(mesh=narrow_mesh).l1_to_l1(narrow_mesh.tile(0, 0), narrow_mesh.tile(1, 0), 64)
 
     assert narrow_cost > wide_cost
+
+
+def test_l2_transfer_cost_uses_noc_route_to_nearest_l2_endpoint_when_available() -> None:
+    mesh = Mesh(
+        width=3,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=16),
+        tiles=(
+            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=16)),
+            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=16)),
+            Tile(tile_id=2, x=2, y=0, memory=L1Memory(size=4096, bandwidth=16)),
+        ),
+        noc=NoC(
+            nodes=(
+                NoCNode(node_id=0, x=0, y=0),
+                NoCNode(node_id=1, x=1, y=0),
+                NoCNode(node_id=2, x=2, y=0),
+            ),
+            links=(
+                NoCLink(
+                    link_id=0,
+                    src_node_id=0,
+                    dst_node_id=1,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2.0),),
+                    bidirectional=True,
+                ),
+                NoCLink(
+                    link_id=1,
+                    src_node_id=1,
+                    dst_node_id=2,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2.0),),
+                    bidirectional=True,
+                ),
+            ),
+            endpoints=(
+                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
+                NoCEndpoint(endpoint_id=2, kind=EndpointKind.L1, node_id=2, tile_id=2),
+                NoCEndpoint(endpoint_id=3, kind=EndpointKind.L2, node_id=0, name="l2_west"),
+                NoCEndpoint(endpoint_id=4, kind=EndpointKind.L2, node_id=2, name="l2_east"),
+            ),
+        ),
+    )
+    model = TransportCostModel(mesh=mesh)
+
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) < model.l1_to_l2(mesh.tile(1, 0), 64)
+    assert model.l2_to_l1(mesh.tile(2, 0), 64) < model.l2_to_l1(mesh.tile(1, 0), 64)
+
+
+def test_l2_transfer_cost_respects_transfer_traffic_policy_channel_selection() -> None:
+    wide_mesh = Mesh(
+        width=2,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=64),
+        tiles=(
+            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
+            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
+        ),
+        noc=NoC(
+            nodes=(
+                NoCNode(node_id=0, x=0, y=0),
+                NoCNode(node_id=1, x=1, y=0),
+            ),
+            links=(
+                NoCLink(
+                    link_id=0,
+                    src_node_id=0,
+                    dst_node_id=1,
+                    channels=(
+                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1.0),
+                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1.0),
+                    ),
+                    bidirectional=True,
+                ),
+            ),
+            endpoints=(
+                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
+                NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
+            ),
+            traffic_policy=TrafficPolicy({TrafficKind.TRANSFER: (1,)}),
+        ),
+    )
+    narrow_mesh = Mesh(
+        width=2,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=64),
+        tiles=wide_mesh.tiles,
+        noc=NoC(
+            nodes=wide_mesh.noc.nodes,
+            links=wide_mesh.noc.links,
+            endpoints=wide_mesh.noc.endpoints,
+            traffic_policy=TrafficPolicy({TrafficKind.TRANSFER: (0,)}),
+        ),
+    )
+
+    wide_model = TransportCostModel(mesh=wide_mesh)
+    narrow_model = TransportCostModel(mesh=narrow_mesh)
+
+    assert narrow_model.l1_to_l2(narrow_mesh.tile(0, 0), 64) > wide_model.l1_to_l2(wide_mesh.tile(0, 0), 64)
+    assert narrow_model.l2_to_l1(narrow_mesh.tile(0, 0), 64) > wide_model.l2_to_l1(wide_mesh.tile(0, 0), 64)

@@ -62,6 +62,9 @@ class TransportCostModel:
     l1_to_l1_hop_cycles: float = 0.5
 
     def l1_to_l2(self, src: Tile, bytes_: int) -> float:
+        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
+            return self._noc_l1_to_l2(src, bytes_)
+
         bandwidth = self._effective_l2_bandwidth(src)
         return (
             self.l1_to_l2_startup_cycles
@@ -70,6 +73,9 @@ class TransportCostModel:
         )
 
     def l2_to_l1(self, dst: Tile, bytes_: int) -> float:
+        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
+            return self._noc_l2_to_l1(dst, bytes_)
+
         bandwidth = self._effective_l2_bandwidth(dst)
         return (
             self.l2_to_l1_startup_cycles
@@ -114,17 +120,57 @@ class TransportCostModel:
     def _noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
-        route = self.mesh.noc.route_endpoints(src_endpoint.endpoint_id, dst_endpoint.endpoint_id)
+        return self._route_transfer_cost(
+            src_endpoint_id=src_endpoint.endpoint_id,
+            dst_endpoint_id=dst_endpoint.endpoint_id,
+            bytes_=bytes_,
+            startup_cycles=self.l1_to_l1_startup_cycles,
+            bandwidth_limit=min(src.memory.bandwidth, dst.memory.bandwidth),
+        )
+
+    def _noc_l1_to_l2(self, src: Tile, bytes_: int) -> float:
+        src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
+        return min(
+            self._route_transfer_cost(
+                src_endpoint_id=src_endpoint.endpoint_id,
+                dst_endpoint_id=l2_endpoint.endpoint_id,
+                bytes_=bytes_,
+                startup_cycles=self.l1_to_l2_startup_cycles,
+                bandwidth_limit=min(src.memory.bandwidth, self.mesh.l2_memory.bandwidth),
+            )
+            for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
+        )
+
+    def _noc_l2_to_l1(self, dst: Tile, bytes_: int) -> float:
+        dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
+        return min(
+            self._route_transfer_cost(
+                src_endpoint_id=l2_endpoint.endpoint_id,
+                dst_endpoint_id=dst_endpoint.endpoint_id,
+                bytes_=bytes_,
+                startup_cycles=self.l2_to_l1_startup_cycles,
+                bandwidth_limit=min(self.mesh.l2_memory.bandwidth, dst.memory.bandwidth),
+            )
+            for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
+        )
+
+    def _route_transfer_cost(
+        self,
+        src_endpoint_id: int,
+        dst_endpoint_id: int,
+        bytes_: int,
+        startup_cycles: float,
+        bandwidth_limit: float,
+    ) -> float:
+        route = self.mesh.noc.route_endpoints(src_endpoint_id, dst_endpoint_id)
         route_channels = self._route_channels(route, TrafficKind.TRANSFER)
         route_bandwidth = min(
             (channel.width_bytes for channel in route_channels),
             default=float("inf"),
         )
-        bandwidth = min(src.memory.bandwidth, dst.memory.bandwidth, route_bandwidth)
-        return (
-            self.l1_to_l1_startup_cycles
-            + bytes_ / bandwidth
-            + sum(channel.hop_latency_cycles for channel in route_channels)
+        bandwidth = min(bandwidth_limit, route_bandwidth)
+        return startup_cycles + bytes_ / bandwidth + sum(
+            channel.hop_latency_cycles for channel in route_channels
         )
 
     def _route_channels(self, route: NoCRoute, traffic_kind: TrafficKind) -> tuple[NoCChannel, ...]:
