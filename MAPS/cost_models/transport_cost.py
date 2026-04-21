@@ -59,6 +59,17 @@ class TransferCostEstimate:
 
 
 @dataclass(frozen=True)
+class _NoCFlow:
+    """One protocol flow routed over the NoC."""
+
+    src_endpoint_id: int
+    dst_endpoint_id: int
+    bytes: int
+    traffic_kind: TrafficKind
+    bandwidth_limit: float = float("inf")
+
+
+@dataclass(frozen=True)
 class TransportCostModel:
     """Primitive latency model for one transfer leg."""
 
@@ -69,6 +80,8 @@ class TransportCostModel:
     l2_access_hop_cycles: float = 0.5
     l1_to_l1_hop_cycles: float = 0.5
     account_noc_contention: bool = False
+    read_request_bytes: int = 1
+    write_request_bytes: int = 1
 
     def l1_to_l2(self, src: Tile, bytes_: int) -> float:
         if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
@@ -156,12 +169,23 @@ class TransportCostModel:
     def _estimate_noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
-        return self._route_transfer_cost(
-            src_endpoint_id=src_endpoint.endpoint_id,
-            dst_endpoint_id=dst_endpoint.endpoint_id,
-            bytes_=bytes_,
+        return self._route_protocol_cost(
+            flows=(
+                _NoCFlow(
+                    src_endpoint_id=dst_endpoint.endpoint_id,
+                    dst_endpoint_id=src_endpoint.endpoint_id,
+                    bytes=self.read_request_bytes,
+                    traffic_kind=TrafficKind.READ_REQ,
+                ),
+                _NoCFlow(
+                    src_endpoint_id=src_endpoint.endpoint_id,
+                    dst_endpoint_id=dst_endpoint.endpoint_id,
+                    bytes=bytes_,
+                    traffic_kind=TrafficKind.READ_RSP,
+                    bandwidth_limit=min(src.memory.bandwidth, dst.memory.bandwidth),
+                ),
+            ),
             startup_cycles=self.l1_to_l1_startup_cycles,
-            bandwidth_limit=min(src.memory.bandwidth, dst.memory.bandwidth),
         )
 
     def _noc_l1_to_l2(self, src: Tile, bytes_: int) -> float:
@@ -171,12 +195,23 @@ class TransportCostModel:
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         return min(
             (
-                self._route_transfer_cost(
-                    src_endpoint_id=src_endpoint.endpoint_id,
-                    dst_endpoint_id=l2_endpoint.endpoint_id,
-                    bytes_=bytes_,
+                self._route_protocol_cost(
+                    flows=(
+                        _NoCFlow(
+                            src_endpoint_id=src_endpoint.endpoint_id,
+                            dst_endpoint_id=l2_endpoint.endpoint_id,
+                            bytes=self.write_request_bytes,
+                            traffic_kind=TrafficKind.WRITE_REQ,
+                        ),
+                        _NoCFlow(
+                            src_endpoint_id=src_endpoint.endpoint_id,
+                            dst_endpoint_id=l2_endpoint.endpoint_id,
+                            bytes=bytes_,
+                            traffic_kind=TrafficKind.WRITE_DATA,
+                            bandwidth_limit=min(src.memory.bandwidth, self.mesh.l2_memory.bandwidth),
+                        ),
+                    ),
                     startup_cycles=self.l1_to_l2_startup_cycles,
-                    bandwidth_limit=min(src.memory.bandwidth, self.mesh.l2_memory.bandwidth),
                 )
                 for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
             ),
@@ -190,30 +225,53 @@ class TransportCostModel:
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
         return min(
             (
-                self._route_transfer_cost(
-                    src_endpoint_id=l2_endpoint.endpoint_id,
-                    dst_endpoint_id=dst_endpoint.endpoint_id,
-                    bytes_=bytes_,
+                self._route_protocol_cost(
+                    flows=(
+                        _NoCFlow(
+                            src_endpoint_id=dst_endpoint.endpoint_id,
+                            dst_endpoint_id=l2_endpoint.endpoint_id,
+                            bytes=self.read_request_bytes,
+                            traffic_kind=TrafficKind.READ_REQ,
+                        ),
+                        _NoCFlow(
+                            src_endpoint_id=l2_endpoint.endpoint_id,
+                            dst_endpoint_id=dst_endpoint.endpoint_id,
+                            bytes=bytes_,
+                            traffic_kind=TrafficKind.READ_RSP,
+                            bandwidth_limit=min(self.mesh.l2_memory.bandwidth, dst.memory.bandwidth),
+                        ),
+                    ),
                     startup_cycles=self.l2_to_l1_startup_cycles,
-                    bandwidth_limit=min(self.mesh.l2_memory.bandwidth, dst.memory.bandwidth),
                 )
                 for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
             ),
             key=lambda estimate: estimate.total_cost,
         )
 
-    def _route_transfer_cost(
+    def _route_protocol_cost(
         self,
-        src_endpoint_id: int,
-        dst_endpoint_id: int,
-        bytes_: int,
+        flows: tuple[_NoCFlow, ...],
         startup_cycles: float,
-        bandwidth_limit: float,
     ) -> TransferCostEstimate:
-        src_endpoint = self.mesh.noc.endpoint_by_id(src_endpoint_id)
-        dst_endpoint = self.mesh.noc.endpoint_by_id(dst_endpoint_id)
-        route = self.mesh.noc.route_endpoints(src_endpoint_id, dst_endpoint_id)
-        route_channels = self._route_channels(route, TrafficKind.TRANSFER)
+        total_cost = startup_cycles
+        resource_loads: dict[str, float] = {}
+
+        for flow in flows:
+            estimate = self._route_flow_cost(flow)
+            total_cost += estimate.total_cost
+            for resource_id, load in estimate.resource_loads.items():
+                resource_loads[resource_id] = resource_loads.get(resource_id, 0.0) + load
+
+        return TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
+
+    def _route_flow_cost(
+        self,
+        flow: _NoCFlow,
+    ) -> TransferCostEstimate:
+        src_endpoint = self.mesh.noc.endpoint_by_id(flow.src_endpoint_id)
+        dst_endpoint = self.mesh.noc.endpoint_by_id(flow.dst_endpoint_id)
+        route = self.mesh.noc.route_endpoints(flow.src_endpoint_id, flow.dst_endpoint_id)
+        route_channels = self._route_channels(route, flow.traffic_kind)
         src_endpoint_bandwidth = (
             src_endpoint.egress_bandwidth_bytes
             if src_endpoint.egress_bandwidth_bytes is not None
@@ -229,31 +287,30 @@ class TransportCostModel:
             default=float("inf"),
         )
         bandwidth = min(
-            bandwidth_limit,
+            flow.bandwidth_limit,
             src_endpoint_bandwidth,
             dst_endpoint_bandwidth,
             route_bandwidth,
         )
         total_cost = (
-            startup_cycles
-            + src_endpoint.egress_latency_cycles
+            src_endpoint.egress_latency_cycles
             + dst_endpoint.ingress_latency_cycles
-            + bytes_ / bandwidth
+            + flow.bytes / bandwidth
             + sum(channel.hop_latency_cycles for channel in route_channels)
         )
         resource_loads = {}
         if self.account_noc_contention:
             resource_loads = {
-                self._route_resource_id(link_id, channel.channel_id): bytes_ / channel.width_bytes
+                self._route_resource_id(link_id, channel.channel_id): flow.bytes / channel.width_bytes
                 for link_id, channel in zip(route.link_ids, route_channels)
             }
             if src_endpoint.egress_bandwidth_bytes is not None:
                 resource_loads[self._endpoint_resource_id(src_endpoint.endpoint_id, "egress")] = (
-                    bytes_ / src_endpoint.egress_bandwidth_bytes
+                    flow.bytes / src_endpoint.egress_bandwidth_bytes
                 )
             if dst_endpoint.ingress_bandwidth_bytes is not None:
                 resource_loads[self._endpoint_resource_id(dst_endpoint.endpoint_id, "ingress")] = (
-                    bytes_ / dst_endpoint.ingress_bandwidth_bytes
+                    flow.bytes / dst_endpoint.ingress_bandwidth_bytes
                 )
         return TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
 
@@ -261,6 +318,8 @@ class TransportCostModel:
         allowed_channel_ids = ()
         if self.mesh.noc.traffic_policy is not None:
             allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(traffic_kind)
+            if not allowed_channel_ids:
+                allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(TrafficKind.TRANSFER)
 
         selected_channels = []
         for link_id in route.link_ids:

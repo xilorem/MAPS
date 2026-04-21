@@ -119,7 +119,7 @@ def test_l1_to_l1_transfer_cost_uses_noc_route_hops_when_available() -> None:
     assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(2, 0), 64) > model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 64)
 
 
-def test_l1_to_l1_transfer_cost_respects_transfer_traffic_policy_channel_selection() -> None:
+def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel_selection() -> None:
     wide_mesh = Mesh(
         width=2,
         height=1,
@@ -149,7 +149,12 @@ def test_l1_to_l1_transfer_cost_respects_transfer_traffic_policy_channel_selecti
                 NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
                 NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
             ),
-            traffic_policy=TrafficPolicy({TrafficKind.TRANSFER: (1,)}),
+            traffic_policy=TrafficPolicy(
+                {
+                    TrafficKind.READ_REQ: (1,),
+                    TrafficKind.READ_RSP: (1,),
+                }
+            ),
         ),
     )
     narrow_mesh = Mesh(
@@ -161,12 +166,25 @@ def test_l1_to_l1_transfer_cost_respects_transfer_traffic_policy_channel_selecti
             nodes=wide_mesh.noc.nodes,
             links=wide_mesh.noc.links,
             endpoints=wide_mesh.noc.endpoints,
-            traffic_policy=TrafficPolicy({TrafficKind.TRANSFER: (0,)}),
+            traffic_policy=TrafficPolicy(
+                {
+                    TrafficKind.READ_REQ: (0,),
+                    TrafficKind.READ_RSP: (0,),
+                }
+            ),
         ),
     )
 
-    wide_cost = TransportCostModel(mesh=wide_mesh).l1_to_l1(wide_mesh.tile(0, 0), wide_mesh.tile(1, 0), 64)
-    narrow_cost = TransportCostModel(mesh=narrow_mesh).l1_to_l1(narrow_mesh.tile(0, 0), narrow_mesh.tile(1, 0), 64)
+    wide_cost = TransportCostModel(mesh=wide_mesh, read_request_bytes=64).l1_to_l1(
+        wide_mesh.tile(0, 0),
+        wide_mesh.tile(1, 0),
+        64,
+    )
+    narrow_cost = TransportCostModel(mesh=narrow_mesh, read_request_bytes=64).l1_to_l1(
+        narrow_mesh.tile(0, 0),
+        narrow_mesh.tile(1, 0),
+        64,
+    )
 
     assert narrow_cost > wide_cost
 
@@ -218,8 +236,8 @@ def test_l2_transfer_cost_uses_noc_route_to_nearest_l2_endpoint_when_available()
     assert model.l2_to_l1(mesh.tile(2, 0), 64) < model.l2_to_l1(mesh.tile(1, 0), 64)
 
 
-def test_l2_transfer_cost_respects_transfer_traffic_policy_channel_selection() -> None:
-    wide_mesh = Mesh(
+def test_l2_transfer_cost_respects_directional_traffic_policy_channel_selection() -> None:
+    write_wide_read_narrow_mesh = Mesh(
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
@@ -249,27 +267,47 @@ def test_l2_transfer_cost_respects_transfer_traffic_policy_channel_selection() -
                 NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
                 NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
             ),
-            traffic_policy=TrafficPolicy({TrafficKind.TRANSFER: (1,)}),
+            traffic_policy=TrafficPolicy(
+                {
+                    TrafficKind.WRITE_REQ: (0,),
+                    TrafficKind.WRITE_DATA: (1,),
+                    TrafficKind.READ_REQ: (0,),
+                    TrafficKind.READ_RSP: (0,),
+                }
+            ),
         ),
     )
-    narrow_mesh = Mesh(
+    write_narrow_read_wide_mesh = Mesh(
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=wide_mesh.tiles,
+        tiles=write_wide_read_narrow_mesh.tiles,
         noc=NoC(
-            nodes=wide_mesh.noc.nodes,
-            links=wide_mesh.noc.links,
-            endpoints=wide_mesh.noc.endpoints,
-            traffic_policy=TrafficPolicy({TrafficKind.TRANSFER: (0,)}),
+            nodes=write_wide_read_narrow_mesh.noc.nodes,
+            links=write_wide_read_narrow_mesh.noc.links,
+            endpoints=write_wide_read_narrow_mesh.noc.endpoints,
+            traffic_policy=TrafficPolicy(
+                {
+                    TrafficKind.WRITE_REQ: (0,),
+                    TrafficKind.WRITE_DATA: (0,),
+                    TrafficKind.READ_REQ: (0,),
+                    TrafficKind.READ_RSP: (1,),
+                }
+            ),
         ),
     )
 
-    wide_model = TransportCostModel(mesh=wide_mesh)
-    narrow_model = TransportCostModel(mesh=narrow_mesh)
+    write_wide_read_narrow_model = TransportCostModel(mesh=write_wide_read_narrow_mesh)
+    write_narrow_read_wide_model = TransportCostModel(mesh=write_narrow_read_wide_mesh)
 
-    assert narrow_model.l1_to_l2(narrow_mesh.tile(0, 0), 64) > wide_model.l1_to_l2(wide_mesh.tile(0, 0), 64)
-    assert narrow_model.l2_to_l1(narrow_mesh.tile(0, 0), 64) > wide_model.l2_to_l1(wide_mesh.tile(0, 0), 64)
+    assert (
+        write_wide_read_narrow_model.l1_to_l2(write_wide_read_narrow_mesh.tile(0, 0), 64)
+        < write_narrow_read_wide_model.l1_to_l2(write_narrow_read_wide_mesh.tile(0, 0), 64)
+    )
+    assert (
+        write_wide_read_narrow_model.l2_to_l1(write_wide_read_narrow_mesh.tile(0, 0), 64)
+        > write_narrow_read_wide_model.l2_to_l1(write_narrow_read_wide_mesh.tile(0, 0), 64)
+    )
 
 
 def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops() -> None:
@@ -307,8 +345,8 @@ def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops(
     )
     model = TransportCostModel(mesh=mesh)
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 100.0
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 97.0
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 108.0
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 105.0
 
 
 def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() -> None:
@@ -361,13 +399,15 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 96.0
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 91.0
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 96.125
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 91.125
     assert l1_to_l2_estimate.resource_loads == {
-        "noc_endpoint:0:egress": 8.0,
-        "noc_endpoint:1:ingress": 4.0,
+        "noc_endpoint:0:egress": 8.125,
+        "noc_endpoint:1:ingress": 4.0625,
     }
     assert l2_to_l1_estimate.resource_loads == {
+        "noc_endpoint:0:egress": 0.125,
+        "noc_endpoint:1:ingress": 0.0625,
         "noc_endpoint:1:egress": 16.0,
         "noc_endpoint:0:ingress": 2.0,
     }
