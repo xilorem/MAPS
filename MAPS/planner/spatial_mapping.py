@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from MAPS.arch import L2Memory, Mesh
+from MAPS.arch import EndpointKind, L2Memory, Mesh
 from MAPS.builders.transition_builder import build_transition
 from MAPS.cost_models.transition_cost import estimate_transition_cost
 from MAPS.cost_models.transport_cost import TransportCostModel
@@ -310,10 +310,7 @@ def _filter_l2_access_point_placements(
     if not require_l2_input_access_point and not require_l2_output_access_point:
         return placement_options
 
-    access_point_tile_ids = {
-        mesh.tile_id(x, y)
-        for x, y in mesh.l2_memory.access_points
-    }
+    access_point_tile_ids = _l2_access_point_tile_ids(mesh)
     graph_inputs = set(graph.inputs) - set(graph.initializers)
     graph_outputs = set(graph.outputs)
 
@@ -344,6 +341,28 @@ def _filter_l2_access_point_placements(
         filtered[stage_id] = filtered_placements
 
     return filtered
+
+
+def _l2_access_point_tile_ids(mesh: Mesh) -> set[int]:
+    """Return tiles that should count as L2 access points for boundary placement."""
+    if mesh.has_noc:
+        l2_endpoints = mesh.noc.endpoints_of_kind(EndpointKind.L2)
+        if l2_endpoints:
+            tile_ids = {
+                endpoint.tile_id
+                for l2_endpoint in l2_endpoints
+                for endpoint in mesh.noc.endpoints
+                if endpoint.kind is EndpointKind.L1
+                and endpoint.node_id == l2_endpoint.node_id
+                and endpoint.tile_id is not None
+            }
+            if tile_ids:
+                return tile_ids
+
+    return {
+        mesh.tile_id(x, y)
+        for x, y in mesh.l2_memory.access_points
+    }
 
 
 def _edge_placement_pair_count(
