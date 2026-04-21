@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .memory import L2Memory
+from .noc import NoC
 from .tile import Tile
 
 
@@ -15,6 +16,7 @@ class Mesh:
     width: int
     height: int
     l2_memory: L2Memory
+    noc: NoC | None
     _tiles: tuple[Tile, ...] = field(init=False, repr=False)
     
     def __init__(
@@ -23,6 +25,7 @@ class Mesh:
         height: int,      
         l2_memory: L2Memory = L2Memory(size=1),
         tiles: tuple[Tile, ...] | None = None,
+        noc: NoC | None = None,
     ) -> None:
         if width <= 0:
             raise ValueError("width must be > 0")
@@ -42,6 +45,8 @@ class Mesh:
         else:
             self._validate_tiles(width, height, tiles)
 
+        self._validate_noc(width, height, noc)
+        object.__setattr__(self, "noc", noc)
         object.__setattr__(self, "_tiles", tiles)
 
     @staticmethod
@@ -63,6 +68,18 @@ class Mesh:
             if tile.x != expected_x or tile.y != expected_y:
                 raise ValueError("tile coordinates must match row-major tile placement")
 
+    @staticmethod
+    def _validate_noc(width: int, height: int, noc: NoC | None) -> None:
+        if noc is None:
+            return
+
+        num_tiles = width * height
+        for endpoint in noc.endpoints:
+            if endpoint.tile_id is None:
+                continue
+            if not (0 <= endpoint.tile_id < num_tiles):
+                raise ValueError(f"NoC endpoint tile_id out of bounds: {endpoint.tile_id}")
+
     @property
     def x_size(self) -> int:
         return self.width
@@ -82,6 +99,10 @@ class Mesh:
     @property
     def tiles(self) -> tuple[Tile, ...]:
         return self._tiles
+
+    @property
+    def has_noc(self) -> bool:
+        return self.noc is not None
 
     def contains_coord(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
