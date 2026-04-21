@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.arch import (
+    EndpointKind,
+    L1Memory,
+    L2Memory,
+    Mesh,
+    NoC,
+    NoCChannel,
+    NoCEndpoint,
+    NoCLink,
+    NoCNode,
+    Tile,
+)
 from MAPS.devices import IDMA_DEVICE, SCALAR_CORE_DEVICE
 from MAPS.devices.redmule import REDMULE_DEVICE
 
@@ -14,6 +25,8 @@ MAGIA_L1_USABLE_BYTES = 896 * 1024
 MAGIA_L1_STACK_BYTES = 64 * 1024
 MAGIA_L1_RESERVED_BYTES = 64 * 1024
 MAGIA_L2_SIZE_BYTES = 1024 * 1024 * 1024
+MAGIA_NOC_CHANNEL_WIDTH_BYTES = 4
+MAGIA_NOC_HOP_LATENCY_CYCLES = 2.0
 
 MAGIA_L2_ACCESS_POINTS = tuple((0, y) for y in range(MAGIA_MESH_HEIGHT))
 
@@ -28,6 +41,70 @@ MAGIA_TILE_DEVICES = (
 )
 
 
+def _magia_noc_node_id(x: int, y: int, width: int) -> int:
+    return y * width + x
+
+
+def _magia_noc(width: int, height: int) -> NoC:
+    nodes = tuple(
+        NoCNode(
+            node_id=_magia_noc_node_id(x, y, width),
+            x=x,
+            y=y,
+        )
+        for y in range(height)
+        for x in range(width)
+    )
+    link_pairs = tuple(
+        (_magia_noc_node_id(x, y, width), _magia_noc_node_id(x + 1, y, width))
+        for y in range(height)
+        for x in range(width - 1)
+    ) + tuple(
+        (_magia_noc_node_id(x, y, width), _magia_noc_node_id(x, y + 1, width))
+        for y in range(height - 1)
+        for x in range(width)
+    )
+    links = tuple(
+        NoCLink(
+            link_id=link_id,
+            src_node_id=src_node_id,
+            dst_node_id=dst_node_id,
+            channels=(
+                NoCChannel(
+                    channel_id=0,
+                    width_bytes=MAGIA_NOC_CHANNEL_WIDTH_BYTES,
+                    hop_latency_cycles=MAGIA_NOC_HOP_LATENCY_CYCLES,
+                ),
+            ),
+            bidirectional=True,
+        )
+        for link_id, (src_node_id, dst_node_id) in enumerate(link_pairs)
+    )
+    l1_endpoints = tuple(
+        NoCEndpoint(
+            endpoint_id=tile_id,
+            kind=EndpointKind.L1,
+            node_id=tile_id,
+            tile_id=tile_id,
+        )
+        for tile_id in range(width * height)
+    )
+    l2_endpoints = tuple(
+        NoCEndpoint(
+            endpoint_id=width * height + y,
+            kind=EndpointKind.L2,
+            node_id=_magia_noc_node_id(0, y, width),
+            name=f"l2_{y}",
+        )
+        for y in range(height)
+    )
+    return NoC(
+        nodes=nodes,
+        links=links,
+        endpoints=l1_endpoints + l2_endpoints,
+    )
+
+
 def magia_mesh(
     width: int = MAGIA_MESH_WIDTH,
     height: int = MAGIA_MESH_HEIGHT,
@@ -39,6 +116,7 @@ def magia_mesh(
             size=MAGIA_L2_SIZE_BYTES,
             access_points=tuple((0, y) for y in range(height)),
         ),
+        noc=_magia_noc(width, height),
         tiles=tuple(
             Tile(
                 tile_id=y * width + x,
