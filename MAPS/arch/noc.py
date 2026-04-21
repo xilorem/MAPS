@@ -272,6 +272,19 @@ class NoC:
         except KeyError as exc:
             raise ValueError(f"unknown endpoint_id: {endpoint_id}") from exc
 
+    def endpoint_for_tile(self, tile_id: int, kind: EndpointKind = EndpointKind.L1):
+        matches = tuple(
+            endpoint
+            for endpoint in self.endpoints
+            if endpoint.tile_id == tile_id and endpoint.kind is kind
+        )
+        if not matches:
+            raise ValueError(f"no {kind.name} endpoint for tile_id {tile_id}")
+        if len(matches) > 1:
+            raise ValueError(f"multiple {kind.name} endpoints for tile_id {tile_id}")
+        if len(matches) == 1:
+            return matches[0]
+
     def outgoing_links(self, node_id: int) -> tuple[NoCLink, ...]:
         self.node_by_id(node_id)
         return tuple(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from MAPS.arch import Mesh, Tile
+from MAPS.arch import EndpointKind, Mesh, NoCChannel, NoCRoute, Tile, TrafficKind
 
 
 class TransferKind(Enum):
@@ -78,6 +78,9 @@ class TransportCostModel:
         )
 
     def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
+        if self.mesh is not None and self.mesh.has_noc:
+            return self._noc_l1_to_l1(src, dst, bytes_)
+
         bandwidth = min(src.memory.bandwidth, dst.memory.bandwidth)
         return (
             self.l1_to_l1_startup_cycles
@@ -107,3 +110,43 @@ class TransportCostModel:
             abs(tile.x - access_x) + abs(tile.y - access_y)
             for access_x, access_y in self.mesh.l2_memory.access_points
         )
+
+    def _noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
+        src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
+        dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
+        route = self.mesh.noc.route_endpoints(src_endpoint.endpoint_id, dst_endpoint.endpoint_id)
+        route_channels = self._route_channels(route, TrafficKind.TRANSFER)
+        route_bandwidth = min(
+            (channel.width_bytes for channel in route_channels),
+            default=float("inf"),
+        )
+        bandwidth = min(src.memory.bandwidth, dst.memory.bandwidth, route_bandwidth)
+        return (
+            self.l1_to_l1_startup_cycles
+            + bytes_ / bandwidth
+            + sum(channel.hop_latency_cycles for channel in route_channels)
+        )
+
+    def _route_channels(self, route: NoCRoute, traffic_kind: TrafficKind) -> tuple[NoCChannel, ...]:
+        allowed_channel_ids = ()
+        if self.mesh.noc.traffic_policy is not None:
+            allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(traffic_kind)
+
+        selected_channels = []
+        for link_id in route.link_ids:
+            link = self.mesh.noc.link_by_id(link_id)
+            candidates = tuple(
+                channel
+                for channel in link.channels
+                if channel.supports(traffic_kind)
+                and (not allowed_channel_ids or channel.channel_id in allowed_channel_ids)
+            )
+            if not candidates:
+                raise ValueError(
+                    f"no channel available for {traffic_kind.name} on link {link.link_id}"
+                )
+            selected_channels.append(
+                max(candidates, key=lambda channel: (channel.width_bytes, -channel.hop_latency_cycles))
+            )
+
+        return tuple(selected_channels)
