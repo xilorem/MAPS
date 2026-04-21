@@ -20,6 +20,7 @@ class TransitionCost:
     legs: tuple[TransferLeg, ...] = field(default_factory=tuple)
     producer_loads: dict[int, float] = field(default_factory=dict)
     consumer_loads: dict[int, float] = field(default_factory=dict)
+    resource_loads: dict[str, float] = field(default_factory=dict)
     total_cost: float = 0.0
 
 
@@ -44,9 +45,11 @@ def _aggregate_transition(legs: tuple[TransferLeg, ...],
     """
     producer_loads: dict[int, float] = {}
     consumer_loads: dict[int, float] = {}
+    resource_loads: dict[str, float] = {}
 
     for leg in legs:
-        cost = model.cost(leg)
+        estimate = model.estimate(leg)
+        cost = estimate.total_cost
 
         if leg.src_tile is not None:
             producer_loads[leg.src_tile.tile_id] = (
@@ -56,10 +59,13 @@ def _aggregate_transition(legs: tuple[TransferLeg, ...],
             consumer_loads[leg.dst_tile.tile_id] = (
                 consumer_loads.get(leg.dst_tile.tile_id, 0.0) + cost
             )
+        for resource_id, load in estimate.resource_loads.items():
+            resource_loads[resource_id] = resource_loads.get(resource_id, 0.0) + load
 
     total_cost = max(
         max(producer_loads.values(), default=0.0),
         max(consumer_loads.values(), default=0.0),
+        max(resource_loads.values(), default=0.0),
     )
 
     return TransitionCost(
@@ -68,6 +74,7 @@ def _aggregate_transition(legs: tuple[TransferLeg, ...],
         legs=legs,
         producer_loads=producer_loads,
         consumer_loads=consumer_loads,
+        resource_loads=resource_loads,
         total_cost=total_cost,
     )
 

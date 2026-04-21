@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from MAPS.arch import EndpointKind, Mesh, NoCChannel, NoCRoute, Tile, TrafficKind
@@ -51,6 +51,14 @@ class TransferLeg:
 
 
 @dataclass(frozen=True)
+class TransferCostEstimate:
+    """Cost plus shared-resource loads for one transfer leg."""
+
+    total_cost: float
+    resource_loads: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TransportCostModel:
     """Primitive latency model for one transfer leg."""
 
@@ -60,6 +68,7 @@ class TransportCostModel:
     l1_to_l1_startup_cycles: float = 75.0
     l2_access_hop_cycles: float = 0.5
     l1_to_l1_hop_cycles: float = 0.5
+    account_noc_contention: bool = False
 
     def l1_to_l2(self, src: Tile, bytes_: int) -> float:
         if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
@@ -94,14 +103,20 @@ class TransportCostModel:
             + self.l1_to_l1_hop_cycles * src.manhattan_distance(dst)
         )
 
-    def cost(self, leg: TransferLeg) -> float:
+    def estimate(self, leg: TransferLeg) -> TransferCostEstimate:
         if leg.kind is TransferKind.L1_TO_L2:
-            return self.l1_to_l2(leg.src_tile, leg.bytes)
+            return self._estimate_l1_to_l2(leg.src_tile, leg.bytes)
         if leg.kind is TransferKind.L2_TO_L1:
-            return self.l2_to_l1(leg.dst_tile, leg.bytes)
+            return self._estimate_l2_to_l1(leg.dst_tile, leg.bytes)
         if leg.kind is TransferKind.L1_TO_L1:
-            return self.l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
+            return self._estimate_l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
         raise ValueError(f"unsupported transfer kind: {leg.kind}")
+
+    def cost(self, leg: TransferLeg) -> float:
+        return self.estimate(leg).total_cost
+
+    def resource_loads(self, leg: TransferLeg) -> dict[str, float]:
+        return self.estimate(leg).resource_loads
 
     def _effective_l2_bandwidth(self, tile: Tile) -> int:
         if self.mesh is None:
@@ -117,7 +132,28 @@ class TransportCostModel:
             for access_x, access_y in self.mesh.l2_memory.access_points
         )
 
+    def _estimate_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
+        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
+            return self._estimate_noc_l1_to_l2(src, bytes_)
+
+        return TransferCostEstimate(total_cost=self.l1_to_l2(src, bytes_))
+
+    def _estimate_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
+        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
+            return self._estimate_noc_l2_to_l1(dst, bytes_)
+
+        return TransferCostEstimate(total_cost=self.l2_to_l1(dst, bytes_))
+
+    def _estimate_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
+        if self.mesh is not None and self.mesh.has_noc:
+            return self._estimate_noc_l1_to_l1(src, dst, bytes_)
+
+        return TransferCostEstimate(total_cost=self.l1_to_l1(src, dst, bytes_))
+
     def _noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
+        return self._estimate_noc_l1_to_l1(src, dst, bytes_).total_cost
+
+    def _estimate_noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
         return self._route_transfer_cost(
@@ -129,29 +165,41 @@ class TransportCostModel:
         )
 
     def _noc_l1_to_l2(self, src: Tile, bytes_: int) -> float:
+        return self._estimate_noc_l1_to_l2(src, bytes_).total_cost
+
+    def _estimate_noc_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         return min(
-            self._route_transfer_cost(
-                src_endpoint_id=src_endpoint.endpoint_id,
-                dst_endpoint_id=l2_endpoint.endpoint_id,
-                bytes_=bytes_,
-                startup_cycles=self.l1_to_l2_startup_cycles,
-                bandwidth_limit=min(src.memory.bandwidth, self.mesh.l2_memory.bandwidth),
-            )
-            for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
+            (
+                self._route_transfer_cost(
+                    src_endpoint_id=src_endpoint.endpoint_id,
+                    dst_endpoint_id=l2_endpoint.endpoint_id,
+                    bytes_=bytes_,
+                    startup_cycles=self.l1_to_l2_startup_cycles,
+                    bandwidth_limit=min(src.memory.bandwidth, self.mesh.l2_memory.bandwidth),
+                )
+                for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
+            ),
+            key=lambda estimate: estimate.total_cost,
         )
 
     def _noc_l2_to_l1(self, dst: Tile, bytes_: int) -> float:
+        return self._estimate_noc_l2_to_l1(dst, bytes_).total_cost
+
+    def _estimate_noc_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
         return min(
-            self._route_transfer_cost(
-                src_endpoint_id=l2_endpoint.endpoint_id,
-                dst_endpoint_id=dst_endpoint.endpoint_id,
-                bytes_=bytes_,
-                startup_cycles=self.l2_to_l1_startup_cycles,
-                bandwidth_limit=min(self.mesh.l2_memory.bandwidth, dst.memory.bandwidth),
-            )
-            for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
+            (
+                self._route_transfer_cost(
+                    src_endpoint_id=l2_endpoint.endpoint_id,
+                    dst_endpoint_id=dst_endpoint.endpoint_id,
+                    bytes_=bytes_,
+                    startup_cycles=self.l2_to_l1_startup_cycles,
+                    bandwidth_limit=min(self.mesh.l2_memory.bandwidth, dst.memory.bandwidth),
+                )
+                for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
+            ),
+            key=lambda estimate: estimate.total_cost,
         )
 
     def _route_transfer_cost(
@@ -161,7 +209,7 @@ class TransportCostModel:
         bytes_: int,
         startup_cycles: float,
         bandwidth_limit: float,
-    ) -> float:
+    ) -> TransferCostEstimate:
         route = self.mesh.noc.route_endpoints(src_endpoint_id, dst_endpoint_id)
         route_channels = self._route_channels(route, TrafficKind.TRANSFER)
         route_bandwidth = min(
@@ -169,9 +217,16 @@ class TransportCostModel:
             default=float("inf"),
         )
         bandwidth = min(bandwidth_limit, route_bandwidth)
-        return startup_cycles + bytes_ / bandwidth + sum(
+        total_cost = startup_cycles + bytes_ / bandwidth + sum(
             channel.hop_latency_cycles for channel in route_channels
         )
+        resource_loads = {}
+        if self.account_noc_contention:
+            resource_loads = {
+                self._route_resource_id(link_id, channel.channel_id): bytes_ / channel.width_bytes
+                for link_id, channel in zip(route.link_ids, route_channels)
+            }
+        return TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
 
     def _route_channels(self, route: NoCRoute, traffic_kind: TrafficKind) -> tuple[NoCChannel, ...]:
         allowed_channel_ids = ()
@@ -196,3 +251,7 @@ class TransportCostModel:
             )
 
         return tuple(selected_channels)
+
+    @staticmethod
+    def _route_resource_id(link_id: int, channel_id: int) -> str:
+        return f"noc_link:{link_id}:channel:{channel_id}"
