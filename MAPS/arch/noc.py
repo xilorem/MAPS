@@ -15,6 +15,7 @@ class TrafficKind(Enum):
     READ_REQ = auto()
     WRITE_REQ = auto()
     READ_RSP = auto()
+    WRITE_RSP = auto()
     WRITE_DATA = auto()
 
 

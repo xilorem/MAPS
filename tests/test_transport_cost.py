@@ -273,6 +273,7 @@ def test_l2_transfer_cost_respects_directional_traffic_policy_channel_selection(
                     TrafficKind.WRITE_DATA: (1,),
                     TrafficKind.READ_REQ: (0,),
                     TrafficKind.READ_RSP: (0,),
+                    TrafficKind.WRITE_RSP: (0,),
                 }
             ),
         ),
@@ -292,6 +293,7 @@ def test_l2_transfer_cost_respects_directional_traffic_policy_channel_selection(
                     TrafficKind.WRITE_DATA: (0,),
                     TrafficKind.READ_REQ: (0,),
                     TrafficKind.READ_RSP: (1,),
+                    TrafficKind.WRITE_RSP: (1,),
                 }
             ),
         ),
@@ -345,7 +347,7 @@ def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops(
     )
     model = TransportCostModel(mesh=mesh)
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 108.0
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 126.0
     assert model.l2_to_l1(mesh.tile(0, 0), 64) == 105.0
 
 
@@ -399,11 +401,13 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 96.125
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 96.375
     assert model.l2_to_l1(mesh.tile(0, 0), 64) == 91.125
     assert l1_to_l2_estimate.resource_loads == {
         "noc_endpoint:0:egress": 8.125,
         "noc_endpoint:1:ingress": 4.0625,
+        "noc_endpoint:1:egress": 0.25,
+        "noc_endpoint:0:ingress": 0.03125,
     }
     assert l2_to_l1_estimate.resource_loads == {
         "noc_endpoint:0:egress": 0.125,
@@ -411,3 +415,69 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
         "noc_endpoint:1:egress": 16.0,
         "noc_endpoint:0:ingress": 2.0,
     }
+
+
+def test_l1_to_l2_transfer_cost_respects_write_rsp_traffic_policy_channel_selection() -> None:
+    ack_wide_mesh = Mesh(
+        width=2,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=64),
+        tiles=(
+            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
+            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
+        ),
+        noc=NoC(
+            nodes=(
+                NoCNode(node_id=0, x=0, y=0),
+                NoCNode(node_id=1, x=1, y=0),
+            ),
+            links=(
+                NoCLink(
+                    link_id=0,
+                    src_node_id=0,
+                    dst_node_id=1,
+                    channels=(
+                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1.0),
+                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1.0),
+                    ),
+                    bidirectional=True,
+                ),
+            ),
+            endpoints=(
+                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L2, node_id=1, name="l2"),
+            ),
+            traffic_policy=TrafficPolicy(
+                {
+                    TrafficKind.WRITE_REQ: (0,),
+                    TrafficKind.WRITE_DATA: (0,),
+                    TrafficKind.WRITE_RSP: (1,),
+                }
+            ),
+        ),
+    )
+    ack_narrow_mesh = Mesh(
+        width=2,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=64),
+        tiles=ack_wide_mesh.tiles,
+        noc=NoC(
+            nodes=ack_wide_mesh.noc.nodes,
+            links=ack_wide_mesh.noc.links,
+            endpoints=ack_wide_mesh.noc.endpoints,
+            traffic_policy=TrafficPolicy(
+                {
+                    TrafficKind.WRITE_REQ: (0,),
+                    TrafficKind.WRITE_DATA: (0,),
+                    TrafficKind.WRITE_RSP: (0,),
+                }
+            ),
+        ),
+    )
+
+    ack_wide_model = TransportCostModel(mesh=ack_wide_mesh, write_response_bytes=64)
+    ack_narrow_model = TransportCostModel(mesh=ack_narrow_mesh, write_response_bytes=64)
+
+    assert ack_narrow_model.l1_to_l2(ack_narrow_mesh.tile(0, 0), 64) > (
+        ack_wide_model.l1_to_l2(ack_wide_mesh.tile(0, 0), 64)
+    )

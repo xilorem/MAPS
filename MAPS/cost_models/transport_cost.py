@@ -82,6 +82,7 @@ class TransportCostModel:
     account_noc_contention: bool = False
     read_request_bytes: int = 1
     write_request_bytes: int = 1
+    write_response_bytes: int = 1
 
     def l1_to_l2(self, src: Tile, bytes_: int) -> float:
         if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
@@ -209,6 +210,12 @@ class TransportCostModel:
                             bytes=bytes_,
                             traffic_kind=TrafficKind.WRITE_DATA,
                             bandwidth_limit=min(src.memory.bandwidth, self.mesh.l2_memory.bandwidth),
+                        ),
+                        _NoCFlow(
+                            src_endpoint_id=l2_endpoint.endpoint_id,
+                            dst_endpoint_id=src_endpoint.endpoint_id,
+                            bytes=self.write_response_bytes,
+                            traffic_kind=TrafficKind.WRITE_RSP,
                         ),
                     ),
                     startup_cycles=self.l1_to_l2_startup_cycles,
