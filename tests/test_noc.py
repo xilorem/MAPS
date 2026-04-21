@@ -8,6 +8,7 @@ from MAPS.arch import (
     NoCLink,
     NoCNode,
     NoCRoute,
+    RoutingPolicy,
     TrafficKind,
     TrafficPolicy,
 )
@@ -129,3 +130,94 @@ def test_noc_route_requires_one_more_node_than_links() -> None:
             node_ids=(0, 1),
             link_ids=(0, 1),
         )
+
+
+def test_noc_routes_endpoints_with_xy_policy() -> None:
+    noc = NoC(
+        nodes=(
+            NoCNode(node_id=0, x=0, y=0),
+            NoCNode(node_id=1, x=1, y=0),
+            NoCNode(node_id=2, x=0, y=1),
+            NoCNode(node_id=3, x=1, y=1),
+        ),
+        links=(
+            NoCLink(link_id=0, src_node_id=0, dst_node_id=1, channels=(NoCChannel(channel_id=0, width_bytes=4),), bidirectional=True),
+            NoCLink(link_id=1, src_node_id=2, dst_node_id=3, channels=(NoCChannel(channel_id=0, width_bytes=4),), bidirectional=True),
+            NoCLink(link_id=2, src_node_id=0, dst_node_id=2, channels=(NoCChannel(channel_id=0, width_bytes=4),), bidirectional=True),
+            NoCLink(link_id=3, src_node_id=1, dst_node_id=3, channels=(NoCChannel(channel_id=0, width_bytes=4),), bidirectional=True),
+        ),
+        endpoints=(
+            NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+            NoCEndpoint(endpoint_id=1, kind=EndpointKind.L2, node_id=3),
+        ),
+        routing_policy=RoutingPolicy.XY,
+    )
+
+    route = noc.route_endpoints(0, 1)
+
+    assert route.src_endpoint_id == 0
+    assert route.dst_endpoint_id == 1
+    assert route.node_ids == (0, 1, 3)
+    assert route.link_ids == (0, 3)
+
+
+def test_noc_routes_same_node_without_links() -> None:
+    noc = NoC(
+        nodes=(NoCNode(node_id=0, x=0, y=0),),
+        links=(),
+        endpoints=(
+            NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+            NoCEndpoint(endpoint_id=1, kind=EndpointKind.L2, node_id=0),
+        ),
+    )
+
+    route = noc.route_endpoints(0, 1)
+
+    assert route.node_ids == (0,)
+    assert route.link_ids == ()
+
+
+def test_noc_xy_routing_rejects_missing_required_link() -> None:
+    noc = NoC(
+        nodes=(
+            NoCNode(node_id=0, x=0, y=0),
+            NoCNode(node_id=1, x=1, y=0),
+            NoCNode(node_id=2, x=0, y=1),
+            NoCNode(node_id=3, x=1, y=1),
+        ),
+        links=(
+            NoCLink(link_id=0, src_node_id=0, dst_node_id=2, channels=(NoCChannel(channel_id=0, width_bytes=4),), bidirectional=True),
+            NoCLink(link_id=1, src_node_id=2, dst_node_id=3, channels=(NoCChannel(channel_id=0, width_bytes=4),), bidirectional=True),
+        ),
+        endpoints=(
+            NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+            NoCEndpoint(endpoint_id=1, kind=EndpointKind.L2, node_id=3),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="no XY link from node 0 to node 1"):
+        noc.route_endpoints(0, 1)
+
+
+def test_noc_xy_routing_rejects_wrong_link_direction() -> None:
+    noc = NoC(
+        nodes=(
+            NoCNode(node_id=0, x=0, y=0),
+            NoCNode(node_id=1, x=1, y=0),
+        ),
+        links=(
+            NoCLink(
+                link_id=0,
+                src_node_id=1,
+                dst_node_id=0,
+                channels=(NoCChannel(channel_id=0, width_bytes=4),),
+            ),
+        ),
+        endpoints=(
+            NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+            NoCEndpoint(endpoint_id=1, kind=EndpointKind.L2, node_id=1),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="no XY link from node 0 to node 1"):
+        noc.route_endpoints(0, 1)

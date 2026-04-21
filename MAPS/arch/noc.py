@@ -27,6 +27,12 @@ class EndpointKind(Enum):
     PERIPHERAL = auto()
 
 
+class RoutingPolicy(Enum):
+    """Deterministic node-to-node routing policies."""
+
+    XY = auto()
+
+
 @dataclass(frozen=True)
 class NoCChannel:
     """One physical channel available on one link."""
@@ -187,7 +193,9 @@ class NoC:
     links: tuple[NoCLink, ...]
     endpoints: tuple[NoCEndpoint, ...] = ()
     traffic_policy: TrafficPolicy | None = None
+    routing_policy: RoutingPolicy = RoutingPolicy.XY
     _nodes_by_id: dict[int, NoCNode] = field(init=False, repr=False)
+    _nodes_by_coords: dict[tuple[int, int], NoCNode] = field(init=False, repr=False)
     _links_by_id: dict[int, NoCLink] = field(init=False, repr=False)
     _endpoints_by_id: dict[int, NoCEndpoint] = field(init=False, repr=False)
 
@@ -236,6 +244,7 @@ class NoC:
         object.__setattr__(self, "links", links)
         object.__setattr__(self, "endpoints", endpoints)
         object.__setattr__(self, "_nodes_by_id", nodes_by_id)
+        object.__setattr__(self, "_nodes_by_coords", {node.coords: node for node in nodes})
         object.__setattr__(self, "_links_by_id", links_by_id)
         object.__setattr__(self, "_endpoints_by_id", endpoints_by_id)
 
@@ -250,6 +259,12 @@ class NoC:
             return self._links_by_id[link_id]
         except KeyError as exc:
             raise ValueError(f"unknown link_id: {link_id}") from exc
+
+    def node_at(self, x: int, y: int) -> NoCNode:
+        try:
+            return self._nodes_by_coords[(x, y)]
+        except KeyError as exc:
+            raise ValueError(f"no node at coordinates: ({x}, {y})") from exc
 
     def endpoint_by_id(self, endpoint_id: int) -> NoCEndpoint:
         try:
@@ -272,3 +287,62 @@ class NoC:
             for link in self.links
             if link.dst_node_id == node_id or (link.bidirectional and link.src_node_id == node_id)
         )
+
+    def route_endpoints(self, src_endpoint_id: int, dst_endpoint_id: int) -> NoCRoute:
+        src_endpoint = self.endpoint_by_id(src_endpoint_id)
+        dst_endpoint = self.endpoint_by_id(dst_endpoint_id)
+
+        if self.routing_policy is RoutingPolicy.XY:
+            node_ids, link_ids = self._route_nodes_xy(src_endpoint.node_id, dst_endpoint.node_id)
+            return NoCRoute(
+                src_endpoint_id=src_endpoint_id,
+                dst_endpoint_id=dst_endpoint_id,
+                node_ids=node_ids,
+                link_ids=link_ids,
+            )
+
+        raise ValueError(f"unsupported routing policy: {self.routing_policy}")
+
+    def _route_nodes_xy(self, src_node_id: int, dst_node_id: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        current = self.node_by_id(src_node_id)
+        dst = self.node_by_id(dst_node_id)
+
+        node_ids = [current.node_id]
+        link_ids: list[int] = []
+
+        while current.x != dst.x:
+            next_x = current.x + (1 if dst.x > current.x else -1)
+            current = self._append_xy_step(current, next_x, current.y, node_ids, link_ids)
+
+        while current.y != dst.y:
+            next_y = current.y + (1 if dst.y > current.y else -1)
+            current = self._append_xy_step(current, current.x, next_y, node_ids, link_ids)
+
+        return tuple(node_ids), tuple(link_ids)
+
+    def _append_xy_step(
+        self,
+        current: NoCNode,
+        next_x: int,
+        next_y: int,
+        node_ids: list[int],
+        link_ids: list[int],
+    ) -> NoCNode:
+        next_node = self.node_at(next_x, next_y)
+        link = self._link_between_nodes(current.node_id, next_node.node_id)
+        if link is None:
+            raise ValueError(
+                f"no XY link from node {current.node_id} to node {next_node.node_id}"
+            )
+
+        node_ids.append(next_node.node_id)
+        link_ids.append(link.link_id)
+        return next_node
+
+    def _link_between_nodes(self, src_node_id: int, dst_node_id: int) -> NoCLink | None:
+        for link in self.links:
+            if link.src_node_id == src_node_id and link.dst_node_id == dst_node_id:
+                return link
+            if link.bidirectional and link.src_node_id == dst_node_id and link.dst_node_id == src_node_id:
+                return link
+        return None

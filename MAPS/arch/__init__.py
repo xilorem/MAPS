@@ -18,6 +18,7 @@ from .noc import (
     NoCLink,
     NoCNode,
     NoCRoute,
+    RoutingPolicy,
     TrafficKind,
     TrafficPolicy,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "NoCLink",
     "NoCNode",
     "NoCRoute",
+    "RoutingPolicy",
     "SystolicDevice",
     "Tile",
     "TrafficKind",
