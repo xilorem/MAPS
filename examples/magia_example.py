@@ -84,8 +84,8 @@ def main():
             print_workload_balancing=True,
             print_spatial_mapping=True,
             print_spatial_mapping_progress=True,
-            require_l2_input_access_point=False,
-            require_l2_output_access_point=False,
+            require_l2_input_access_point=False, # need to attach these 2 options to workload
+            require_l2_output_access_point=False, # balancing feasible mesh verification
             enable_lossless_spatial_mapping_pruning=True,
             enable_lossy_spatial_mapping_pruning=False,
         )
