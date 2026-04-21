@@ -12,7 +12,7 @@ from MAPS.arch import (
     TrafficKind,
     TrafficPolicy,
 )
-from MAPS.cost_models import TransportCostModel
+from MAPS.cost_models import TransferKind, TransferLeg, TransportCostModel
 
 
 def test_l2_transfer_cost_uses_l1_and_l2_bandwidth() -> None:
@@ -270,3 +270,104 @@ def test_l2_transfer_cost_respects_transfer_traffic_policy_channel_selection() -
 
     assert narrow_model.l1_to_l2(narrow_mesh.tile(0, 0), 64) > wide_model.l1_to_l2(wide_mesh.tile(0, 0), 64)
     assert narrow_model.l2_to_l1(narrow_mesh.tile(0, 0), 64) > wide_model.l2_to_l1(wide_mesh.tile(0, 0), 64)
+
+
+def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops() -> None:
+    mesh = Mesh(
+        width=1,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=16),
+        tiles=(
+            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=16)),
+        ),
+        noc=NoC(
+            nodes=(
+                NoCNode(node_id=0, x=0, y=0),
+            ),
+            links=(),
+            endpoints=(
+                NoCEndpoint(
+                    endpoint_id=0,
+                    kind=EndpointKind.L1,
+                    node_id=0,
+                    tile_id=0,
+                    ingress_latency_cycles=11.0,
+                    egress_latency_cycles=3.0,
+                ),
+                NoCEndpoint(
+                    endpoint_id=1,
+                    kind=EndpointKind.L2,
+                    node_id=0,
+                    name="l2",
+                    ingress_latency_cycles=5.0,
+                    egress_latency_cycles=7.0,
+                ),
+            ),
+        ),
+    )
+    model = TransportCostModel(mesh=mesh)
+
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 100.0
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 97.0
+
+
+def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() -> None:
+    mesh = Mesh(
+        width=1,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=64),
+        tiles=(
+            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
+        ),
+        noc=NoC(
+            nodes=(
+                NoCNode(node_id=0, x=0, y=0),
+            ),
+            links=(),
+            endpoints=(
+                NoCEndpoint(
+                    endpoint_id=0,
+                    kind=EndpointKind.L1,
+                    node_id=0,
+                    tile_id=0,
+                    ingress_bandwidth_bytes=32.0,
+                    egress_bandwidth_bytes=8.0,
+                ),
+                NoCEndpoint(
+                    endpoint_id=1,
+                    kind=EndpointKind.L2,
+                    node_id=0,
+                    name="l2",
+                    ingress_bandwidth_bytes=16.0,
+                    egress_bandwidth_bytes=4.0,
+                ),
+            ),
+        ),
+    )
+    model = TransportCostModel(mesh=mesh, account_noc_contention=True)
+
+    l1_to_l2_estimate = model.estimate(
+        TransferLeg(
+            kind=TransferKind.L1_TO_L2,
+            bytes=64,
+            src_tile=mesh.tile(0, 0),
+        )
+    )
+    l2_to_l1_estimate = model.estimate(
+        TransferLeg(
+            kind=TransferKind.L2_TO_L1,
+            bytes=64,
+            dst_tile=mesh.tile(0, 0),
+        )
+    )
+
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 96.0
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 91.0
+    assert l1_to_l2_estimate.resource_loads == {
+        "noc_endpoint:0:egress": 8.0,
+        "noc_endpoint:1:ingress": 4.0,
+    }
+    assert l2_to_l1_estimate.resource_loads == {
+        "noc_endpoint:1:egress": 16.0,
+        "noc_endpoint:0:ingress": 2.0,
+    }

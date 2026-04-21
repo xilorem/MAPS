@@ -210,15 +210,36 @@ class TransportCostModel:
         startup_cycles: float,
         bandwidth_limit: float,
     ) -> TransferCostEstimate:
+        src_endpoint = self.mesh.noc.endpoint_by_id(src_endpoint_id)
+        dst_endpoint = self.mesh.noc.endpoint_by_id(dst_endpoint_id)
         route = self.mesh.noc.route_endpoints(src_endpoint_id, dst_endpoint_id)
         route_channels = self._route_channels(route, TrafficKind.TRANSFER)
+        src_endpoint_bandwidth = (
+            src_endpoint.egress_bandwidth_bytes
+            if src_endpoint.egress_bandwidth_bytes is not None
+            else float("inf")
+        )
+        dst_endpoint_bandwidth = (
+            dst_endpoint.ingress_bandwidth_bytes
+            if dst_endpoint.ingress_bandwidth_bytes is not None
+            else float("inf")
+        )
         route_bandwidth = min(
             (channel.width_bytes for channel in route_channels),
             default=float("inf"),
         )
-        bandwidth = min(bandwidth_limit, route_bandwidth)
-        total_cost = startup_cycles + bytes_ / bandwidth + sum(
-            channel.hop_latency_cycles for channel in route_channels
+        bandwidth = min(
+            bandwidth_limit,
+            src_endpoint_bandwidth,
+            dst_endpoint_bandwidth,
+            route_bandwidth,
+        )
+        total_cost = (
+            startup_cycles
+            + src_endpoint.egress_latency_cycles
+            + dst_endpoint.ingress_latency_cycles
+            + bytes_ / bandwidth
+            + sum(channel.hop_latency_cycles for channel in route_channels)
         )
         resource_loads = {}
         if self.account_noc_contention:
@@ -226,6 +247,14 @@ class TransportCostModel:
                 self._route_resource_id(link_id, channel.channel_id): bytes_ / channel.width_bytes
                 for link_id, channel in zip(route.link_ids, route_channels)
             }
+            if src_endpoint.egress_bandwidth_bytes is not None:
+                resource_loads[self._endpoint_resource_id(src_endpoint.endpoint_id, "egress")] = (
+                    bytes_ / src_endpoint.egress_bandwidth_bytes
+                )
+            if dst_endpoint.ingress_bandwidth_bytes is not None:
+                resource_loads[self._endpoint_resource_id(dst_endpoint.endpoint_id, "ingress")] = (
+                    bytes_ / dst_endpoint.ingress_bandwidth_bytes
+                )
         return TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
 
     def _route_channels(self, route: NoCRoute, traffic_kind: TrafficKind) -> tuple[NoCChannel, ...]:
@@ -255,3 +284,7 @@ class TransportCostModel:
     @staticmethod
     def _route_resource_id(link_id: int, channel_id: int) -> str:
         return f"noc_link:{link_id}:channel:{channel_id}"
+
+    @staticmethod
+    def _endpoint_resource_id(endpoint_id: int, direction: str) -> str:
+        return f"noc_endpoint:{endpoint_id}:{direction}"

@@ -90,6 +90,10 @@ class NoCEndpoint:
     node_id: int
     name: str = ""
     tile_id: int | None = None
+    ingress_latency_cycles: float = 0.0
+    egress_latency_cycles: float = 0.0
+    ingress_bandwidth_bytes: float | None = None
+    egress_bandwidth_bytes: float | None = None
 
     def __post_init__(self) -> None:
         if self.endpoint_id < 0:
@@ -98,6 +102,14 @@ class NoCEndpoint:
             raise ValueError("endpoint node_id must be >= 0")
         if self.tile_id is not None and self.tile_id < 0:
             raise ValueError("endpoint tile_id must be >= 0")
+        if self.ingress_latency_cycles < 0:
+            raise ValueError("endpoint ingress_latency_cycles must be >= 0")
+        if self.egress_latency_cycles < 0:
+            raise ValueError("endpoint egress_latency_cycles must be >= 0")
+        if self.ingress_bandwidth_bytes is not None and self.ingress_bandwidth_bytes <= 0:
+            raise ValueError("endpoint ingress_bandwidth_bytes must be > 0")
+        if self.egress_bandwidth_bytes is not None and self.egress_bandwidth_bytes <= 0:
+            raise ValueError("endpoint egress_bandwidth_bytes must be > 0")
         if self.name == "":
             return
 

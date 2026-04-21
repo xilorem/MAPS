@@ -103,6 +103,42 @@ def test_noc_link_rejects_duplicate_channel_ids() -> None:
         )
 
 
+def test_noc_endpoint_rejects_negative_attachment_latency() -> None:
+    with pytest.raises(ValueError, match="endpoint ingress_latency_cycles must be >= 0"):
+        NoCEndpoint(
+            endpoint_id=0,
+            kind=EndpointKind.L1,
+            node_id=0,
+            ingress_latency_cycles=-1.0,
+        )
+
+    with pytest.raises(ValueError, match="endpoint egress_latency_cycles must be >= 0"):
+        NoCEndpoint(
+            endpoint_id=0,
+            kind=EndpointKind.L1,
+            node_id=0,
+            egress_latency_cycles=-1.0,
+        )
+
+
+def test_noc_endpoint_rejects_non_positive_attachment_bandwidth() -> None:
+    with pytest.raises(ValueError, match="endpoint ingress_bandwidth_bytes must be > 0"):
+        NoCEndpoint(
+            endpoint_id=0,
+            kind=EndpointKind.L1,
+            node_id=0,
+            ingress_bandwidth_bytes=0.0,
+        )
+
+    with pytest.raises(ValueError, match="endpoint egress_bandwidth_bytes must be > 0"):
+        NoCEndpoint(
+            endpoint_id=0,
+            kind=EndpointKind.L1,
+            node_id=0,
+            egress_bandwidth_bytes=-1.0,
+        )
+
+
 def test_noc_rejects_policy_referencing_unknown_channel_ids() -> None:
     with pytest.raises(ValueError, match="references unknown channel ids"):
         NoC(
