@@ -17,7 +17,7 @@ from MAPS.core.transition import Transition
 class PlannerConstraints:
     """Hard planner-side limits and policy switches."""
 
-    max_stage_nodes: int = 1
+    max_stage_nodes: int = 5
     random_seed: int | None = None
     allow_cross_submesh_remap: bool = True
     enforce_l1_capacity: bool = True

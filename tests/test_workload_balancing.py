@@ -4,6 +4,7 @@ from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
 from MAPS.planner import balance_workload
+from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import (
     _best_stage_plan_for_tile_count,
     _has_feasible_submesh_placement,
@@ -99,6 +100,64 @@ def test_balance_workload_starts_from_minimum_l1_feasible_tile_count() -> None:
     plans = balance_workload(graph, mesh)
 
     assert plans[0].tile_count == 2
+
+
+def test_balance_workload_accepts_explicit_stage_selection() -> None:
+    node0 = _gemm_node("gemm0", m=16, k=16, n=16)
+    node1 = _gemm_node("gemm1", m=16, k=16, n=16)
+    graph = Graph(name="g", nodes=(node0, node1))
+    mesh = _mesh_with_l1(2, 2, l1_size=4096)
+
+    plans = balance_workload(
+        graph,
+        mesh,
+        stage_selection={0: (node0, node1)},
+    )
+
+    assert tuple(plans) == (0,)
+    assert plans[0].tile_count == mesh.num_tiles
+    assert plans[0].nodes == (node0, node1)
+    assert len(plans[0].node_input_layouts) == 2
+    assert len(plans[0].node_output_layouts) == 2
+
+
+def test_balance_workload_can_use_selected_stage_groups() -> None:
+    node0 = _gemm_node("gemm0", m=16, k=16, n=16)
+    node1 = _gemm_node(
+        "gemm1",
+        m=16,
+        k=16,
+        n=16,
+    )
+    node1 = Node(
+        name=node1.name,
+        kind=node1.kind,
+        inputs=node1.inputs,
+        outputs=node1.outputs,
+        payload=node1.payload,
+        attributes={"stage_group_id": "group0"},
+    )
+    node2 = _gemm_node("gemm2", m=16, k=16, n=16)
+    node0 = Node(
+        name=node0.name,
+        kind=node0.kind,
+        inputs=node0.inputs,
+        outputs=node0.outputs,
+        payload=node0.payload,
+        attributes={"stage_group_id": "group0"},
+    )
+    graph = Graph(name="g", nodes=(node0, node1, node2))
+    mesh = _mesh_with_l1(3, 2, l1_size=4096)
+
+    plans = balance_workload(
+        graph,
+        mesh,
+        stage_selection=select_stages(graph),
+    )
+
+    assert tuple(plans) == (0, 1)
+    assert plans[0].nodes == (node0, node1)
+    assert plans[1].nodes == (node2,)
 
 
 def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> None:

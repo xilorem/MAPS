@@ -6,8 +6,9 @@ from dataclasses import dataclass
 
 from MAPS.cost_models import cost_estimator
 from MAPS.arch import Mesh
-from MAPS.core.graph import Graph, Node, OpKind
+from MAPS.core.graph import Graph, Node
 from MAPS.core.submesh import Submesh
+from MAPS.planner.select_stage import StageSelection
 
 
 @dataclass(frozen=True)
@@ -19,17 +20,28 @@ class StagePlan:
     logical_shape: tuple[int, int]
     input_layouts: tuple
     output_layouts: tuple
+    nodes: tuple[Node, ...] = ()
+    node_input_layouts: tuple[tuple, ...] = ()
+    node_output_layouts: tuple[tuple, ...] = ()
 
 
-def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int, StagePlan]:
-    """Greedily assign tile counts to nodes by internal rectangle growth.
+def balance_workload(
+    graph: Graph,
+    mesh: Mesh,
+    debug: bool = False,
+    stage_selection: StageSelection | None = None,
+) -> dict[int, StagePlan]:
+    """Greedily assign tile counts to selected stages by internal rectangle growth.
 
-    Each node searches physically placeable tile counts and all logical factor
-    pairs for that count. The returned plan keeps the chosen logical compute
-    shape and layouts; later spatial mapping still chooses physical rectangles.
+    Each selected stage searches physically placeable tile counts and all
+    logical factor pairs for that count. The returned plan keeps the chosen
+    logical compute shape and layouts; later spatial mapping still chooses
+    physical rectangles.
     """
-    if len(graph.nodes) > mesh.num_tiles:
-        raise ValueError("graph has more nodes than available tiles")
+    resolved_stage_selection = _resolve_stage_selection(graph, stage_selection)
+    stage_ids = tuple(resolved_stage_selection)
+    if len(stage_ids) > mesh.num_tiles:
+        raise ValueError("graph has more selected stages than available tiles")
 
     iteration = 0
     placement_masks_by_tile_count: dict[int, tuple[int, ...]] = {}
@@ -40,8 +52,12 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
     # then spend any remaining tiles greedily on workload reduction.
     tile_counts: dict[int, int] = {}
     _debug(debug, "[workload_balancing] phase=initial_l1_seeding")
-    for stage_id, node in enumerate(graph.nodes):
-        _debug(debug, f"[workload_balancing] seed stage={stage_id} node={node.name}")
+    for stage_id in stage_ids:
+        stage_nodes = resolved_stage_selection[stage_id]
+        _debug(
+            debug,
+            f"[workload_balancing] seed stage={stage_id} nodes={_stage_label(stage_nodes)}",
+        )
         for tile_count in range(1, mesh.num_tiles + 1):
 
             # skip tile counts that cannot be represented as a rectangle
@@ -55,8 +71,8 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
                 continue
 
             try:
-                plan = _best_stage_plan_for_tile_count(
-                    node,
+                plan = _best_stage_plan_for_stage_nodes(
+                    stage_nodes,
                     mesh,
                     stage_id,
                     tile_count,
@@ -80,7 +96,11 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
             break
 
         if stage_id not in tile_counts:
-            raise ValueError(f"node {node.name} has no L1-feasible tile count on mesh {mesh.shape}")
+            raise ValueError(
+                "stage "
+                f"{stage_id} ({_stage_label(stage_nodes)}) has no L1-feasible tile count "
+                f"on mesh {mesh.shape}"
+            )
     used_tiles = sum(tile_counts.values())
 
     if used_tiles > mesh.num_tiles:
@@ -97,8 +117,17 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
 
     _debug(debug, f"[workload_balancing] start used_tiles={used_tiles}/{mesh.num_tiles}")
     _debug(debug, f"[workload_balancing] initial_tile_counts={tile_counts}")
-    initial_plans = _plan_all_stages_for_tile_counts(graph, mesh, tile_counts, debug=debug)
-    initial_workloads = _estimate_workloads(initial_plans, graph, debug=debug)
+    initial_plans = _plan_all_stages_for_tile_counts(
+        resolved_stage_selection,
+        mesh,
+        tile_counts,
+        debug=debug,
+    )
+    initial_workloads = _estimate_workloads(
+        initial_plans,
+        resolved_stage_selection,
+        debug=debug,
+    )
     decision_timeline.append((0, None, dict(tile_counts), dict(initial_workloads)))
 
     _debug(debug, "[workload_balancing] phase=greedy_growth")
@@ -110,8 +139,17 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
 
         # Rebuild stage plans for the current allocation so candidate growth is
         # compared against the best logical shape available at each tile count.
-        current_plans = _plan_all_stages_for_tile_counts(graph, mesh, tile_counts, debug=False)
-        current_workloads = _estimate_workloads(current_plans, graph, debug=debug)
+        current_plans = _plan_all_stages_for_tile_counts(
+            resolved_stage_selection,
+            mesh,
+            tile_counts,
+            debug=False,
+        )
+        current_workloads = _estimate_workloads(
+            current_plans,
+            resolved_stage_selection,
+            debug=debug,
+        )
 
         _debug(debug, f"[workload_balancing] iteration={iteration} used_tiles={used_tiles}/{mesh.num_tiles}")
         _debug(debug, f"[workload_balancing] current_workloads={current_workloads}")
@@ -120,21 +158,21 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
         # stages only when worse stages have no feasible improving growth.
         stage_order = tuple(
             sorted(
-                range(len(graph.nodes)),
+                stage_ids,
                 key=lambda stage_id: (-current_workloads[stage_id], stage_id),
             )
         )
         _debug(debug, f"[workload_balancing] stage_order_by_workload={stage_order}")
 
         for stage_id in stage_order:
-            node = graph.nodes[stage_id]
+            stage_nodes = resolved_stage_selection[stage_id]
             current_tile_count = tile_counts[stage_id]
             current_workload = current_workloads[stage_id]
 
             _debug(
                 debug,
                 "[workload_balancing] "
-                f"try_stage={stage_id} node={node.name} "
+                f"try_stage={stage_id} nodes={_stage_label(stage_nodes)} "
                 f"current_tile_count={current_tile_count} "
                 f"current_logical_shape={current_plans[stage_id].logical_shape} "
                 f"current_workload={current_workload}",
@@ -181,13 +219,16 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
                     )
                     continue
                 candidate_plans = _plan_all_stages_for_tile_counts(
-                    graph,
+                    resolved_stage_selection,
                     mesh,
                     candidate_tile_counts,
                     debug=False,
                 )
-                candidate_plan = candidate_plans[stage_id]
-                candidate_workloads = _estimate_workloads(candidate_plans, graph, debug=debug)
+                candidate_workloads = _estimate_workloads(
+                    candidate_plans,
+                    resolved_stage_selection,
+                    debug=debug,
+                )
                 candidate_workload = candidate_workloads[stage_id]
                 improvement = current_workload - candidate_workload
                 if improvement <= 0:
@@ -232,20 +273,82 @@ def balance_workload(graph: Graph, mesh: Mesh, debug: bool = False) -> dict[int,
         )
         used_tiles += worst_stage_tile_count - tile_counts[worst_stage_id]
         tile_counts[worst_stage_id] = worst_stage_tile_count
-        updated_plans = _plan_all_stages_for_tile_counts(graph, mesh, tile_counts, debug=False)
-        updated_workloads = _estimate_workloads(updated_plans, graph, debug=debug)
+        updated_plans = _plan_all_stages_for_tile_counts(
+            resolved_stage_selection,
+            mesh,
+            tile_counts,
+            debug=False,
+        )
+        updated_workloads = _estimate_workloads(
+            updated_plans,
+            resolved_stage_selection,
+            debug=debug,
+        )
         decision_timeline.append((iteration, worst_stage_id, dict(tile_counts), dict(updated_workloads)))
         _debug(debug, f"[workload_balancing] updated_tile_counts={tile_counts}")
 
     # Materialize final StagePlan objects, including the chosen logical layouts.
     _debug(debug, "[workload_balancing] phase=finalize")
-    plans = _plan_all_stages_for_tile_counts(graph, mesh, tile_counts, debug=False)
+    plans = _plan_all_stages_for_tile_counts(
+        resolved_stage_selection,
+        mesh,
+        tile_counts,
+        debug=False,
+    )
     _debug(debug, f"[workload_balancing] final_tile_counts={tile_counts}")
     _debug(debug, f"[workload_balancing] final_logical_shapes={ {stage_id: plan.logical_shape for stage_id, plan in plans.items()} }")
     _debug(debug, f"[workload_balancing] final_allocation={ {stage_id: plan.tile_count for stage_id, plan in plans.items()} }")
-    _debug_decision_timeline(debug, graph, decision_timeline)
-    _debug_final_workloads(debug, graph, plans)
+    _debug_decision_timeline(debug, resolved_stage_selection, decision_timeline)
+    _debug_final_workloads(debug, resolved_stage_selection, plans)
     return plans
+
+
+def _resolve_stage_selection(
+    graph: Graph,
+    stage_selection: StageSelection | None,
+) -> StageSelection:
+    """Validate and normalize selected stage groups."""
+
+    if stage_selection is None:
+        return {
+            stage_id: (node,)
+            for stage_id, node in enumerate(graph.nodes)
+        }
+
+    graph_nodes_by_identity = {
+        id(node): node
+        for node in graph.nodes
+    }
+    seen_node_ids: set[int] = set()
+    resolved: StageSelection = {}
+
+    for stage_id, stage_nodes in stage_selection.items():
+        if not stage_nodes:
+            raise ValueError(f"stage {stage_id} must contain at least one node")
+        for node in stage_nodes:
+            node_identity = id(node)
+            if node_identity not in graph_nodes_by_identity:
+                raise ValueError(
+                    f"stage {stage_id} contains node {node.name} not present in graph {graph.name}"
+                )
+            if node_identity in seen_node_ids:
+                raise ValueError(
+                    f"node {node.name} appears in more than one selected stage"
+                )
+            seen_node_ids.add(node_identity)
+        resolved[stage_id] = tuple(stage_nodes)
+
+    if len(seen_node_ids) != len(graph.nodes):
+        missing = tuple(
+            node.name
+            for node in graph.nodes
+            if id(node) not in seen_node_ids
+        )
+        raise ValueError(
+            f"selected stages do not cover all graph nodes, missing={missing}"
+        )
+
+    return resolved
 
 
 def _tile_count_options_after_growth(
@@ -419,16 +522,16 @@ def _default_layouts_for_node(
 
 
 def _plan_all_stages_for_tile_counts(
-    graph: Graph,
+    stage_selection: StageSelection,
     mesh: Mesh,
     tile_counts: dict[int, int],
     debug: bool,
 ) -> dict[int, StagePlan]:
     """Build the best layout-preserving plan for each current stage tile count."""
     plans: dict[int, StagePlan] = {}
-    for stage_id, node in enumerate(graph.nodes):
-        plans[stage_id] = _best_stage_plan_for_tile_count(
-            node,
+    for stage_id, stage_nodes in stage_selection.items():
+        plans[stage_id] = _best_stage_plan_for_stage_nodes(
+            stage_nodes,
             mesh,
             stage_id,
             tile_counts[stage_id],
@@ -437,41 +540,71 @@ def _plan_all_stages_for_tile_counts(
     return plans
 
 
-def _best_stage_plan_for_tile_count(
-    node: Node,
-    mesh: Mesh,
-    stage_id: int,
-    tile_count: int,
-    debug: bool,
-) -> StagePlan:
-    """Choose the lowest-cost logical layout that fits per-tile L1 memory."""
-    submesh = _planning_submesh(mesh, stage_id, tile_count)
-    best_plan: StagePlan | None = None
-    best_workload: float | None = None
+def _default_layouts_for_stage_nodes(
+    stage_nodes: tuple[Node, ...],
+    submesh: Submesh,
+    logical_shape: tuple[int, int],
+) -> tuple[tuple[tuple, ...], tuple[tuple, ...]]:
+    """Return default layouts for every node inside one selected stage."""
 
-    for logical_shape in _logical_shape_options(tile_count):
+    node_input_layouts = []
+    node_output_layouts = []
+    for node in stage_nodes:
         input_layouts, output_layouts = _default_layouts_for_node(
             node,
             submesh,
             logical_shape,
         )
+        node_input_layouts.append(input_layouts)
+        node_output_layouts.append(output_layouts)
+    return tuple(node_input_layouts), tuple(node_output_layouts)
+
+
+def _best_stage_plan_for_stage_nodes(
+    stage_nodes: tuple[Node, ...],
+    mesh: Mesh,
+    stage_id: int,
+    tile_count: int,
+    debug: bool,
+) -> StagePlan:
+    """Choose the lowest-cost logical layout for one selected multi-node stage."""
+
+    submesh = _planning_submesh(mesh, stage_id, tile_count)
+    best_plan: StagePlan | None = None
+    best_workload: float | None = None
+
+    for logical_shape in _logical_shape_options(tile_count):
+        node_input_layouts, node_output_layouts = _default_layouts_for_stage_nodes(
+            stage_nodes,
+            submesh,
+            logical_shape,
+        )
         fits_l1 = True
-        max_l1_bytes = 0
+        peak_l1_bytes = 0
         min_l1_capacity = None
         for tile in submesh.tiles:
-            tile_work = node.payload.build_tile_work(
-                input_layouts=input_layouts,
-                output_layouts=output_layouts,
-                tile=tile,
-            )
-            max_l1_bytes = max(max_l1_bytes, tile_work.l1_bytes)
+            tile_peak_l1_bytes = 0
+            for node, input_layouts, output_layouts in zip(
+                stage_nodes,
+                node_input_layouts,
+                node_output_layouts,
+            ):
+                tile_work = node.payload.build_tile_work(
+                    input_layouts=input_layouts,
+                    output_layouts=output_layouts,
+                    tile=tile,
+                )
+                tile_peak_l1_bytes = max(tile_peak_l1_bytes, tile_work.l1_bytes)
+                if not tile_work.fits_l1(tile):
+                    fits_l1 = False
+                    break
+            peak_l1_bytes = max(peak_l1_bytes, tile_peak_l1_bytes)
             min_l1_capacity = (
                 tile.memory.size
                 if min_l1_capacity is None
                 else min(min_l1_capacity, tile.memory.size)
             )
-            if not tile_work.fits_l1(tile):
-                fits_l1 = False
+            if not fits_l1:
                 break
         if not fits_l1:
             _debug(
@@ -479,7 +612,7 @@ def _best_stage_plan_for_tile_count(
                 "[workload_balancing] "
                 f"stage={stage_id} tile_count={tile_count} "
                 f"logical_shape={logical_shape} skip=l1_exceeded "
-                f"max_l1_bytes={max_l1_bytes} min_l1_capacity={min_l1_capacity}",
+                f"peak_l1_bytes={peak_l1_bytes} min_l1_capacity={min_l1_capacity}",
             )
             continue
 
@@ -487,10 +620,13 @@ def _best_stage_plan_for_tile_count(
             stage_id=stage_id,
             tile_count=tile_count,
             logical_shape=logical_shape,
-            input_layouts=input_layouts,
-            output_layouts=output_layouts,
+            input_layouts=node_input_layouts[0],
+            output_layouts=node_output_layouts[-1],
+            nodes=stage_nodes,
+            node_input_layouts=node_input_layouts,
+            node_output_layouts=node_output_layouts,
         )
-        workload = _estimate_stage_workload(node, plan)
+        workload = _estimate_stage_group_workload(stage_nodes, plan)
         _debug(
             debug,
             "[workload_balancing] "
@@ -503,7 +639,7 @@ def _best_stage_plan_for_tile_count(
 
     if best_plan is None:
         raise ValueError(
-            f"node {node.name} has no valid logical shape for tile_count={tile_count} "
+            f"stage {_stage_label(stage_nodes)} has no valid logical shape for tile_count={tile_count} "
             "using full tile-work slices"
         )
     _debug(
@@ -516,26 +652,69 @@ def _best_stage_plan_for_tile_count(
     return best_plan
 
 
+def _best_stage_plan_for_tile_count(
+    node: Node,
+    mesh: Mesh,
+    stage_id: int,
+    tile_count: int,
+    debug: bool,
+) -> StagePlan:
+    """Choose the lowest-cost logical layout that fits per-tile L1 memory."""
+    return _best_stage_plan_for_stage_nodes(
+        (node,),
+        mesh,
+        stage_id,
+        tile_count,
+        debug,
+    )
+
+
 def _estimate_workloads(
     plans: dict[int, StagePlan],
-    graph: Graph,
+    stage_selection: StageSelection,
     debug: bool,
 ) -> dict[int, float]:
     """Estimate per-stage workload for the current stage plans."""
+    del debug
     workloads: dict[int, float] = {}
-    for stage_id, node in enumerate(graph.nodes):
-        workloads[stage_id] = _estimate_stage_workload(node, plans[stage_id])
+    for stage_id, stage_nodes in stage_selection.items():
+        workloads[stage_id] = _estimate_stage_group_workload(
+            stage_nodes,
+            plans[stage_id],
+        )
     return workloads
 
 
 def _estimate_stage_workload(node: Node, plan: StagePlan) -> float:
     """Estimate compute cost for one node under one stage plan."""
-    step_cost = cost_estimator(
-        node=node,
-        input_layouts=plan.input_layouts,
-        output_layouts=plan.output_layouts,
-    )
-    return step_cost
+    return _estimate_stage_group_workload((node,), plan)
+
+
+def _estimate_stage_group_workload(
+    stage_nodes: tuple[Node, ...],
+    plan: StagePlan,
+) -> float:
+    """Estimate one selected stage workload as the sum of member node costs."""
+
+    if plan.node_input_layouts and plan.node_output_layouts:
+        node_input_layouts = plan.node_input_layouts
+        node_output_layouts = plan.node_output_layouts
+    else:
+        node_input_layouts = (plan.input_layouts,)
+        node_output_layouts = (plan.output_layouts,)
+
+    total_cost = 0.0
+    for node, input_layouts, output_layouts in zip(
+        stage_nodes,
+        node_input_layouts,
+        node_output_layouts,
+    ):
+        total_cost += cost_estimator(
+            node=node,
+            input_layouts=input_layouts,
+            output_layouts=output_layouts,
+        )
+    return total_cost
 
 
 def _debug(enabled: bool, message: str) -> None:
@@ -546,7 +725,7 @@ def _debug(enabled: bool, message: str) -> None:
 
 def _debug_final_workloads(
     enabled: bool,
-    graph: Graph,
+    stage_selection: StageSelection,
     plans: dict[int, StagePlan],
 ) -> None:
     """Print the final per-stage workload table when debug output is enabled."""
@@ -554,12 +733,12 @@ def _debug_final_workloads(
         return
 
     print("[workload_balancing] final_stage_workloads:")
-    for stage_id, node in enumerate(graph.nodes):
+    for stage_id, stage_nodes in stage_selection.items():
         plan = plans[stage_id]
-        workload = _estimate_stage_workload(node, plan)
+        workload = _estimate_stage_group_workload(stage_nodes, plan)
         print(
             "  "
-            f"stage={stage_id} node={node.name} "
+            f"stage={stage_id} nodes={_stage_label(stage_nodes)} "
             f"tile_count={plan.tile_count} "
             f"logical_shape={plan.logical_shape} "
             f"workload={workload}"
@@ -568,7 +747,7 @@ def _debug_final_workloads(
 
 def _debug_decision_timeline(
     enabled: bool,
-    graph: Graph,
+    stage_selection: StageSelection,
     decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, float]]],
 ) -> None:
     """Print tile counts and workloads after each committed greedy decision."""
@@ -576,8 +755,8 @@ def _debug_decision_timeline(
         return
 
     stage_headers = " ".join(
-        f"stage{stage_id}:{node.name}"
-        for stage_id, node in enumerate(graph.nodes)
+        f"stage{stage_id}:{_stage_label(stage_nodes)}"
+        for stage_id, stage_nodes in stage_selection.items()
     )
     print("[workload_balancing] decision_timeline:")
     print(f"  stages {stage_headers}")
@@ -589,6 +768,12 @@ def _debug_decision_timeline(
                 f"tile_count={tile_counts[stage_id]} "
                 f"workload={workloads[stage_id]}"
             )
-            for stage_id in range(len(graph.nodes))
+            for stage_id in stage_selection
         )
         print(f"  iter={iteration} changed={changed} {stage_state}")
+
+
+def _stage_label(stage_nodes: tuple[Node, ...]) -> str:
+    """Return a compact debug label for one selected stage."""
+
+    return "+".join(node.name for node in stage_nodes)

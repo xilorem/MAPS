@@ -21,6 +21,7 @@ from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.graph import Graph, Node
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import StagePlan
 
 
@@ -45,8 +46,10 @@ def map_spatially(
     if objective not in {"max", "sum"}:
         raise ValueError(f"unsupported spatial mapping objective: {objective}")
 
-    stage_ids = tuple(range(len(graph.nodes)))
     stage_plans = _stage_plans_from_tile_counts(tile_counts)
+    stage_selection = _resolve_stage_selection(graph, stage_plans)
+    node_stage_ids = _node_stage_ids(stage_selection)
+    stage_ids = tuple(stage_selection)
     resolved_tile_counts = {
         stage_id: _stage_tile_count(tile_counts[stage_id])
         for stage_id in stage_ids
@@ -61,6 +64,7 @@ def map_spatially(
 
     placement_options = _filter_l2_access_point_placements(
         graph=graph,
+        stage_selection=stage_selection,
         mesh=mesh,
         placement_options=placement_options,
         require_l2_input_access_point=require_l2_input_access_point,
@@ -74,19 +78,23 @@ def map_spatially(
     if max_placements_per_stage is not None:
         placement_options = _prune_placement_options(
             graph=graph,
+            stage_selection=stage_selection,
+            node_stage_ids=node_stage_ids,
             mesh=mesh,
             placement_options=placement_options,
             max_placements_per_stage=max_placements_per_stage,
         )
     edge_placement_costs = _edge_placement_costs(
         graph,
-        placement_options,
+        placement_options=placement_options,
+        node_stage_ids=node_stage_ids,
         stage_plans=stage_plans,
         show_progress=show_progress,
     )
     stage_io_costs = _stage_io_costs_for_placements(
         graph,
-        placement_options,
+        placement_options=placement_options,
+        stage_selection=stage_selection,
         stage_plans=stage_plans,
         show_progress=show_progress,
     )
@@ -101,13 +109,15 @@ def map_spatially(
     edge_comm_cost = {}
     stage_io_cost = {}
     pair_selected = {}
-    edge_pair_count = _edge_placement_pair_count(graph, placement_options)
+    edge_pair_count = _edge_placement_pair_count(graph, node_stage_ids, placement_options)
     progress = _ProgressBar("creating MILP variables", edge_pair_count, show_progress)
     for edge_idx, edge in enumerate(graph.edges):
         if edge.src is None or edge.dst is None:
             continue
-        src_stage = _node_stage_id(graph, edge.src)
-        dst_stage = _node_stage_id(graph, edge.dst)
+        src_stage = node_stage_ids[id(edge.src)]
+        dst_stage = node_stage_ids[id(edge.dst)]
+        if src_stage == dst_stage:
+            continue
         key = (edge_idx, src_stage, dst_stage)
         edge_comm_cost[key] = pulp.LpVariable(f"edge_comm_cost_{edge_idx}_{src_stage}_{dst_stage}", lowBound=0)
         for src_placement_idx in range(len(placement_options[src_stage])):
@@ -163,8 +173,10 @@ def map_spatially(
     for edge_idx, edge in enumerate(graph.edges):
         if edge.src is None or edge.dst is None:
             continue
-        src_stage = _node_stage_id(graph, edge.src)
-        dst_stage = _node_stage_id(graph, edge.dst)
+        src_stage = node_stage_ids[id(edge.src)]
+        dst_stage = node_stage_ids[id(edge.dst)]
+        if src_stage == dst_stage:
+            continue
         key = (edge_idx, src_stage, dst_stage)
 
         pair_terms = []
@@ -208,6 +220,7 @@ def map_spatially(
             mesh,
             mapping,
             stage_plans=stage_plans,
+            stage_selection=stage_selection,
             label=objective,
         )
     elif print_mapping:
@@ -228,6 +241,15 @@ def place_stage_plans(
             logical_shape=plan.logical_shape,
             input_layouts=_layouts_on_submesh(plan.input_layouts, mapping[stage_id]),
             output_layouts=_layouts_on_submesh(plan.output_layouts, mapping[stage_id]),
+            nodes=plan.nodes,
+            node_input_layouts=tuple(
+                _layouts_on_submesh(layouts, mapping[stage_id])
+                for layouts in plan.node_input_layouts
+            ),
+            node_output_layouts=tuple(
+                _layouts_on_submesh(layouts, mapping[stage_id])
+                for layouts in plan.node_output_layouts
+            ),
         )
         for stage_id, plan in stage_plans.items()
     }
@@ -251,6 +273,30 @@ def _stage_tile_count(tile_count_or_plan: int | StagePlan) -> int:
     if isinstance(tile_count_or_plan, StagePlan):
         return tile_count_or_plan.tile_count
     return tile_count_or_plan
+
+
+def _resolve_stage_selection(
+    graph: Graph,
+    stage_plans: dict[int, StagePlan] | None,
+) -> dict[int, tuple[Node, ...]]:
+    """Return stage groups from plans when available, otherwise select them."""
+
+    if stage_plans is not None and all(plan.nodes for plan in stage_plans.values()):
+        return {
+            stage_id: plan.nodes
+            for stage_id, plan in stage_plans.items()
+        }
+    return select_stages(graph)
+
+
+def _node_stage_ids(stage_selection: dict[int, tuple[Node, ...]]) -> dict[int, int]:
+    """Return stage ids keyed by node object identity."""
+
+    return {
+        id(node): stage_id
+        for stage_id, stage_nodes in stage_selection.items()
+        for node in stage_nodes
+    }
 
 
 def _layout_on_submesh(layout: TensorLayout, submesh: Submesh) -> TensorLayout:
@@ -386,6 +432,7 @@ def _communication_submesh(submesh: Submesh) -> Submesh:
 
 def _filter_l2_access_point_placements(
     graph: Graph,
+    stage_selection: dict[int, tuple[Node, ...]],
     mesh: Mesh,
     placement_options: dict[int, tuple[Submesh, ...]],
     require_l2_input_access_point: bool,
@@ -401,14 +448,21 @@ def _filter_l2_access_point_placements(
 
     filtered: dict[int, tuple[Submesh, ...]] = {}
     for stage_id, placements in placement_options.items():
-        node = graph.nodes[stage_id]
         needs_input_access = (
             require_l2_input_access_point
-            and any(tensor in graph_inputs for tensor in node.inputs)
+            and any(
+                tensor in graph_inputs
+                for node in stage_selection[stage_id]
+                for tensor in node.inputs
+            )
         )
         needs_output_access = (
             require_l2_output_access_point
-            and any(tensor in graph_outputs for tensor in node.outputs)
+            and any(
+                tensor in graph_outputs
+                for node in stage_selection[stage_id]
+                for tensor in node.outputs
+            )
         )
         if not needs_input_access and not needs_output_access:
             filtered[stage_id] = placements
@@ -446,6 +500,7 @@ def _l2_access_point_tile_ids(mesh: Mesh) -> set[int]:
 
 def _edge_placement_pair_count(
     graph: Graph,
+    node_stage_ids: dict[int, int],
     placement_options: dict[int, tuple[Submesh, ...]],
 ) -> int:
     """Count producer-consumer placement pairs across all graph edges."""
@@ -453,8 +508,10 @@ def _edge_placement_pair_count(
     for edge in graph.edges:
         if edge.src is None or edge.dst is None:
             continue
-        src_stage = _node_stage_id(graph, edge.src)
-        dst_stage = _node_stage_id(graph, edge.dst)
+        src_stage = node_stage_ids[id(edge.src)]
+        dst_stage = node_stage_ids[id(edge.dst)]
+        if src_stage == dst_stage:
+            continue
         total += len(placement_options[src_stage]) * len(placement_options[dst_stage])
     return total
 
@@ -579,6 +636,8 @@ def _can_pack_remaining_placements(
 
 def _prune_placement_options(
     graph: Graph,
+    stage_selection: dict[int, tuple[Node, ...]],
+    node_stage_ids: dict[int, int],
     mesh: Mesh,
     placement_options: dict[int, tuple[Submesh, ...]],
     max_placements_per_stage: int,
@@ -588,7 +647,7 @@ def _prune_placement_options(
         raise ValueError("max_placements_per_stage must be > 0")
 
     mesh_center = ((mesh.width - 1) / 2.0, (mesh.height - 1) / 2.0)
-    stage_neighbors = _stage_neighbors(graph)
+    stage_neighbors = _stage_neighbors(graph, stage_selection, node_stage_ids)
     pruned: dict[int, tuple[Submesh, ...]] = {}
     for stage_id, placements in placement_options.items():
         if len(placements) <= max_placements_per_stage:
@@ -597,7 +656,7 @@ def _prune_placement_options(
 
         target = _stage_target_center(
             stage_id=stage_id,
-            stage_count=len(graph.nodes),
+            stage_count=len(stage_selection),
             mesh_center=mesh_center,
         )
         scored = sorted(
@@ -618,15 +677,21 @@ def _prune_placement_options(
         pruned[stage_id] = tuple(scored[:max_placements_per_stage])
     return pruned
 
+def _stage_neighbors(
+    graph: Graph,
+    stage_selection: dict[int, tuple[Node, ...]],
+    node_stage_ids: dict[int, int],
+) -> dict[int, set[int]]:
+    """Return undirected producer-consumer neighbors for each selected stage."""
 
-def _stage_neighbors(graph: Graph) -> dict[int, set[int]]:
-    """Return undirected producer-consumer neighbors for each stage."""
-    neighbors = {stage_id: set() for stage_id in range(len(graph.nodes))}
+    neighbors = {stage_id: set() for stage_id in stage_selection}
     for edge in graph.edges:
         if edge.src is None or edge.dst is None:
             continue
-        src_stage = _node_stage_id(graph, edge.src)
-        dst_stage = _node_stage_id(graph, edge.dst)
+        src_stage = node_stage_ids[id(edge.src)]
+        dst_stage = node_stage_ids[id(edge.dst)]
+        if src_stage == dst_stage:
+            continue
         neighbors[src_stage].add(dst_stage)
         neighbors[dst_stage].add(src_stage)
     return neighbors
@@ -688,16 +753,29 @@ def _print_mapping_grid(mesh: Mesh, mapping: dict[int, Submesh]) -> None:
         print(" ".join(cells))
 
 
+def _stage_name(stage_nodes: tuple[Node, ...]) -> str:
+    """Return a compact display name for one selected stage."""
+
+    return "+".join(node.name for node in stage_nodes)
+
+
 def print_spatial_mapping_details(
     graph: Graph,
     mesh: Mesh,
     mapping: dict[int, Submesh],
     *,
     stage_plans: dict[int, StagePlan] | None = None,
+    stage_selection: dict[int, tuple[Node, ...]] | None = None,
     label: str = "mapping",
 ) -> None:
     """Print selected submeshes, boundary I/O, and edge communication costs."""
 
+    resolved_stage_selection = (
+        _resolve_stage_selection(graph, stage_plans)
+        if stage_selection is None
+        else stage_selection
+    )
+    node_stage_ids = _node_stage_ids(resolved_stage_selection)
     placement_options = {
         stage_id: (mapping[stage_id],)
         for stage_id in mapping
@@ -705,19 +783,21 @@ def print_spatial_mapping_details(
     chosen_costs = _edge_placement_costs(
         graph,
         placement_options=placement_options,
+        node_stage_ids=node_stage_ids,
         stage_plans=stage_plans,
     )
     stage_io_costs = _stage_io_costs_for_placements(
         graph,
         placement_options=placement_options,
+        stage_selection=resolved_stage_selection,
         stage_plans=stage_plans,
     )
 
     print(f"\n[spatial_mapping] chosen submeshes for {label}:")
-    for stage_id in range(len(graph.nodes)):
+    for stage_id in resolved_stage_selection:
         submesh = mapping[stage_id]
         print(
-            f"  stage={stage_id} name={graph.nodes[stage_id].name} "
+            f"  stage={stage_id} name={_stage_name(resolved_stage_selection[stage_id])} "
             f"box=({submesh.x0},{submesh.y0},{submesh.width},{submesh.height}) "
             f"tiles={[tile.tile_id for tile in submesh.tiles]}"
         )
@@ -725,11 +805,11 @@ def print_spatial_mapping_details(
 
     print(f"[spatial_mapping] stage L2 boundary costs for {label}:")
     total_stage_io = 0.0
-    for stage_id in range(len(graph.nodes)):
+    for stage_id in resolved_stage_selection:
         io_cost = stage_io_costs[stage_id][0]
         total_stage_io += io_cost["total"]
         print(
-            f"  stage={stage_id} name={graph.nodes[stage_id].name} "
+            f"  stage={stage_id} name={_stage_name(resolved_stage_selection[stage_id])} "
             f"l2_read={io_cost['read']} "
             f"l2_write={io_cost['write']} "
             f"l2_total={io_cost['total']}"
@@ -741,8 +821,10 @@ def print_spatial_mapping_details(
     for edge_idx, edge in enumerate(graph.edges):
         if edge.src is None or edge.dst is None:
             continue
-        src_stage = _node_stage_id(graph, edge.src)
-        dst_stage = _node_stage_id(graph, edge.dst)
+        src_stage = node_stage_ids[id(edge.src)]
+        dst_stage = node_stage_ids[id(edge.dst)]
+        if src_stage == dst_stage:
+            continue
         edge_cost = chosen_costs[(edge_idx, src_stage, dst_stage, 0, 0)]
         mode = "L1" if edge_cost["l1"] <= edge_cost["l2"] else "L2"
         cost = edge_cost["l1"] if mode == "L1" else edge_cost["l2"]
@@ -767,27 +849,27 @@ def print_spatial_mapping_details(
     )
 
 
-def _node_stage_id(graph: Graph, target: object) -> int:
-    """Return the stage id for a node object stored in graph.nodes."""
-    for stage_id, node in enumerate(graph.nodes):
-        if node is target:
-            return stage_id
-    raise ValueError("node is not present in graph.nodes")
-
-
 def _edge_shape_costs(
     graph: Graph,
     shape_options: dict[int, tuple[tuple[int, int], ...]],
+    node_stage_ids: dict[int, int] | None = None,
 ) -> dict[tuple[int, int, int, int, int], dict[str, float]]:
     """Estimate communication costs for every edge and shape-pair combination."""
+    resolved_node_stage_ids = (
+        _node_stage_ids(select_stages(graph))
+        if node_stage_ids is None
+        else node_stage_ids
+    )
     costs: dict[tuple[int, int, int, int, int], dict[str, float]] = {}
     for edge_idx, edge in enumerate(graph.edges):
         if edge.src is None or edge.dst is None:
             continue
-        src_stage = _node_stage_id(graph, edge.src)
-        dst_stage = _node_stage_id(graph, edge.dst)
-        src_node = graph.nodes[src_stage]
-        dst_node = graph.nodes[dst_stage]
+        src_stage = resolved_node_stage_ids[id(edge.src)]
+        dst_stage = resolved_node_stage_ids[id(edge.dst)]
+        if src_stage == dst_stage:
+            continue
+        src_node = edge.src
+        dst_node = edge.dst
         for src_shape_idx, src_shape in enumerate(shape_options[src_stage]):
             for dst_shape_idx, dst_shape in enumerate(shape_options[dst_stage]):
                 costs[(edge_idx, src_stage, dst_stage, src_shape_idx, dst_shape_idx)] = _edge_shape_mode_costs(
@@ -803,23 +885,31 @@ def _edge_shape_costs(
 def _edge_placement_costs(
     graph: Graph,
     placement_options: dict[int, tuple[Submesh, ...]],
+    node_stage_ids: dict[int, int] | None = None,
     stage_plans: dict[int, StagePlan] | None = None,
     show_progress: bool = False,
 ) -> dict[tuple[int, int, int, int, int], dict[str, float]]:
     """Estimate communication costs for every edge and placement-pair combination."""
+    resolved_node_stage_ids = (
+        _node_stage_ids(_resolve_stage_selection(graph, stage_plans))
+        if node_stage_ids is None
+        else node_stage_ids
+    )
     costs: dict[tuple[int, int, int, int, int], dict[str, float]] = {}
     progress = _ProgressBar(
         "estimating edge costs",
-        _edge_placement_pair_count(graph, placement_options),
+        _edge_placement_pair_count(graph, resolved_node_stage_ids, placement_options),
         show_progress,
     )
     for edge_idx, edge in enumerate(graph.edges):
         if edge.src is None or edge.dst is None:
             continue
-        src_stage = _node_stage_id(graph, edge.src)
-        dst_stage = _node_stage_id(graph, edge.dst)
-        src_node = graph.nodes[src_stage]
-        dst_node = graph.nodes[dst_stage]
+        src_stage = resolved_node_stage_ids[id(edge.src)]
+        dst_stage = resolved_node_stage_ids[id(edge.dst)]
+        if src_stage == dst_stage:
+            continue
+        src_node = edge.src
+        dst_node = edge.dst
         for src_placement_idx, src_submesh in enumerate(placement_options[src_stage]):
             for dst_placement_idx, dst_submesh in enumerate(placement_options[dst_stage]):
                 costs[(edge_idx, src_stage, dst_stage, src_placement_idx, dst_placement_idx)] = _edge_placement_mode_costs(
@@ -839,13 +929,15 @@ def _edge_placement_costs(
 def _stage_io_costs(
     graph: Graph,
     shape_options: dict[int, tuple[tuple[int, int], ...]],
+    stage_selection: dict[int, tuple[Node, ...]] | None = None,
 ) -> dict[int, dict[int, dict[str, float]]]:
     """Estimate graph-boundary L2 costs for abstract shape candidates."""
+    resolved_stage_selection = select_stages(graph) if stage_selection is None else stage_selection
     graph_inputs = set(graph.inputs) - set(graph.initializers)
     graph_outputs = set(graph.outputs)
 
     io_costs: dict[int, dict[int, dict[str, float]]] = {}
-    for stage_id, node in enumerate(graph.nodes):
+    for stage_id, stage_nodes in resolved_stage_selection.items():
         io_costs[stage_id] = {}
         for shape_idx, shape in enumerate(shape_options[stage_id]):
             mesh = Mesh(
@@ -857,20 +949,29 @@ def _stage_io_costs(
             submesh = Submesh(mesh=mesh, submesh_id=stage_id, x0=0, y0=0, width=shape[0], height=shape[1])
             model = TransportCostModel(mesh=mesh)
 
-            input_layouts = node.payload.default_input_layouts(submesh)
-            read_cost = _stage_l2_read_cost(
-                node.inputs,
-                input_layouts,
-                graph_inputs,
-                model,
+            read_cost = max(
+                (
+                    _stage_l2_read_cost(
+                        node.inputs,
+                        node.payload.default_input_layouts(submesh),
+                        graph_inputs,
+                        model,
+                    )
+                    for node in stage_nodes
+                ),
+                default=0.0,
             )
-
-            output_layouts = node.payload.default_output_layouts(submesh)
-            write_cost = _stage_l2_write_cost(
-                node.outputs,
-                output_layouts,
-                graph_outputs,
-                model,
+            write_cost = max(
+                (
+                    _stage_l2_write_cost(
+                        node.outputs,
+                        node.payload.default_output_layouts(submesh),
+                        graph_outputs,
+                        model,
+                    )
+                    for node in stage_nodes
+                ),
+                default=0.0,
             )
 
             io_costs[stage_id][shape_idx] = {
@@ -885,10 +986,16 @@ def _stage_io_costs(
 def _stage_io_costs_for_placements(
     graph: Graph,
     placement_options: dict[int, tuple[Submesh, ...]],
+    stage_selection: dict[int, tuple[Node, ...]] | None = None,
     stage_plans: dict[int, StagePlan] | None = None,
     show_progress: bool = False,
 ) -> dict[int, dict[int, dict[str, float]]]:
     """Estimate graph-boundary L2 costs for concrete placement candidates."""
+    resolved_stage_selection = (
+        _resolve_stage_selection(graph, stage_plans)
+        if stage_selection is None
+        else stage_selection
+    )
     graph_inputs = set(graph.inputs) - set(graph.initializers)
     graph_outputs = set(graph.outputs)
 
@@ -898,35 +1005,37 @@ def _stage_io_costs_for_placements(
         sum(len(placements) for placements in placement_options.values()),
         show_progress,
     )
-    for stage_id, node in enumerate(graph.nodes):
+    for stage_id, stage_nodes in resolved_stage_selection.items():
         io_costs[stage_id] = {}
         for placement_idx, submesh in enumerate(placement_options[stage_id]):
             comm_submesh = _communication_submesh(submesh)
             model = TransportCostModel(mesh=comm_submesh.mesh)
 
             plan = None if stage_plans is None else stage_plans[stage_id]
-            input_layouts = (
-                node.payload.default_input_layouts(comm_submesh)
-                if plan is None
-                else _layouts_on_submesh(plan.input_layouts, comm_submesh)
-            )
-            read_cost = _stage_l2_read_cost(
-                node.inputs,
-                input_layouts,
-                graph_inputs,
-                model,
+            read_cost = max(
+                (
+                    _stage_l2_read_cost(
+                        node.inputs,
+                        _node_input_layouts(node, comm_submesh, plan),
+                        graph_inputs,
+                        model,
+                    )
+                    for node in stage_nodes
+                ),
+                default=0.0,
             )
 
-            output_layouts = (
-                node.payload.default_output_layouts(comm_submesh)
-                if plan is None
-                else _layouts_on_submesh(plan.output_layouts, comm_submesh)
-            )
-            write_cost = _stage_l2_write_cost(
-                node.outputs,
-                output_layouts,
-                graph_outputs,
-                model,
+            write_cost = max(
+                (
+                    _stage_l2_write_cost(
+                        node.outputs,
+                        _node_output_layouts(node, comm_submesh, plan),
+                        graph_outputs,
+                        model,
+                    )
+                    for node in stage_nodes
+                ),
+                default=0.0,
             )
 
             io_costs[stage_id][placement_idx] = {
@@ -974,6 +1083,51 @@ def _stage_l2_write_cost(
     )
 
 
+def _plan_node_index(plan: StagePlan, node: Node) -> int:
+    """Return one node's index inside a grouped stage plan."""
+
+    for node_idx, candidate in enumerate(plan.nodes):
+        if candidate is node:
+            return node_idx
+    raise ValueError(f"node {node.name} is not present in stage plan {plan.stage_id}")
+
+
+def _node_input_layouts(
+    node: Node,
+    submesh: Submesh,
+    plan: StagePlan | None,
+) -> tuple[TensorLayout, ...]:
+    """Return one node's input layouts on a concrete submesh."""
+
+    if plan is None or not plan.nodes:
+        return node.payload.default_input_layouts(submesh)
+    return _layouts_on_submesh(plan.node_input_layouts[_plan_node_index(plan, node)], submesh)
+
+
+def _node_output_layouts(
+    node: Node,
+    submesh: Submesh,
+    plan: StagePlan | None,
+) -> tuple[TensorLayout, ...]:
+    """Return one node's output layouts on a concrete submesh."""
+
+    if plan is None or not plan.nodes:
+        return node.payload.default_output_layouts(submesh)
+    return _layouts_on_submesh(plan.node_output_layouts[_plan_node_index(plan, node)], submesh)
+
+
+def _node_output_layout(
+    node: Node,
+    tensor: Tensor,
+    submesh: Submesh,
+    plan: StagePlan | None,
+) -> TensorLayout:
+    """Return the output layout producing one tensor on a concrete submesh."""
+
+    output_layouts = _node_output_layouts(node, submesh, plan)
+    return output_layouts[_node_output_index(node, tensor)]
+
+
 def _edge_shape_mode_costs(
     tensor: Tensor,
     src_node: Node,
@@ -991,7 +1145,9 @@ def _edge_shape_mode_costs(
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=src_shape[0], height=src_shape[1])
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=0, width=dst_shape[0], height=dst_shape[1])
 
-    src_output_layout = src_node.payload.default_output_layouts(src_submesh)[0]
+    src_output_layout = src_node.payload.default_output_layouts(src_submesh)[
+        _node_output_index(src_node, tensor)
+    ]
     dst_input_layouts = dst_node.payload.default_input_layouts(dst_submesh)
     dst_output_layouts = dst_node.payload.default_output_layouts(dst_submesh)
     dst_input_idx = _node_input_index(dst_node, tensor)
@@ -1059,15 +1215,16 @@ def _edge_placement_mode_costs(
     """Estimate L1-remap and L2-roundtrip costs for one concrete placement pair."""
     src_submesh = _communication_submesh(src_submesh)
     dst_submesh = _communication_submesh(dst_submesh)
-    src_output_layout = (
-        src_node.payload.default_output_layouts(src_submesh)[0]
-        if src_plan is None
-        else _layout_on_submesh(src_plan.output_layouts[0], src_submesh)
+    src_output_layout = _node_output_layout(
+        src_node,
+        tensor,
+        src_submesh,
+        src_plan,
     )
-    dst_input_layouts = (
-        dst_node.payload.default_input_layouts(dst_submesh)
-        if dst_plan is None
-        else _layouts_on_submesh(dst_plan.input_layouts, dst_submesh)
+    dst_input_layouts = _node_input_layouts(
+        dst_node,
+        dst_submesh,
+        dst_plan,
     )
     dst_input_idx = _node_input_index(dst_node, tensor)
     dst_input_layout = dst_input_layouts[dst_input_idx]
@@ -1102,10 +1259,10 @@ def _edge_placement_mode_costs(
         )
 
     max_l2_to_tile_cost = 0.0
-    dst_output_layouts = (
-        dst_node.payload.default_output_layouts(dst_submesh)
-        if dst_plan is None
-        else _layouts_on_submesh(dst_plan.output_layouts, dst_submesh)
+    dst_output_layouts = _node_output_layouts(
+        dst_node,
+        dst_submesh,
+        dst_plan,
     )
     for tile in dst_submesh.tiles:
         tile_work = dst_node.payload.build_tile_work(
@@ -1191,3 +1348,12 @@ def _node_input_index(node: Node, tensor: Tensor) -> int:
         if candidate == tensor:
             return idx
     raise ValueError(f"tensor {tensor.name} is not an input of node {node.name}")
+
+
+def _node_output_index(node: Node, tensor: Tensor) -> int:
+    """Return a tensor's output index in a node, or fail if it is not an output."""
+
+    for idx, candidate in enumerate(node.outputs):
+        if candidate == tensor:
+            return idx
+    raise ValueError(f"tensor {tensor.name} is not an output of node {node.name}")
