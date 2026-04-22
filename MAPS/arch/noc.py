@@ -11,7 +11,6 @@ from typing import Mapping
 class TrafficKind(Enum):
     """Protocol-level traffic classes carried by the NoC."""
 
-    TRANSFER = auto() # for legacy communication logic
     READ_REQ = auto()
     WRITE_REQ = auto()
     READ_RSP = auto()
@@ -95,6 +94,8 @@ class NoCEndpoint:
     egress_latency_cycles: float = 0.0
     ingress_bandwidth_bytes: float | None = None
     egress_bandwidth_bytes: float | None = None
+    ingress_channels: tuple[NoCChannel, ...] = ()
+    egress_channels: tuple[NoCChannel, ...] = ()
 
     def __post_init__(self) -> None:
         if self.endpoint_id < 0:
@@ -111,8 +112,16 @@ class NoCEndpoint:
             raise ValueError("endpoint ingress_bandwidth_bytes must be > 0")
         if self.egress_bandwidth_bytes is not None and self.egress_bandwidth_bytes <= 0:
             raise ValueError("endpoint egress_bandwidth_bytes must be > 0")
-        if self.name == "":
-            return
+
+        ingress_channels = tuple(self.ingress_channels)
+        egress_channels = tuple(self.egress_channels)
+        if len({channel.channel_id for channel in ingress_channels}) != len(ingress_channels):
+            raise ValueError("endpoint ingress channel ids must be unique")
+        if len({channel.channel_id for channel in egress_channels}) != len(egress_channels):
+            raise ValueError("endpoint egress channel ids must be unique")
+
+        object.__setattr__(self, "ingress_channels", ingress_channels)
+        object.__setattr__(self, "egress_channels", egress_channels)
 
 
 @dataclass(frozen=True)
@@ -244,6 +253,8 @@ class NoC:
             if endpoint.node_id not in nodes_by_id:
                 raise ValueError("endpoint references unknown node_id")
             endpoints_by_id[endpoint.endpoint_id] = endpoint
+            channel_ids.update(channel.channel_id for channel in endpoint.ingress_channels)
+            channel_ids.update(channel.channel_id for channel in endpoint.egress_channels)
 
         if self.traffic_policy is not None:
             for traffic_kind, allowed_channel_ids in self.traffic_policy.channel_ids_by_traffic.items():
@@ -328,7 +339,6 @@ class NoC:
                 node_ids=node_ids,
                 link_ids=link_ids,
             )
-
         raise ValueError(f"unsupported routing policy: {self.routing_policy}")
 
     def _route_nodes_xy(self, src_node_id: int, dst_node_id: int) -> tuple[tuple[int, ...], tuple[int, ...]]:

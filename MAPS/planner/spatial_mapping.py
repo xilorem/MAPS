@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
-from MAPS.arch import EndpointKind, L2Memory, Mesh
+from MAPS.arch import (
+    EndpointKind,
+    L2Memory,
+    Mesh,
+    NoC,
+    NoCChannel,
+    NoCEndpoint,
+    NoCLink,
+    NoCNode,
+)
 from MAPS.builders.transition_builder import build_transition
 from MAPS.cost_models.transition_cost import estimate_transition_cost
 from MAPS.cost_models.transport_cost import TransportCostModel
@@ -299,6 +308,82 @@ def _placement_options(stage_id: int, tile_count: int, mesh: Mesh) -> tuple[Subm
     return tuple(placements)
 
 
+def _default_noc_node_id(x: int, y: int, width: int) -> int:
+    return y * width + x
+
+
+def _default_communication_noc(width: int, height: int) -> NoC:
+    nodes = tuple(
+        NoCNode(node_id=_default_noc_node_id(x, y, width), x=x, y=y)
+        for y in range(height)
+        for x in range(width)
+    )
+    link_pairs = tuple(
+        (_default_noc_node_id(x, y, width), _default_noc_node_id(x + 1, y, width))
+        for y in range(height)
+        for x in range(width - 1)
+    ) + tuple(
+        (_default_noc_node_id(x, y, width), _default_noc_node_id(x, y + 1, width))
+        for y in range(height - 1)
+        for x in range(width)
+    )
+    links = tuple(
+        NoCLink(
+            link_id=link_id,
+            src_node_id=src_node_id,
+            dst_node_id=dst_node_id,
+            channels=(NoCChannel(channel_id=0, width_bytes=1, hop_latency_cycles=0.5),),
+            bidirectional=True,
+        )
+        for link_id, (src_node_id, dst_node_id) in enumerate(link_pairs)
+    )
+    l1_endpoints = tuple(
+        NoCEndpoint(
+            endpoint_id=tile_id,
+            kind=EndpointKind.L1,
+            node_id=tile_id,
+            tile_id=tile_id,
+        )
+        for tile_id in range(width * height)
+    )
+    l2_endpoints = tuple(
+        NoCEndpoint(
+            endpoint_id=width * height + y,
+            kind=EndpointKind.L2,
+            node_id=_default_noc_node_id(0, y, width),
+            name=f"l2_{y}",
+        )
+        for y in range(height)
+    )
+    return NoC(nodes=nodes, links=links, endpoints=l1_endpoints + l2_endpoints)
+
+
+def _communication_mesh(mesh: Mesh) -> Mesh:
+    if mesh.has_noc:
+        return mesh
+    return Mesh(
+        width=mesh.width,
+        height=mesh.height,
+        l2_memory=mesh.l2_memory,
+        tiles=mesh.tiles,
+        noc=_default_communication_noc(mesh.width, mesh.height),
+    )
+
+
+def _communication_submesh(submesh: Submesh) -> Submesh:
+    comm_mesh = _communication_mesh(submesh.mesh)
+    if comm_mesh is submesh.mesh:
+        return submesh
+    return Submesh(
+        mesh=comm_mesh,
+        submesh_id=submesh.submesh_id,
+        x0=submesh.x0,
+        y0=submesh.y0,
+        width=submesh.width,
+        height=submesh.height,
+    )
+
+
 def _filter_l2_access_point_placements(
     graph: Graph,
     mesh: Mesh,
@@ -345,23 +430,17 @@ def _filter_l2_access_point_placements(
 
 def _l2_access_point_tile_ids(mesh: Mesh) -> set[int]:
     """Return tiles that should count as L2 access points for boundary placement."""
-    if mesh.has_noc:
-        l2_endpoints = mesh.noc.endpoints_of_kind(EndpointKind.L2)
-        if l2_endpoints:
-            tile_ids = {
-                endpoint.tile_id
-                for l2_endpoint in l2_endpoints
-                for endpoint in mesh.noc.endpoints
-                if endpoint.kind is EndpointKind.L1
-                and endpoint.node_id == l2_endpoint.node_id
-                and endpoint.tile_id is not None
-            }
-            if tile_ids:
-                return tile_ids
-
+    comm_mesh = _communication_mesh(mesh)
+    l1_endpoints = tuple(
+        endpoint
+        for endpoint in comm_mesh.noc.endpoints
+        if endpoint.kind is EndpointKind.L1 and endpoint.tile_id is not None
+    )
     return {
-        mesh.tile_id(x, y)
-        for x, y in mesh.l2_memory.access_points
+        endpoint.tile_id
+        for l2_endpoint in comm_mesh.noc.endpoints_of_kind(EndpointKind.L2)
+        for endpoint in l1_endpoints
+        if endpoint.node_id == l2_endpoint.node_id
     }
 
 
@@ -769,7 +848,12 @@ def _stage_io_costs(
     for stage_id, node in enumerate(graph.nodes):
         io_costs[stage_id] = {}
         for shape_idx, shape in enumerate(shape_options[stage_id]):
-            mesh = Mesh(shape[0], shape[1], l2_memory=L2Memory(size=1))
+            mesh = Mesh(
+                shape[0],
+                shape[1],
+                l2_memory=L2Memory(size=1),
+                noc=_default_communication_noc(shape[0], shape[1]),
+            )
             submesh = Submesh(mesh=mesh, submesh_id=stage_id, x0=0, y0=0, width=shape[0], height=shape[1])
             model = TransportCostModel(mesh=mesh)
 
@@ -817,13 +901,14 @@ def _stage_io_costs_for_placements(
     for stage_id, node in enumerate(graph.nodes):
         io_costs[stage_id] = {}
         for placement_idx, submesh in enumerate(placement_options[stage_id]):
-            model = TransportCostModel(mesh=submesh.mesh)
+            comm_submesh = _communication_submesh(submesh)
+            model = TransportCostModel(mesh=comm_submesh.mesh)
 
             plan = None if stage_plans is None else stage_plans[stage_id]
             input_layouts = (
-                node.payload.default_input_layouts(submesh)
+                node.payload.default_input_layouts(comm_submesh)
                 if plan is None
-                else _layouts_on_submesh(plan.input_layouts, submesh)
+                else _layouts_on_submesh(plan.input_layouts, comm_submesh)
             )
             read_cost = _stage_l2_read_cost(
                 node.inputs,
@@ -833,9 +918,9 @@ def _stage_io_costs_for_placements(
             )
 
             output_layouts = (
-                node.payload.default_output_layouts(submesh)
+                node.payload.default_output_layouts(comm_submesh)
                 if plan is None
-                else _layouts_on_submesh(plan.output_layouts, submesh)
+                else _layouts_on_submesh(plan.output_layouts, comm_submesh)
             )
             write_cost = _stage_l2_write_cost(
                 node.outputs,
@@ -897,7 +982,12 @@ def _edge_shape_mode_costs(
     dst_shape: tuple[int, int],
 ) -> dict[str, float]:
     """Estimate L1-remap and L2-roundtrip costs for one abstract shape pair."""
-    mesh = Mesh(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1]), l2_memory=L2Memory(size=1))
+    mesh = Mesh(
+        max(src_shape[0], dst_shape[0]),
+        max(src_shape[1], dst_shape[1]),
+        l2_memory=L2Memory(size=1),
+        noc=_default_communication_noc(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1])),
+    )
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=src_shape[0], height=src_shape[1])
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=0, width=dst_shape[0], height=dst_shape[1])
 
@@ -967,6 +1057,8 @@ def _edge_placement_mode_costs(
     dst_plan: StagePlan | None = None,
 ) -> dict[str, float]:
     """Estimate L1-remap and L2-roundtrip costs for one concrete placement pair."""
+    src_submesh = _communication_submesh(src_submesh)
+    dst_submesh = _communication_submesh(dst_submesh)
     src_output_layout = (
         src_node.payload.default_output_layouts(src_submesh)[0]
         if src_plan is None

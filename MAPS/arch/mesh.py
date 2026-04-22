@@ -34,7 +34,6 @@ class Mesh:
 
         object.__setattr__(self, "width", width)
         object.__setattr__(self, "height", height)
-        self._validate_l2_memory(width, height, l2_memory)
         object.__setattr__(self, "l2_memory", l2_memory)
         if tiles is None:
             tiles = tuple(
@@ -48,12 +47,6 @@ class Mesh:
         self._validate_noc(width, height, noc)
         object.__setattr__(self, "noc", noc)
         object.__setattr__(self, "_tiles", tiles)
-
-    @staticmethod
-    def _validate_l2_memory(width: int, height: int, l2_memory: L2Memory) -> None:
-        for x, y in l2_memory.access_points:
-            if not (0 <= x < width and 0 <= y < height):
-                raise ValueError(f"L2 access point out of bounds: ({x}, {y})")
 
     @staticmethod
     def _validate_tiles(width: int, height: int, tiles: tuple[Tile, ...]) -> None:

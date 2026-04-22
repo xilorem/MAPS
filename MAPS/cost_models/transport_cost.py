@@ -77,45 +77,19 @@ class TransportCostModel:
     l1_to_l2_startup_cycles: float = 88.0
     l2_to_l1_startup_cycles: float = 75.0
     l1_to_l1_startup_cycles: float = 75.0
-    l2_access_hop_cycles: float = 0.5
-    l1_to_l1_hop_cycles: float = 0.5
     account_noc_contention: bool = False
     read_request_bytes: int = 1
     write_request_bytes: int = 1
     write_response_bytes: int = 1
 
     def l1_to_l2(self, src: Tile, bytes_: int) -> float:
-        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
-            return self._noc_l1_to_l2(src, bytes_)
-
-        bandwidth = self._effective_l2_bandwidth(src)
-        return (
-            self.l1_to_l2_startup_cycles
-            + bytes_ / bandwidth
-            + self.l2_access_hop_cycles * self._nearest_l2_access_distance(src)
-        )
+        return self._noc_l1_to_l2(src, bytes_)
 
     def l2_to_l1(self, dst: Tile, bytes_: int) -> float:
-        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
-            return self._noc_l2_to_l1(dst, bytes_)
-
-        bandwidth = self._effective_l2_bandwidth(dst)
-        return (
-            self.l2_to_l1_startup_cycles
-            + bytes_ / bandwidth
-            + self.l2_access_hop_cycles * self._nearest_l2_access_distance(dst)
-        )
+        return self._noc_l2_to_l1(dst, bytes_)
 
     def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
-        if self.mesh is not None and self.mesh.has_noc:
-            return self._noc_l1_to_l1(src, dst, bytes_)
-
-        bandwidth = min(src.memory.bandwidth, dst.memory.bandwidth)
-        return (
-            self.l1_to_l1_startup_cycles
-            + bytes_ / bandwidth
-            + self.l1_to_l1_hop_cycles * src.manhattan_distance(dst)
-        )
+        return self._noc_l1_to_l1(src, dst, bytes_)
 
     def estimate(self, leg: TransferLeg) -> TransferCostEstimate:
         if leg.kind is TransferKind.L1_TO_L2:
@@ -132,42 +106,20 @@ class TransportCostModel:
     def resource_loads(self, leg: TransferLeg) -> dict[str, float]:
         return self.estimate(leg).resource_loads
 
-    def _effective_l2_bandwidth(self, tile: Tile) -> int:
-        if self.mesh is None:
-            return tile.memory.bandwidth
-        return min(tile.memory.bandwidth, self.mesh.l2_memory.bandwidth)
-
-    def _nearest_l2_access_distance(self, tile: Tile) -> int:
-        if self.mesh is None or not self.mesh.l2_memory.access_points:
-            return 0
-
-        return min(
-            abs(tile.x - access_x) + abs(tile.y - access_y)
-            for access_x, access_y in self.mesh.l2_memory.access_points
-        )
-
     def _estimate_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
-        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
-            return self._estimate_noc_l1_to_l2(src, bytes_)
-
-        return TransferCostEstimate(total_cost=self.l1_to_l2(src, bytes_))
+        return self._estimate_noc_l1_to_l2(src, bytes_)
 
     def _estimate_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
-        if self.mesh is not None and self.mesh.has_noc and self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
-            return self._estimate_noc_l2_to_l1(dst, bytes_)
-
-        return TransferCostEstimate(total_cost=self.l2_to_l1(dst, bytes_))
+        return self._estimate_noc_l2_to_l1(dst, bytes_)
 
     def _estimate_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
-        if self.mesh is not None and self.mesh.has_noc:
-            return self._estimate_noc_l1_to_l1(src, dst, bytes_)
-
-        return TransferCostEstimate(total_cost=self.l1_to_l1(src, dst, bytes_))
+        return self._estimate_noc_l1_to_l1(src, dst, bytes_)
 
     def _noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
         return self._estimate_noc_l1_to_l1(src, dst, bytes_).total_cost
 
     def _estimate_noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
+        self._require_noc()
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
         return self._route_protocol_cost(
@@ -193,6 +145,7 @@ class TransportCostModel:
         return self._estimate_noc_l1_to_l2(src, bytes_).total_cost
 
     def _estimate_noc_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
+        self._require_noc_with_l2()
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         return min(
             (
@@ -229,6 +182,7 @@ class TransportCostModel:
         return self._estimate_noc_l2_to_l1(dst, bytes_).total_cost
 
     def _estimate_noc_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
+        self._require_noc_with_l2()
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
         return min(
             (
@@ -278,6 +232,16 @@ class TransportCostModel:
         src_endpoint = self.mesh.noc.endpoint_by_id(flow.src_endpoint_id)
         dst_endpoint = self.mesh.noc.endpoint_by_id(flow.dst_endpoint_id)
         route = self.mesh.noc.route_endpoints(flow.src_endpoint_id, flow.dst_endpoint_id)
+        src_attachment_channel = self._endpoint_attachment_channel(
+            src_endpoint.egress_channels,
+            flow.traffic_kind,
+            f"endpoint {src_endpoint.endpoint_id} egress attachment",
+        )
+        dst_attachment_channel = self._endpoint_attachment_channel(
+            dst_endpoint.ingress_channels,
+            flow.traffic_kind,
+            f"endpoint {dst_endpoint.endpoint_id} ingress attachment",
+        )
         route_channels = self._route_channels(route, flow.traffic_kind)
         src_endpoint_bandwidth = (
             src_endpoint.egress_bandwidth_bytes
@@ -297,13 +261,17 @@ class TransportCostModel:
             flow.bandwidth_limit,
             src_endpoint_bandwidth,
             dst_endpoint_bandwidth,
+            src_attachment_channel.width_bytes if src_attachment_channel is not None else float("inf"),
             route_bandwidth,
+            dst_attachment_channel.width_bytes if dst_attachment_channel is not None else float("inf"),
         )
         total_cost = (
             src_endpoint.egress_latency_cycles
+            + (src_attachment_channel.hop_latency_cycles if src_attachment_channel is not None else 0.0)
             + dst_endpoint.ingress_latency_cycles
             + flow.bytes / bandwidth
             + sum(channel.hop_latency_cycles for channel in route_channels)
+            + (dst_attachment_channel.hop_latency_cycles if dst_attachment_channel is not None else 0.0)
         )
         resource_loads = {}
         if self.account_noc_contention:
@@ -311,6 +279,22 @@ class TransportCostModel:
                 self._route_resource_id(link_id, channel.channel_id): flow.bytes / channel.width_bytes
                 for link_id, channel in zip(route.link_ids, route_channels)
             }
+            if src_attachment_channel is not None:
+                resource_loads[
+                    self._endpoint_attachment_resource_id(
+                        src_endpoint.endpoint_id,
+                        "egress",
+                        src_attachment_channel.channel_id,
+                    )
+                ] = flow.bytes / src_attachment_channel.width_bytes
+            if dst_attachment_channel is not None:
+                resource_loads[
+                    self._endpoint_attachment_resource_id(
+                        dst_endpoint.endpoint_id,
+                        "ingress",
+                        dst_attachment_channel.channel_id,
+                    )
+                ] = flow.bytes / dst_attachment_channel.width_bytes
             if src_endpoint.egress_bandwidth_bytes is not None:
                 resource_loads[self._endpoint_resource_id(src_endpoint.endpoint_id, "egress")] = (
                     flow.bytes / src_endpoint.egress_bandwidth_bytes
@@ -321,31 +305,59 @@ class TransportCostModel:
                 )
         return TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
 
-    def _route_channels(self, route: NoCRoute, traffic_kind: TrafficKind) -> tuple[NoCChannel, ...]:
-        allowed_channel_ids = ()
-        if self.mesh.noc.traffic_policy is not None:
-            allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(traffic_kind)
-            if not allowed_channel_ids:
-                allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(TrafficKind.TRANSFER)
+    def _require_noc(self) -> None:
+        if self.mesh is None or not self.mesh.has_noc:
+            raise ValueError("transport cost model requires a mesh with a NoC")
 
+    def _require_noc_with_l2(self) -> None:
+        self._require_noc()
+        if not self.mesh.noc.endpoints_of_kind(EndpointKind.L2):
+            raise ValueError("transport cost model requires at least one NoC L2 endpoint")
+
+    def _route_channels(self, route: NoCRoute, traffic_kind: TrafficKind) -> tuple[NoCChannel, ...]:
         selected_channels = []
         for link_id in route.link_ids:
             link = self.mesh.noc.link_by_id(link_id)
-            candidates = tuple(
-                channel
-                for channel in link.channels
-                if channel.supports(traffic_kind)
-                and (not allowed_channel_ids or channel.channel_id in allowed_channel_ids)
-            )
-            if not candidates:
-                raise ValueError(
-                    f"no channel available for {traffic_kind.name} on link {link.link_id}"
-                )
             selected_channels.append(
-                max(candidates, key=lambda channel: (channel.width_bytes, -channel.hop_latency_cycles))
+                self._select_channel(
+                    link.channels,
+                    traffic_kind,
+                    f"link {link.link_id}",
+                )
             )
 
         return tuple(selected_channels)
+
+    def _endpoint_attachment_channel(
+        self,
+        channels: tuple[NoCChannel, ...],
+        traffic_kind: TrafficKind,
+        resource_name: str,
+    ) -> NoCChannel | None:
+        if not channels:
+            return None
+        return self._select_channel(channels, traffic_kind, resource_name)
+
+    def _select_channel(
+        self,
+        channels: tuple[NoCChannel, ...],
+        traffic_kind: TrafficKind,
+        resource_name: str,
+    ) -> NoCChannel:
+        allowed_channel_ids = ()
+        if self.mesh.noc.traffic_policy is not None:
+            allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(traffic_kind)
+
+        candidates = tuple(
+            channel
+            for channel in channels
+            if channel.supports(traffic_kind)
+            and (not allowed_channel_ids or channel.channel_id in allowed_channel_ids)
+        )
+        if not candidates:
+            raise ValueError(f"no channel available for {traffic_kind.name} on {resource_name}")
+
+        return max(candidates, key=lambda channel: (channel.width_bytes, -channel.hop_latency_cycles))
 
     @staticmethod
     def _route_resource_id(link_id: int, channel_id: int) -> str:
@@ -354,3 +366,7 @@ class TransportCostModel:
     @staticmethod
     def _endpoint_resource_id(endpoint_id: int, direction: str) -> str:
         return f"noc_endpoint:{endpoint_id}:{direction}"
+
+    @staticmethod
+    def _endpoint_attachment_resource_id(endpoint_id: int, direction: str, channel_id: int) -> str:
+        return f"noc_endpoint_attachment:{endpoint_id}:{direction}:channel:{channel_id}"
