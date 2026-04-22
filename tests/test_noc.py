@@ -39,7 +39,7 @@ def test_noc_preserves_lookup_helpers_and_link_directions() -> None:
         traffic_policy=TrafficPolicy(
             {
                 TrafficKind.READ_REQ: (0,),
-                TrafficKind.TRANSFER: (1,),
+                TrafficKind.WRITE_DATA: (1,),
             }
         ),
     )
@@ -139,6 +139,30 @@ def test_noc_endpoint_rejects_non_positive_attachment_bandwidth() -> None:
         )
 
 
+def test_noc_endpoint_rejects_duplicate_attachment_channel_ids() -> None:
+    with pytest.raises(ValueError, match="endpoint ingress channel ids must be unique"):
+        NoCEndpoint(
+            endpoint_id=0,
+            kind=EndpointKind.L1,
+            node_id=0,
+            ingress_channels=(
+                NoCChannel(channel_id=0, width_bytes=4),
+                NoCChannel(channel_id=0, width_bytes=8),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="endpoint egress channel ids must be unique"):
+        NoCEndpoint(
+            endpoint_id=0,
+            kind=EndpointKind.L1,
+            node_id=0,
+            egress_channels=(
+                NoCChannel(channel_id=1, width_bytes=4),
+                NoCChannel(channel_id=1, width_bytes=8),
+            ),
+        )
+
+
 def test_noc_rejects_policy_referencing_unknown_channel_ids() -> None:
     with pytest.raises(ValueError, match="references unknown channel ids"):
         NoC(
@@ -156,6 +180,24 @@ def test_noc_rejects_policy_referencing_unknown_channel_ids() -> None:
             ),
             traffic_policy=TrafficPolicy({TrafficKind.READ_REQ: (1,)}),
         )
+
+
+def test_noc_accepts_policy_referencing_endpoint_attachment_channel_ids() -> None:
+    noc = NoC(
+        nodes=(NoCNode(node_id=0, x=0, y=0),),
+        links=(),
+        endpoints=(
+            NoCEndpoint(
+                endpoint_id=0,
+                kind=EndpointKind.L2,
+                node_id=0,
+                ingress_channels=(NoCChannel(channel_id=7, width_bytes=4),),
+            ),
+        ),
+        traffic_policy=TrafficPolicy({TrafficKind.READ_REQ: (7,)}),
+    )
+
+    assert noc.traffic_policy.allowed_channel_ids(TrafficKind.READ_REQ) == (7,)
 
 
 def test_noc_route_requires_one_more_node_than_links() -> None:

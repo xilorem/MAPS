@@ -36,24 +36,14 @@ def test_mesh_exposes_memory_objects() -> None:
     mesh = Mesh(
         width=2,
         height=1,
-        l2_memory=L2Memory(size=16384, access_points=((0, 0),), bandwidth=128),
+        l2_memory=L2Memory(size=16384, bandwidth=128),
         tiles=tiles,
     )
 
     assert mesh.l2_memory.size == 16384
-    assert mesh.l2_memory.access_points == ((0, 0),)
     assert mesh.l2_memory.bandwidth == 128
     assert mesh.tile(0, 0).memory.bandwidth == 64
     assert tuple(tile.memory.size for tile in mesh.tiles) == (4096, 2048)
-
-
-def test_mesh_rejects_l2_access_points_outside_mesh() -> None:
-    with pytest.raises(ValueError, match="L2 access point out of bounds"):
-        Mesh(
-            width=2,
-            height=2,
-            l2_memory=L2Memory(size=4096, access_points=((2, 0),)),
-        )
 
 
 def test_mesh_rectangle_keeps_row_major_order() -> None:

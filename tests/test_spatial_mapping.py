@@ -214,39 +214,6 @@ def test_map_spatially_prunes_placement_candidates() -> None:
     _assert_valid_mapping(mapping, tile_counts)
 
 
-def test_map_spatially_can_require_l2_access_point_for_input_stage() -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    node = _gemm_node("node", 8, 8, 8)
-    graph = Graph(
-        name="g",
-        tensors=(*node.inputs, *node.outputs),
-        nodes=(node,),
-        edges=(
-            Edge(tensor=node.inputs[0], src=None, dst=node),
-            Edge(tensor=node.inputs[1], src=None, dst=node),
-            Edge(tensor=node.outputs[0], src=node, dst=None),
-        ),
-        inputs=node.inputs,
-        outputs=node.outputs,
-        initializers=(node.inputs[1],),
-    )
-    mesh = Mesh(2, 1, l2_memory=L2Memory(size=4096, access_points=((1, 0),)))
-
-    mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts={0: 1},
-        require_l2_input_access_point=True,
-        print_mapping=False,
-    )
-
-    assert mapping[0].contains_tile_id(mesh.tile_id(1, 0))
-
-
 def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
     try:
         import pulp  # noqa: F401
@@ -267,7 +234,31 @@ def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
         outputs=node.outputs,
         initializers=node.inputs,
     )
-    mesh = Mesh(2, 1, l2_memory=L2Memory(size=4096, access_points=((1, 0),)))
+    mesh = Mesh(
+        2,
+        1,
+        l2_memory=L2Memory(size=4096),
+        noc=NoC(
+            nodes=(
+                NoCNode(node_id=0, x=0, y=0),
+                NoCNode(node_id=1, x=1, y=0),
+            ),
+            links=(
+                NoCLink(
+                    link_id=0,
+                    src_node_id=0,
+                    dst_node_id=1,
+                    channels=(NoCChannel(channel_id=0, width_bytes=4),),
+                    bidirectional=True,
+                ),
+            ),
+            endpoints=(
+                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
+                NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
+            ),
+        ),
+    )
 
     mapping = map_spatially(
         graph,
@@ -304,63 +295,6 @@ def test_map_spatially_can_require_l2_access_point_from_noc_endpoint() -> None:
         2,
         1,
         l2_memory=L2Memory(size=4096),
-        noc=NoC(
-            nodes=(
-                NoCNode(node_id=0, x=0, y=0),
-                NoCNode(node_id=1, x=1, y=0),
-            ),
-            links=(
-                NoCLink(
-                    link_id=0,
-                    src_node_id=0,
-                    dst_node_id=1,
-                    channels=(NoCChannel(channel_id=0, width_bytes=4),),
-                    bidirectional=True,
-                ),
-            ),
-            endpoints=(
-                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
-                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
-                NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
-            ),
-        ),
-    )
-
-    mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts={0: 1},
-        require_l2_input_access_point=True,
-        print_mapping=False,
-    )
-
-    assert mapping[0].contains_tile_id(mesh.tile_id(1, 0))
-
-
-def test_map_spatially_prefers_noc_l2_endpoint_over_legacy_access_point() -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    node = _gemm_node("node", 8, 8, 8)
-    graph = Graph(
-        name="g",
-        tensors=(*node.inputs, *node.outputs),
-        nodes=(node,),
-        edges=(
-            Edge(tensor=node.inputs[0], src=None, dst=node),
-            Edge(tensor=node.inputs[1], src=None, dst=node),
-            Edge(tensor=node.outputs[0], src=node, dst=None),
-        ),
-        inputs=node.inputs,
-        outputs=node.outputs,
-        initializers=(node.inputs[1],),
-    )
-    mesh = Mesh(
-        2,
-        1,
-        l2_memory=L2Memory(size=4096, access_points=((0, 0),)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),

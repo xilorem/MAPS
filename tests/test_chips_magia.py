@@ -1,9 +1,11 @@
 from MAPS.arch import CoreDevice, DMADevice, DeviceKind, SystolicDevice
 from MAPS.chips.magia import (
+    MAGIA_L1_BANDWIDTH_BYTES,
     MAGIA_L1_RESERVED_BYTES,
     MAGIA_L1_SIZE_BYTES,
     MAGIA_L1_STACK_BYTES,
     MAGIA_L1_USABLE_BYTES,
+    MAGIA_L2_BANDWIDTH_BYTES,
     MAGIA_L2_SIZE_BYTES,
     MAGIA_MESH_HEIGHT,
     MAGIA_MESH_WIDTH,
@@ -17,15 +19,18 @@ def test_magia_mesh_matches_paper_memory_map_and_shape() -> None:
     assert mesh.shape == (8, 8)
     assert mesh.num_tiles == 64
     assert mesh.l2_memory.size == 1024 * 1024 * 1024
-    assert mesh.l2_memory.access_points == tuple((0, y) for y in range(8))
-    assert all(tile.memory.size == 1024 * 1024 for tile in mesh.tiles)
+    assert mesh.l2_memory.bandwidth == MAGIA_L2_BANDWIDTH_BYTES
+    assert all(tile.memory.size == MAGIA_L1_USABLE_BYTES for tile in mesh.tiles)
+    assert all(tile.memory.bandwidth == MAGIA_L1_BANDWIDTH_BYTES for tile in mesh.tiles)
     assert MAGIA_MESH_WIDTH == 8
     assert MAGIA_MESH_HEIGHT == 8
     assert MAGIA_L1_SIZE_BYTES == 1024 * 1024
     assert MAGIA_L1_USABLE_BYTES == 896 * 1024
     assert MAGIA_L1_STACK_BYTES == 64 * 1024
     assert MAGIA_L1_RESERVED_BYTES == 64 * 1024
+    assert MAGIA_L1_BANDWIDTH_BYTES == 32
     assert MAGIA_L2_SIZE_BYTES == 1024 * 1024 * 1024
+    assert MAGIA_L2_BANDWIDTH_BYTES == 32
 
 
 def test_magia_tiles_have_idma_core_and_redmule_devices() -> None:
@@ -47,6 +52,5 @@ def test_magia_mesh_accepts_custom_shape() -> None:
 
     assert mesh.shape == (4, 3)
     assert mesh.num_tiles == 12
-    assert mesh.l2_memory.access_points == ((0, 0), (0, 1), (0, 2))
     assert [tile.tile_id for tile in mesh.tiles] == list(range(12))
     assert mesh.tile(3, 2).tile_id == 11
