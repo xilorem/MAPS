@@ -188,70 +188,20 @@ def balance_workload(
                 "[workload_balancing] "
                 f"stage={stage_id} candidate_tile_counts={candidate_tile_count_options}",
             )
-
-            for candidate_tile_count in candidate_tile_count_options:
-                added_tiles = candidate_tile_count - current_tile_count
-                if used_tiles + added_tiles > mesh.num_tiles:
-                    _debug(
-                        debug,
-                        "[workload_balancing] "
-                        f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-                        "skip=tile_budget_exceeded",
-                    )
-                    continue
-
-                candidate_tile_counts = dict(tile_counts)
-                candidate_tile_counts[stage_id] = candidate_tile_count
-
-                # Reject local improvements that would make the final stage
-                # rectangles impossible to place without overlap.
-                if not _has_feasible_submesh_placement(
-                    candidate_tile_counts,
-                    mesh,
-                    placement_masks_by_tile_count=placement_masks_by_tile_count,
-                    feasibility_cache=placement_feasibility_cache,
-                ):
-                    _debug(
-                        debug,
-                        "[workload_balancing] "
-                        f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-                        "no_feasible_global_placement",
-                    )
-                    continue
-                candidate_plans = _plan_all_stages_for_tile_counts(
-                    resolved_stage_selection,
-                    mesh,
-                    candidate_tile_counts,
-                    debug=False,
-                )
-                candidate_workloads = _estimate_workloads(
-                    candidate_plans,
-                    resolved_stage_selection,
-                    debug=debug,
-                )
-                candidate_workload = candidate_workloads[stage_id]
-                improvement = current_workload - candidate_workload
-                if improvement <= 0:
-                    _debug(
-                        debug,
-                        "[workload_balancing] "
-                        f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-                        f"skip=no_workload_improvement "
-                        f"candidate_workload={candidate_workload} "
-                        f"current_workload={current_workload}",
-                    )
-                    continue
-                _debug(
-                    debug,
-                    "[workload_balancing] "
-                    f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-                    f"accepted_improvement={improvement} "
-                    f"candidate_workload={candidate_workload}",
-                )
+            best_growth = _best_growth_tile_count_for_stage(
+                stage_id=stage_id,
+                stage_selection=resolved_stage_selection,
+                mesh=mesh,
+                tile_counts=tile_counts,
+                used_tiles=used_tiles,
+                current_workload=current_workload,
+                placement_masks_by_tile_count=placement_masks_by_tile_count,
+                placement_feasibility_cache=placement_feasibility_cache,
+                debug=debug,
+            )
+            if best_growth is not None:
                 worst_stage_id = stage_id
-                worst_stage_tile_count = candidate_tile_count
-                worst_stage_improvement = improvement
-                break
+                worst_stage_tile_count, worst_stage_improvement = best_growth
 
             if worst_stage_id is None:
                 _debug(debug, f"[workload_balancing] stage={stage_id} no_valid_growth")
@@ -369,6 +319,119 @@ def _tile_count_options_after_growth(
     return tuple(options)
 
 
+def _best_growth_tile_count_for_stage(
+    stage_id: int,
+    stage_selection: StageSelection,
+    mesh: Mesh,
+    tile_counts: dict[int, int],
+    used_tiles: int,
+    current_workload: float,
+    placement_masks_by_tile_count: dict[int, tuple[int, ...]],
+    placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool],
+    debug: bool,
+) -> tuple[int, float] | None:
+    """Return the best feasible growth tile count for one stage.
+
+    Growth candidates must still improve workload and preserve global rectangle
+    packability. Among valid candidates, prefer the tile count with the most
+    possible physical rectangle shapes; break ties by larger workload
+    improvement, then smaller tile count.
+    """
+
+    current_tile_count = tile_counts[stage_id]
+    candidate_tile_count_options = _tile_count_options_after_growth(
+        current_tile_count,
+        mesh.num_tiles - used_tiles,
+        mesh,
+    )
+
+    best_candidate_tile_count: int | None = None
+    best_candidate_improvement = 0.0
+    best_candidate_shape_count = -1
+
+    for candidate_tile_count in candidate_tile_count_options:
+        added_tiles = candidate_tile_count - current_tile_count
+        if used_tiles + added_tiles > mesh.num_tiles:
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
+                "skip=tile_budget_exceeded",
+            )
+            continue
+
+        candidate_tile_counts = dict(tile_counts)
+        candidate_tile_counts[stage_id] = candidate_tile_count
+
+        if not _has_feasible_submesh_placement(
+            candidate_tile_counts,
+            mesh,
+            placement_masks_by_tile_count=placement_masks_by_tile_count,
+            feasibility_cache=placement_feasibility_cache,
+        ):
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
+                "no_feasible_global_placement",
+            )
+            continue
+
+        candidate_plans = _plan_all_stages_for_tile_counts(
+            stage_selection,
+            mesh,
+            candidate_tile_counts,
+            debug=False,
+        )
+        candidate_workloads = _estimate_workloads(
+            candidate_plans,
+            stage_selection,
+            debug=debug,
+        )
+        candidate_workload = candidate_workloads[stage_id]
+        improvement = current_workload - candidate_workload
+        if improvement <= 0:
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
+                f"skip=no_workload_improvement "
+                f"candidate_workload={candidate_workload} "
+                f"current_workload={current_workload}",
+            )
+            continue
+
+        shape_count = _physical_shape_configuration_count(candidate_tile_count, mesh)
+        _debug(
+            debug,
+            "[workload_balancing] "
+            f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
+            f"accepted_improvement={improvement} "
+            f"candidate_workload={candidate_workload} "
+            f"shape_count={shape_count}",
+        )
+        if (
+            best_candidate_tile_count is None
+            or shape_count > best_candidate_shape_count
+            or (
+                shape_count == best_candidate_shape_count
+                and improvement > best_candidate_improvement
+            )
+            or (
+                shape_count == best_candidate_shape_count
+                and improvement == best_candidate_improvement
+                and candidate_tile_count < best_candidate_tile_count
+            )
+        ):
+            best_candidate_tile_count = candidate_tile_count
+            best_candidate_improvement = improvement
+            best_candidate_shape_count = shape_count
+
+    if best_candidate_tile_count is None:
+        return None
+    return best_candidate_tile_count, best_candidate_improvement
+
+
 def _logical_shape_options(tile_count: int) -> tuple[tuple[int, int], ...]:
     """Return logical factor pairs whose area equals the stage tile count."""
     options = []
@@ -388,6 +451,11 @@ def _physical_shape_options(tile_count: int, mesh: Mesh) -> tuple[tuple[int, int
         if 0 < width <= mesh.width:
             options.append((width, height))
     return tuple(options)
+
+
+def _physical_shape_configuration_count(tile_count: int, mesh: Mesh) -> int:
+    """Return how many distinct physical rectangle shapes fit one tile count."""
+    return len(_physical_shape_options(tile_count, mesh))
 
 
 def _has_feasible_submesh_placement(
