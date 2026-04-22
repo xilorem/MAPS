@@ -13,6 +13,7 @@ from MAPS.arch import (
     NoCNode,
 )
 from MAPS.builders.transition_builder import build_transition
+from MAPS.cost_models import placement_cost_estimator
 from MAPS.cost_models.transition_cost import estimate_transition_cost
 from MAPS.cost_models.transport_cost import TransportCostModel
 from MAPS.core.layout import TensorSlice
@@ -98,6 +99,13 @@ def map_spatially(
         stage_plans=stage_plans,
         show_progress=show_progress,
     )
+    stage_internal_costs = _stage_internal_costs_for_placements(
+        graph,
+        placement_options=placement_options,
+        stage_selection=stage_selection,
+        stage_plans=stage_plans,
+        show_progress=show_progress,
+    )
 
     model = pulp.LpProblem("maps_spatial_mapping", pulp.LpMinimize)
 
@@ -108,6 +116,7 @@ def map_spatially(
     }
     edge_comm_cost = {}
     stage_io_cost = {}
+    stage_internal_cost = {}
     pair_selected = {}
     edge_pair_count = _edge_placement_pair_count(graph, node_stage_ids, placement_options)
     progress = _ProgressBar("creating MILP variables", edge_pair_count, show_progress)
@@ -129,6 +138,7 @@ def map_spatially(
                 progress.advance()
     for stage_id in stage_ids:
         stage_io_cost[stage_id] = pulp.LpVariable(f"stage_io_cost_{stage_id}", lowBound=0)
+        stage_internal_cost[stage_id] = pulp.LpVariable(f"stage_internal_cost_{stage_id}", lowBound=0)
     progress.close()
 
     max_comm_cost = None
@@ -139,6 +149,7 @@ def map_spatially(
         model += (
             pulp.lpSum(edge_comm_cost.values())
             + pulp.lpSum(stage_io_cost.values())
+            + pulp.lpSum(stage_internal_cost.values())
         )
 
     for stage_id in stage_ids:
@@ -151,8 +162,14 @@ def map_spatially(
             stage_io_costs[stage_id][placement_idx]["total"] * placement_selected[(stage_id, placement_idx)]
             for placement_idx in range(len(placement_options[stage_id]))
         )
+        model += stage_internal_cost[stage_id] == pulp.lpSum(
+            stage_internal_costs[stage_id][placement_idx]
+            * placement_selected[(stage_id, placement_idx)]
+            for placement_idx in range(len(placement_options[stage_id]))
+        )
         if max_comm_cost is not None:
             model += max_comm_cost >= stage_io_cost[stage_id]
+            model += max_comm_cost >= stage_internal_cost[stage_id]
 
     for left_stage in stage_ids:
         for right_stage in stage_ids:
@@ -792,6 +809,12 @@ def print_spatial_mapping_details(
         stage_selection=resolved_stage_selection,
         stage_plans=stage_plans,
     )
+    stage_internal_costs = _stage_internal_costs_for_placements(
+        graph,
+        placement_options=placement_options,
+        stage_selection=resolved_stage_selection,
+        stage_plans=stage_plans,
+    )
 
     print(f"\n[spatial_mapping] chosen submeshes for {label}:")
     for stage_id in resolved_stage_selection:
@@ -813,6 +836,16 @@ def print_spatial_mapping_details(
             f"l2_read={io_cost['read']} "
             f"l2_write={io_cost['write']} "
             f"l2_total={io_cost['total']}"
+        )
+
+    print(f"[spatial_mapping] stage internal costs for {label}:")
+    total_stage_internal = 0.0
+    for stage_id in resolved_stage_selection:
+        internal_cost = stage_internal_costs[stage_id][0]
+        total_stage_internal += internal_cost
+        print(
+            f"  stage={stage_id} name={_stage_name(resolved_stage_selection[stage_id])} "
+            f"internal={internal_cost}"
         )
 
     print(f"[spatial_mapping] edge modes for {label}:")
@@ -844,8 +877,8 @@ def print_spatial_mapping_details(
         )
     print(
         f"[spatial_mapping] total for {label} "
-        f"stage_io={total_stage_io} edge_comm={total_edge_cost} "
-        f"total={total_stage_io + total_edge_cost}"
+        f"stage_io={total_stage_io} stage_internal={total_stage_internal} edge_comm={total_edge_cost} "
+        f"total={total_stage_io + total_stage_internal + total_edge_cost}"
     )
 
 
@@ -1047,6 +1080,47 @@ def _stage_io_costs_for_placements(
 
     progress.close()
     return io_costs
+
+
+def _stage_internal_costs_for_placements(
+    graph: Graph,
+    placement_options: dict[int, tuple[Submesh, ...]],
+    stage_selection: dict[int, tuple[Node, ...]] | None = None,
+    stage_plans: dict[int, StagePlan] | None = None,
+    show_progress: bool = False,
+) -> dict[int, dict[int, float]]:
+    """Estimate stage-internal execution cost for concrete placement candidates."""
+
+    resolved_stage_selection = (
+        _resolve_stage_selection(graph, stage_plans)
+        if stage_selection is None
+        else stage_selection
+    )
+    internal_costs: dict[int, dict[int, float]] = {}
+    progress = _ProgressBar(
+        "estimating stage internal costs",
+        sum(len(placements) for placements in placement_options.values()),
+        show_progress,
+    )
+    for stage_id, stage_nodes in resolved_stage_selection.items():
+        internal_costs[stage_id] = {}
+        for placement_idx, submesh in enumerate(placement_options[stage_id]):
+            comm_submesh = _communication_submesh(submesh)
+            plan = None if stage_plans is None else stage_plans[stage_id]
+            internal_costs[stage_id][placement_idx] = float(
+                sum(
+                    placement_cost_estimator(
+                        node=node,
+                        input_layouts=_node_input_layouts(node, comm_submesh, plan),
+                        output_layouts=_node_output_layouts(node, comm_submesh, plan),
+                    )
+                    for node in stage_nodes
+                )
+            )
+            progress.advance()
+
+    progress.close()
+    return internal_costs
 
 
 def _stage_l2_read_cost(

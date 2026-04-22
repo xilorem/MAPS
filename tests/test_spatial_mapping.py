@@ -1,7 +1,11 @@
+from dataclasses import dataclass
+
 from MAPS.arch import EndpointKind, L2Memory, Mesh, NoC, NoCChannel, NoCEndpoint, NoCLink, NoCNode
 from MAPS.core.graph import Edge, Graph, Node, OpKind
+from MAPS.core.layout import TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+from MAPS.ops.base import default_sharded_layout
 from MAPS.ops.gemm import GemmLayerOp
 from MAPS.planner.spatial_mapping import (
     _edge_placement_costs,
@@ -16,6 +20,78 @@ from MAPS.planner.spatial_mapping import (
     print_spatial_mapping_details,
 )
 from MAPS.planner.workload_balancing import StagePlan
+
+
+@dataclass(frozen=True)
+class _PlacementSensitiveTileWork:
+    @property
+    def input_slices(self) -> tuple:
+        return ()
+
+    @property
+    def output_slices(self) -> tuple:
+        return ()
+
+    @property
+    def l1_bytes(self) -> int:
+        return 0
+
+    def fits_l1(self, tile) -> bool:
+        del tile
+        return True
+
+
+@dataclass(frozen=True)
+class _PlacementSensitiveCostModel:
+    def cost(self, tile_work: _PlacementSensitiveTileWork, tile) -> float:
+        del tile_work, tile
+        return 0.0
+
+    def placement_cost(
+        self,
+        *,
+        node: Node,
+        input_layouts: tuple[TensorLayout, ...],
+        output_layouts: tuple[TensorLayout, ...],
+    ) -> float:
+        del node, input_layouts
+        return float(output_layouts[0].submesh.x0)
+
+
+@dataclass(frozen=True)
+class _PlacementSensitiveOp:
+    output: Tensor
+
+    @property
+    def cost_model(self) -> object:
+        return _PlacementSensitiveCostModel()
+
+    def default_input_layouts(
+        self,
+        submesh: Submesh,
+        logical_shape: tuple[int, int] | None = None,
+    ) -> tuple[TensorLayout, ...]:
+        del submesh, logical_shape
+        return ()
+
+    def default_output_layouts(
+        self,
+        submesh: Submesh,
+        logical_shape: tuple[int, int] | None = None,
+    ) -> tuple[TensorLayout, ...]:
+        return (default_sharded_layout(self.output, submesh, logical_shape),)
+
+    def build_tile_work(
+        self,
+        input_layouts: tuple[TensorLayout, ...],
+        output_layouts: tuple[TensorLayout, ...],
+        tile,
+    ) -> _PlacementSensitiveTileWork:
+        del input_layouts, output_layouts, tile
+        return _PlacementSensitiveTileWork()
+
+    def validate_tensors(self, inputs, outputs, tensors) -> None:
+        del inputs, outputs, tensors
 
 
 def _gemm_node(name: str, m: int, k: int, n: int) -> Node:
@@ -212,6 +288,37 @@ def test_map_spatially_prunes_placement_candidates() -> None:
     )
 
     _assert_valid_mapping(mapping, tile_counts)
+
+
+def test_map_spatially_uses_stage_internal_placement_costs() -> None:
+    try:
+        import pulp  # noqa: F401
+    except ImportError:
+        return
+
+    y = Tensor(name="y", rank=1, dims=(8,), elem_bytes=1)
+    node = Node(
+        name="placement_sensitive",
+        kind=OpKind.CUSTOM,
+        outputs=(y,),
+        payload=_PlacementSensitiveOp(output=y),
+    )
+    graph = Graph(
+        name="placement_sensitive_stage",
+        tensors=(y,),
+        nodes=(node,),
+    )
+    mesh = Mesh(3, 2, l2_memory=L2Memory(size=4096))
+
+    mapping = map_spatially(
+        graph,
+        mesh,
+        tile_counts={0: 1},
+        objective="sum",
+        print_mapping=False,
+    )
+
+    assert mapping[0].x0 == 0
 
 
 def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
