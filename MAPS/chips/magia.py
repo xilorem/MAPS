@@ -12,7 +12,10 @@ from MAPS.arch import (
     NoCEndpoint,
     NoCLink,
     NoCNode,
+    RoutingPolicy,
     Tile,
+    TrafficKind,
+    TrafficPolicy,
 )
 from MAPS.devices import IDMA_DEVICE, SCALAR_CORE_DEVICE
 from MAPS.devices.redmule import REDMULE_DEVICE
@@ -24,11 +27,12 @@ MAGIA_L1_SIZE_BYTES = 1024 * 1024
 MAGIA_L1_USABLE_BYTES = 896 * 1024
 MAGIA_L1_STACK_BYTES = 64 * 1024
 MAGIA_L1_RESERVED_BYTES = 64 * 1024
+MAGIA_L1_BANDWIDTH_BYTES = 32
 MAGIA_L2_SIZE_BYTES = 1024 * 1024 * 1024
+MAGIA_L2_BANDWIDTH_BYTES = 32
 MAGIA_NOC_CHANNEL_WIDTH_BYTES = 4
+MAGIA_NOC_WIDE_CHANNEL_WIDTH_BYTES = 32
 MAGIA_NOC_HOP_LATENCY_CYCLES = 2.0
-
-MAGIA_L2_ACCESS_POINTS = tuple((0, y) for y in range(MAGIA_MESH_HEIGHT))
 
 MAGIA_IDMA_DEVICE = IDMA_DEVICE
 MAGIA_CORE_DEVICE = SCALAR_CORE_DEVICE
@@ -45,7 +49,51 @@ def _magia_noc_node_id(x: int, y: int, width: int) -> int:
     return y * width + x
 
 
+def _magia_noc_channels() -> tuple[NoCChannel, ...]:
+    return (
+        NoCChannel(
+            channel_id=0,
+            width_bytes=MAGIA_NOC_CHANNEL_WIDTH_BYTES,
+            hop_latency_cycles=MAGIA_NOC_HOP_LATENCY_CYCLES,
+            tag="req",
+            supported_traffic=frozenset(
+                {
+                    TrafficKind.READ_REQ,
+                    TrafficKind.WRITE_REQ,
+                    TrafficKind.WRITE_DATA,
+                }
+            ),
+        ),
+        NoCChannel(
+            channel_id=1,
+            width_bytes=MAGIA_NOC_CHANNEL_WIDTH_BYTES,
+            hop_latency_cycles=MAGIA_NOC_HOP_LATENCY_CYCLES,
+            tag="rsp",
+            supported_traffic=frozenset(
+                {
+                    TrafficKind.READ_RSP,
+                    TrafficKind.WRITE_RSP,
+                }
+            ),
+        ),
+        NoCChannel(
+            channel_id=2,
+            width_bytes=MAGIA_NOC_WIDE_CHANNEL_WIDTH_BYTES,
+            hop_latency_cycles=MAGIA_NOC_HOP_LATENCY_CYCLES,
+            tag="wide",
+            supported_traffic=frozenset(
+                {
+                    TrafficKind.WRITE_REQ,
+                    TrafficKind.READ_RSP,
+                    TrafficKind.WRITE_DATA,
+                }
+            ),
+        ),
+    )
+
+
 def _magia_noc(width: int, height: int) -> NoC:
+    attachment_channels = _magia_noc_channels()
     nodes = tuple(
         NoCNode(
             node_id=_magia_noc_node_id(x, y, width),
@@ -69,13 +117,7 @@ def _magia_noc(width: int, height: int) -> NoC:
             link_id=link_id,
             src_node_id=src_node_id,
             dst_node_id=dst_node_id,
-            channels=(
-                NoCChannel(
-                    channel_id=0,
-                    width_bytes=MAGIA_NOC_CHANNEL_WIDTH_BYTES,
-                    hop_latency_cycles=MAGIA_NOC_HOP_LATENCY_CYCLES,
-                ),
-            ),
+            channels=_magia_noc_channels(),
             bidirectional=True,
         )
         for link_id, (src_node_id, dst_node_id) in enumerate(link_pairs)
@@ -84,7 +126,7 @@ def _magia_noc(width: int, height: int) -> NoC:
         NoCEndpoint(
             endpoint_id=tile_id,
             kind=EndpointKind.L1,
-            node_id=tile_id,
+            node_id=_magia_noc_node_id(tile_id % width, tile_id // width, width),
             tile_id=tile_id,
         )
         for tile_id in range(width * height)
@@ -95,6 +137,8 @@ def _magia_noc(width: int, height: int) -> NoC:
             kind=EndpointKind.L2,
             node_id=_magia_noc_node_id(0, y, width),
             name=f"l2_{y}",
+            ingress_channels=attachment_channels,
+            egress_channels=attachment_channels,
         )
         for y in range(height)
     )
@@ -102,6 +146,16 @@ def _magia_noc(width: int, height: int) -> NoC:
         nodes=nodes,
         links=links,
         endpoints=l1_endpoints + l2_endpoints,
+        traffic_policy=TrafficPolicy(
+            {
+                TrafficKind.READ_REQ: (0,),
+                TrafficKind.WRITE_REQ: (2,),
+                TrafficKind.READ_RSP: (2,),
+                TrafficKind.WRITE_RSP: (1,),
+                TrafficKind.WRITE_DATA: (2,),
+            }
+        ),
+        routing_policy=RoutingPolicy.XY,
     )
 
 
@@ -112,17 +166,14 @@ def magia_mesh(
     return Mesh(
         width=width,
         height=height,
-        l2_memory=L2Memory(
-            size=MAGIA_L2_SIZE_BYTES,
-            access_points=tuple((0, y) for y in range(height)),
-        ),
+        l2_memory=L2Memory(size=MAGIA_L2_SIZE_BYTES, bandwidth=MAGIA_L2_BANDWIDTH_BYTES),
         noc=_magia_noc(width, height),
         tiles=tuple(
             Tile(
                 tile_id=y * width + x,
                 x=x,
                 y=y,
-                memory=L1Memory(size=MAGIA_L1_USABLE_BYTES),
+                memory=L1Memory(size=MAGIA_L1_USABLE_BYTES, bandwidth=MAGIA_L1_BANDWIDTH_BYTES),
                 devices=MAGIA_TILE_DEVICES,
             )
             for y in range(height)
