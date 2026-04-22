@@ -3,9 +3,11 @@
 from MAPS.core.graph import OpKind
 from MAPS.importers.onnx.graph_parser import parse_graph
 from MAPS.importers.onnx.utils import build_tensor_producer_table
+from MAPS.ops.collective import AllReduceOp
 from MAPS.ops.conv import ConvLayerOp
 from MAPS.ops.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
 from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.reduction import ReduceOp
 
 
 def _make_tiny_matmul_graph():
@@ -131,6 +133,90 @@ def test_parse_graph_lowers_binary_elementwise_to_graph_node() -> None:
     assert lowered_graph.nodes[0].kind is OpKind.ELEMENTWISE
     assert isinstance(lowered_graph.nodes[0].payload, BinaryElementwiseOp)
     assert lowered_graph.nodes[0].payload.op_name == "Add"
+
+
+def test_parse_graph_lowers_softmax_to_grouped_internal_nodes() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 8])
+    node = helper.make_node("Softmax", inputs=["x"], outputs=["y"], name="softmax_0", axis=-1)
+    graph = helper.make_graph([node], "tiny_softmax", [x], [y])
+
+    lowered_graph = parse_graph(graph)
+
+    assert tuple(node.name for node in lowered_graph.nodes) == (
+        "softmax_0__reduce_max",
+        "softmax_0__allreduce_max",
+        "softmax_0__sub",
+        "softmax_0__exp",
+        "softmax_0__reduce_sum",
+        "softmax_0__allreduce_sum",
+        "softmax_0__div",
+    )
+    assert isinstance(lowered_graph.nodes[0].payload, ReduceOp)
+    assert isinstance(lowered_graph.nodes[1].payload, AllReduceOp)
+    assert isinstance(lowered_graph.nodes[2].payload, BinaryElementwiseOp)
+    assert isinstance(lowered_graph.nodes[3].payload, UnaryElementwiseOp)
+    assert isinstance(lowered_graph.nodes[4].payload, ReduceOp)
+    assert isinstance(lowered_graph.nodes[5].payload, AllReduceOp)
+    assert isinstance(lowered_graph.nodes[6].payload, BinaryElementwiseOp)
+    assert all(
+        node.attributes["stage_group_id"] == "softmax_0::softmax"
+        for node in lowered_graph.nodes
+    )
+    assert tuple(tensor.name for tensor in lowered_graph.outputs) == ("y",)
+    assert {
+        "softmax_0__max_local",
+        "softmax_0__max_global",
+        "softmax_0__shifted",
+        "softmax_0__exp",
+        "softmax_0__sum_local",
+        "softmax_0__sum_global",
+    }.issubset({tensor.name for tensor in lowered_graph.tensors})
+
+    edges_by_dst = {
+        node.name: {edge.tensor.name for edge in lowered_graph.edges if edge.dst == node}
+        for node in lowered_graph.nodes
+    }
+    assert edges_by_dst["softmax_0__reduce_max"] == {"x"}
+    assert edges_by_dst["softmax_0__allreduce_max"] == {"softmax_0__max_local"}
+    assert edges_by_dst["softmax_0__sub"] == {"x", "softmax_0__max_global"}
+    assert edges_by_dst["softmax_0__exp"] == {"softmax_0__shifted"}
+    assert edges_by_dst["softmax_0__reduce_sum"] == {"softmax_0__exp"}
+    assert edges_by_dst["softmax_0__allreduce_sum"] == {"softmax_0__sum_local"}
+    assert edges_by_dst["softmax_0__div"] == {"softmax_0__exp", "softmax_0__sum_global"}
+
+    output_edges = [edge for edge in lowered_graph.edges if edge.dst is None]
+    assert len(output_edges) == 1
+    assert output_edges[0].src == lowered_graph.nodes[-1]
+    assert output_edges[0].tensor.name == "y"
+
+
+def test_parse_graph_lowers_softmax_without_collectives_outside_default_mesh_axes() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4, 8])
+    node = helper.make_node("Softmax", inputs=["x"], outputs=["y"], name="softmax_0", axis=0)
+    graph = helper.make_graph([node], "tiny_softmax_no_collective", [x], [y])
+
+    lowered_graph = parse_graph(graph)
+
+    assert tuple(node.name for node in lowered_graph.nodes) == (
+        "softmax_0__reduce_max",
+        "softmax_0__sub",
+        "softmax_0__exp",
+        "softmax_0__reduce_sum",
+        "softmax_0__div",
+    )
+    assert all(not isinstance(node.payload, AllReduceOp) for node in lowered_graph.nodes)
 
 
 def test_build_tensor_producer_table_tracks_outputs() -> None:

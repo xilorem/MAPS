@@ -286,6 +286,47 @@ def test_build_pipeline_parses_balances_maps_and_builds_transitions() -> None:
     assert report.is_valid, report.violations
 
 
+def test_build_pipeline_lowers_softmax_into_one_grouped_stage() -> None:
+    try:
+        import onnx
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    with TemporaryDirectory() as tmpdir:
+        model_path = Path(tmpdir) / "softmax.onnx"
+        x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [4, 8])
+        y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 8])
+        node = helper.make_node("Softmax", inputs=["x"], outputs=["y"], name="softmax_0", axis=-1)
+        graph = helper.make_graph([node], "tiny_softmax", [x], [y])
+        model = helper.make_model(graph)
+        onnx.save(model, model_path)
+
+        pipeline = build_pipeline(model_path, _mesh_with_l1(2, 2, l1_size=4096))
+
+    assert pipeline.name == "tiny_softmax"
+    assert len(pipeline.stages) == 1
+    assert len(pipeline.transitions) == 0
+    assert tuple(layer.node.name for layer in pipeline.stages[0].layers) == (
+        "softmax_0__reduce_max",
+        "softmax_0__allreduce_max",
+        "softmax_0__sub",
+        "softmax_0__exp",
+        "softmax_0__reduce_sum",
+        "softmax_0__allreduce_sum",
+        "softmax_0__div",
+    )
+    assert isinstance(pipeline.stages[0].layers[1].inputs[0].source, LocalInput)
+    assert pipeline.stages[0].layers[1].inputs[0].source.layer_idx == 0
+    assert isinstance(pipeline.stages[0].layers[2].inputs[1].source, LocalInput)
+    assert pipeline.stages[0].layers[2].inputs[1].source.layer_idx == 1
+    assert isinstance(pipeline.stages[0].layers[6].inputs[1].source, LocalInput)
+    assert pipeline.stages[0].layers[6].inputs[1].source.layer_idx == 5
+
+    report = validate_constraints(pipeline, PlannerConstraints(max_stage_nodes=7))
+    assert report.is_valid, report.violations
+
+
 def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch) -> None:
     try:
         import onnx

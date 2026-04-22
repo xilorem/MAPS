@@ -78,9 +78,15 @@ def _infer_input_slice_for_tile(
     node = layer.node
 
     if node.payload is not None and len(layer.outputs) > 0:
+        output_layouts = tuple(output.layout for output in layer.outputs)
+        submesh = output_layouts[0].submesh
+        logical_shape = (
+            output_layouts[0].effective_logical_width,
+            output_layouts[0].effective_logical_height,
+        )
         tile_work = node.payload.build_tile_work(
-            input_layouts=(),
-            output_layouts=tuple(output.layout for output in layer.outputs),
+            input_layouts=node.payload.default_input_layouts(submesh, logical_shape=logical_shape),
+            output_layouts=output_layouts,
             tile=tile,
         )
         for ref in tile_work.input_slices:
