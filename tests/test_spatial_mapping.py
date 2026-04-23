@@ -13,6 +13,7 @@ from MAPS.planner.spatial_mapping import (
     _layout_on_submesh,
     _prune_placement_options_losslessly,
     _shape_options,
+    _stage_internal_costs_for_placements,
     _stage_io_costs,
     _stage_io_costs_for_placements,
     map_spatially,
@@ -319,6 +320,20 @@ def test_map_spatially_uses_stage_internal_placement_costs() -> None:
     )
 
     assert mapping[0].x0 == 0
+
+
+def test_stage_internal_costs_ignore_ops_without_placement_cost() -> None:
+    node = _gemm_node("gemm", 8, 8, 8)
+    graph = Graph(name="g", nodes=(node,))
+    mesh = Mesh(2, 1, l2_memory=L2Memory(size=4096))
+    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
+
+    costs = _stage_internal_costs_for_placements(
+        graph,
+        placement_options={0: (submesh,)},
+    )
+
+    assert costs == {0: {0: 0.0}}
 
 
 def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:

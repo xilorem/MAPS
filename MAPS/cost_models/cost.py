@@ -47,13 +47,14 @@ def placement_cost_estimator(
 
     Cost models can optionally override this with ``placement_cost(...)`` when
     their latency depends on the concrete submesh placement rather than only on
-    per-tile work. Otherwise this falls back to the existing node cost.
+    per-tile work. Otherwise this returns ``0.0`` so spatial mapping only sees
+    the placement-sensitive portion of stage execution cost.
     """
 
     cost_model = node.payload.cost_model
     placement_cost = getattr(cost_model, "placement_cost", None)
     if placement_cost is None:
-        return cost_estimator(node=node, input_layouts=input_layouts, output_layouts=output_layouts)
+        return 0.0
     return float(
         placement_cost(
             node=node,
