@@ -152,7 +152,7 @@ def balance_workload(
         )
 
         _debug(debug, f"[workload_balancing] iteration={iteration} used_tiles={used_tiles}/{mesh.num_tiles}")
-        _debug(debug, f"[workload_balancing] current_workloads={current_workloads}")
+        _debug(debug, f"[workload_balancing] current_workloads={_format_debug_workloads(current_workloads)}")
 
         # Try the current bottleneck first. Fall through to lower-workload
         # stages only when worse stages have no feasible improving growth.
@@ -175,7 +175,7 @@ def balance_workload(
                 f"try_stage={stage_id} nodes={_stage_label(stage_nodes)} "
                 f"current_tile_count={current_tile_count} "
                 f"current_logical_shape={current_plans[stage_id].logical_shape} "
-                f"current_workload={current_workload}",
+                f"current_workload={_format_debug_cost(current_workload)}",
             )
 
             candidate_tile_count_options = _tile_count_options_after_growth(
@@ -219,7 +219,7 @@ def balance_workload(
             "[workload_balancing] "
             f"choose worst_stage={worst_stage_id} "
             f"new_tile_count={worst_stage_tile_count} "
-            f"improvement={worst_stage_improvement}",
+            f"improvement={_format_debug_cost(worst_stage_improvement)}",
         )
         used_tiles += worst_stage_tile_count - tile_counts[worst_stage_id]
         tile_counts[worst_stage_id] = worst_stage_tile_count
@@ -396,8 +396,8 @@ def _best_growth_tile_count_for_stage(
                 "[workload_balancing] "
                 f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
                 f"skip=no_workload_improvement "
-                f"candidate_workload={candidate_workload} "
-                f"current_workload={current_workload}",
+                f"candidate_workload={_format_debug_cost(candidate_workload)} "
+                f"current_workload={_format_debug_cost(current_workload)}",
             )
             continue
 
@@ -406,8 +406,8 @@ def _best_growth_tile_count_for_stage(
             debug,
             "[workload_balancing] "
             f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-            f"accepted_improvement={improvement} "
-            f"candidate_workload={candidate_workload} "
+            f"accepted_improvement={_format_debug_cost(improvement)} "
+            f"candidate_workload={_format_debug_cost(candidate_workload)} "
             f"shape_count={shape_count}",
         )
         if (
@@ -699,7 +699,7 @@ def _best_stage_plan_for_stage_nodes(
             debug,
             "[workload_balancing] "
             f"stage={stage_id} tile_count={tile_count} "
-            f"logical_shape={logical_shape} workload={workload}",
+            f"logical_shape={logical_shape} workload={_format_debug_cost(workload)}",
         )
         if best_workload is None or workload < best_workload:
             best_plan = plan
@@ -715,7 +715,7 @@ def _best_stage_plan_for_stage_nodes(
         "[workload_balancing] "
         f"stage={stage_id} tile_count={tile_count} "
         f"choose_logical_shape={best_plan.logical_shape} "
-        f"workload={best_workload}",
+        f"workload={_format_debug_cost(best_workload)}",
     )
     return best_plan
 
@@ -791,6 +791,21 @@ def _debug(enabled: bool, message: str) -> None:
         print(message)
 
 
+def _format_debug_cost(value: float) -> str:
+    """Format one reported cost without trailing .0 for whole-cycle values."""
+    if float(value).is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _format_debug_workloads(workloads: dict[int, float]) -> str:
+    """Format a stage-to-workload dictionary for debug printing."""
+    return "{" + ", ".join(
+        f"{stage_id}: {_format_debug_cost(workload)}"
+        for stage_id, workload in workloads.items()
+    ) + "}"
+
+
 def _debug_final_workloads(
     enabled: bool,
     stage_selection: StageSelection,
@@ -809,7 +824,7 @@ def _debug_final_workloads(
             f"stage={stage_id} nodes={_stage_label(stage_nodes)} "
             f"tile_count={plan.tile_count} "
             f"logical_shape={plan.logical_shape} "
-            f"workload={workload}"
+            f"workload={_format_debug_cost(workload)}"
         )
 
 
@@ -834,7 +849,7 @@ def _debug_decision_timeline(
             (
                 f"stage={stage_id} "
                 f"tile_count={tile_counts[stage_id]} "
-                f"workload={workloads[stage_id]}"
+                f"workload={_format_debug_cost(workloads[stage_id])}"
             )
             for stage_id in stage_selection
         )
