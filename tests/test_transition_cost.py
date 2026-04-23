@@ -117,10 +117,10 @@ def test_direct_remap_cost_ignores_shared_noc_link_load_when_disabled() -> None:
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
-    assert cost.producer_loads == {0: 8.125, 1: 8.125}
-    assert cost.consumer_loads == {2: 8.125, 3: 8.125}
+    assert cost.producer_loads == {0: 9.0, 1: 9.0}
+    assert cost.consumer_loads == {2: 9.0, 3: 9.0}
     assert cost.resource_loads == {}
-    assert cost.total_cost == 8.125
+    assert cost.total_cost == 9.0
 
 
 def test_direct_remap_cost_accounts_for_shared_noc_link_load_when_enabled() -> None:
@@ -129,8 +129,8 @@ def test_direct_remap_cost_accounts_for_shared_noc_link_load_when_enabled() -> N
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
-    assert cost.producer_loads == {0: 8.125, 1: 8.125}
-    assert cost.consumer_loads == {2: 8.125, 3: 8.125}
+    assert cost.producer_loads == {0: 9.0, 1: 9.0}
+    assert cost.consumer_loads == {2: 9.0, 3: 9.0}
     assert cost.resource_loads == {
         "noc_link:0:channel:0": 8.125,
         "noc_link:1:channel:0": 16.25,

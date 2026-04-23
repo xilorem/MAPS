@@ -25,6 +25,10 @@ from MAPS.core.tensor import Tensor
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import StagePlan
 
+_COMMUNICATION_MESHES_BY_MESH_ID: dict[int, Mesh] = {}
+_TRANSPORT_MODELS_BY_MESH_ID: dict[int, TransportCostModel] = {}
+_DEFAULT_COMMUNICATION_NOCS_BY_SHAPE: dict[tuple[int, int], NoC] = {}
+
 
 def map_spatially(
     graph: Graph,
@@ -376,6 +380,10 @@ def _default_noc_node_id(x: int, y: int, width: int) -> int:
 
 
 def _default_communication_noc(width: int, height: int) -> NoC:
+    cached = _DEFAULT_COMMUNICATION_NOCS_BY_SHAPE.get((width, height))
+    if cached is not None:
+        return cached
+
     nodes = tuple(
         NoCNode(node_id=_default_noc_node_id(x, y, width), x=x, y=y)
         for y in range(height)
@@ -418,19 +426,35 @@ def _default_communication_noc(width: int, height: int) -> NoC:
         )
         for y in range(height)
     )
-    return NoC(nodes=nodes, links=links, endpoints=l1_endpoints + l2_endpoints)
+    noc = NoC(nodes=nodes, links=links, endpoints=l1_endpoints + l2_endpoints)
+    _DEFAULT_COMMUNICATION_NOCS_BY_SHAPE[(width, height)] = noc
+    return noc
 
 
 def _communication_mesh(mesh: Mesh) -> Mesh:
     if mesh.has_noc:
         return mesh
-    return Mesh(
+    cached = _COMMUNICATION_MESHES_BY_MESH_ID.get(id(mesh))
+    if cached is not None:
+        return cached
+    comm_mesh = Mesh(
         width=mesh.width,
         height=mesh.height,
         l2_memory=mesh.l2_memory,
         tiles=mesh.tiles,
         noc=_default_communication_noc(mesh.width, mesh.height),
     )
+    _COMMUNICATION_MESHES_BY_MESH_ID[id(mesh)] = comm_mesh
+    return comm_mesh
+
+
+def _transport_model(mesh: Mesh) -> TransportCostModel:
+    cached = _TRANSPORT_MODELS_BY_MESH_ID.get(id(mesh))
+    if cached is not None:
+        return cached
+    model = TransportCostModel(mesh=mesh)
+    _TRANSPORT_MODELS_BY_MESH_ID[id(mesh)] = model
+    return model
 
 
 def _communication_submesh(submesh: Submesh) -> Submesh:
@@ -770,6 +794,13 @@ def _print_mapping_grid(mesh: Mesh, mapping: dict[int, Submesh]) -> None:
         print(" ".join(cells))
 
 
+def _format_cycle_cost(value: float) -> str:
+    """Format one reported cost without trailing .0 for whole-cycle values."""
+    if float(value).is_integer():
+        return str(int(value))
+    return str(value)
+
+
 def _stage_name(stage_nodes: tuple[Node, ...]) -> str:
     """Return a compact display name for one selected stage."""
 
@@ -833,9 +864,9 @@ def print_spatial_mapping_details(
         total_stage_io += io_cost["total"]
         print(
             f"  stage={stage_id} name={_stage_name(resolved_stage_selection[stage_id])} "
-            f"l2_read={io_cost['read']} "
-            f"l2_write={io_cost['write']} "
-            f"l2_total={io_cost['total']}"
+            f"l2_read={_format_cycle_cost(io_cost['read'])} "
+            f"l2_write={_format_cycle_cost(io_cost['write'])} "
+            f"l2_total={_format_cycle_cost(io_cost['total'])}"
         )
 
     print(f"[spatial_mapping] stage internal costs for {label}:")
@@ -845,7 +876,7 @@ def print_spatial_mapping_details(
         total_stage_internal += internal_cost
         print(
             f"  stage={stage_id} name={_stage_name(resolved_stage_selection[stage_id])} "
-            f"internal={internal_cost}"
+            f"internal={_format_cycle_cost(internal_cost)}"
         )
 
     print(f"[spatial_mapping] edge modes for {label}:")
@@ -866,19 +897,21 @@ def print_spatial_mapping_details(
             bottleneck = (f"{src_stage}->{dst_stage}:{edge.tensor.name}", cost, mode)
         print(
             f"  edge={edge.tensor.name} src={src_stage}->{dst_stage} "
-            f"mode={mode} l1_cost={edge_cost['l1']} "
-            f"l2_cost={edge_cost['l2']} chosen_cost={cost}"
+            f"mode={mode} l1_cost={_format_cycle_cost(edge_cost['l1'])} "
+            f"l2_cost={_format_cycle_cost(edge_cost['l2'])} chosen_cost={_format_cycle_cost(cost)}"
         )
 
     if bottleneck is not None:
         print(
             f"[spatial_mapping] bottleneck for {label} "
-            f"edge={bottleneck[0]} mode={bottleneck[2]} cost={bottleneck[1]}"
+            f"edge={bottleneck[0]} mode={bottleneck[2]} cost={_format_cycle_cost(bottleneck[1])}"
         )
     print(
         f"[spatial_mapping] total for {label} "
-        f"stage_io={total_stage_io} stage_internal={total_stage_internal} edge_comm={total_edge_cost} "
-        f"total={total_stage_io + total_stage_internal + total_edge_cost}"
+        f"stage_io={_format_cycle_cost(total_stage_io)} "
+        f"stage_internal={_format_cycle_cost(total_stage_internal)} "
+        f"edge_comm={_format_cycle_cost(total_edge_cost)} "
+        f"total={_format_cycle_cost(total_stage_io + total_stage_internal + total_edge_cost)}"
     )
 
 
@@ -1042,7 +1075,7 @@ def _stage_io_costs_for_placements(
         io_costs[stage_id] = {}
         for placement_idx, submesh in enumerate(placement_options[stage_id]):
             comm_submesh = _communication_submesh(submesh)
-            model = TransportCostModel(mesh=comm_submesh.mesh)
+            model = _transport_model(comm_submesh.mesh)
 
             plan = None if stage_plans is None else stage_plans[stage_id]
             read_cost = max(
@@ -1227,7 +1260,7 @@ def _edge_shape_mode_costs(
     dst_input_idx = _node_input_index(dst_node, tensor)
     dst_input_layout = dst_input_layouts[dst_input_idx]
 
-    model = TransportCostModel(mesh=mesh)
+    model = _transport_model(mesh)
     l1_cost = 0.0
     if src_output_layout != dst_input_layout:
         transition = build_transition(
@@ -1303,7 +1336,7 @@ def _edge_placement_mode_costs(
     dst_input_idx = _node_input_index(dst_node, tensor)
     dst_input_layout = dst_input_layouts[dst_input_idx]
 
-    model = TransportCostModel(mesh=src_submesh.mesh)
+    model = _transport_model(src_submesh.mesh)
     l1_cost = 0.0
     if src_output_layout != dst_input_layout:
         transition = build_transition(

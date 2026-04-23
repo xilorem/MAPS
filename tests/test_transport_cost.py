@@ -20,6 +20,74 @@ import pytest
 from MAPS.cost_models import TransferKind, TransferLeg, TransportCostModel
 
 
+def _uniform_l1_only_mesh(
+    width: int,
+    height: int,
+    *,
+    link_width_bytes: int = 8,
+    hop_latency_cycles: float = 1.0,
+    memory_bandwidth: int = 64,
+) -> Mesh:
+    return Mesh(
+        width=width,
+        height=height,
+        l2_memory=L2Memory(size=4096, bandwidth=memory_bandwidth),
+        tiles=tuple(
+            Tile(
+                tile_id=y * width + x,
+                x=x,
+                y=y,
+                memory=L1Memory(size=4096, bandwidth=memory_bandwidth),
+            )
+            for y in range(height)
+            for x in range(width)
+        ),
+        noc=NoC(
+            nodes=tuple(
+                NoCNode(node_id=y * width + x, x=x, y=y)
+                for y in range(height)
+                for x in range(width)
+            ),
+            links=tuple(
+                NoCLink(
+                    link_id=link_id,
+                    src_node_id=src_node_id,
+                    dst_node_id=dst_node_id,
+                    channels=(
+                        NoCChannel(
+                            channel_id=0,
+                            width_bytes=link_width_bytes,
+                            hop_latency_cycles=hop_latency_cycles,
+                        ),
+                    ),
+                    bidirectional=True,
+                )
+                for link_id, (src_node_id, dst_node_id) in enumerate(
+                    tuple(
+                        (y * width + x, y * width + x + 1)
+                        for y in range(height)
+                        for x in range(width - 1)
+                    )
+                    + tuple(
+                        (y * width + x, (y + 1) * width + x)
+                        for y in range(height - 1)
+                        for x in range(width)
+                    )
+                )
+            ),
+            endpoints=tuple(
+                NoCEndpoint(
+                    endpoint_id=tile_id,
+                    kind=EndpointKind.L1,
+                    node_id=tile_id,
+                    tile_id=tile_id,
+                )
+                for tile_id in range(width * height)
+            ),
+        ),
+    )
+
+
 def test_transport_cost_requires_noc_for_communication() -> None:
     mesh = Mesh(width=1, height=1, l2_memory=L2Memory(size=4096))
     tile = mesh.tile(0, 0)
@@ -336,8 +404,8 @@ def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops(
     )
     model = TransportCostModel(mesh=mesh)
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 126.0
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 105.0
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 128.0
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 106.0
 
 
 def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() -> None:
@@ -390,8 +458,8 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 96.375
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 91.125
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 98.0
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 92.0
     assert l1_to_l2_estimate.resource_loads == {
         "noc_endpoint:0:egress": 8.125,
         "noc_endpoint:1:ingress": 4.0625,
@@ -526,8 +594,8 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 103.375
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 96.125
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 105.0
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 97.0
     assert l1_to_l2_estimate.resource_loads == {
         "noc_endpoint_attachment:1:ingress:channel:0": 8.125,
         "noc_endpoint_attachment:1:egress:channel:1": 0.25,
@@ -602,3 +670,165 @@ def test_l1_to_l2_transfer_cost_respects_write_rsp_traffic_policy_channel_select
     assert ack_narrow_model.l1_to_l2(ack_narrow_mesh.tile(0, 0), 64) > (
         ack_wide_model.l1_to_l2(ack_wide_mesh.tile(0, 0), 64)
     )
+
+
+def test_transport_cost_rounds_nonzero_flow_transfer_time_up_to_one_cycle() -> None:
+    mesh = Mesh(
+        width=2,
+        height=1,
+        l2_memory=L2Memory(size=4096, bandwidth=64),
+        tiles=(
+            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
+            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
+        ),
+        noc=NoC(
+            nodes=(
+                NoCNode(node_id=0, x=0, y=0),
+                NoCNode(node_id=1, x=1, y=0),
+            ),
+            links=(
+                NoCLink(
+                    link_id=0,
+                    src_node_id=0,
+                    dst_node_id=1,
+                    channels=(NoCChannel(channel_id=0, width_bytes=32),),
+                    bidirectional=True,
+                ),
+            ),
+            endpoints=(
+                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
+                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
+            ),
+        ),
+    )
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0)
+
+    assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 1) == 2.0
+
+
+def test_l1_to_l1_delta_cache_reuses_uniform_no_contention_costs() -> None:
+    mesh = _uniform_l1_only_mesh(3, 2)
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0)
+
+    first_cost = model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 1), 64)
+
+    assert model._l1_to_l1_delta_cache_enabled is True
+    assert len(model._flow_cost_cache) == 2
+    assert len(model._l1_to_l1_delta_estimate_cache) == 1
+
+    second_cost = model.l1_to_l1(mesh.tile(1, 0), mesh.tile(2, 1), 64)
+
+    assert second_cost == first_cost
+    assert len(model._estimate_cache) == 2
+    assert len(model._flow_cost_cache) == 2
+    assert len(model._l1_to_l1_delta_estimate_cache) == 1
+
+
+def test_l1_to_l1_delta_cache_is_disabled_when_accounting_noc_contention() -> None:
+    mesh = _uniform_l1_only_mesh(3, 2)
+    model = TransportCostModel(
+        mesh=mesh,
+        l1_to_l1_startup_cycles=0.0,
+        account_noc_contention=True,
+    )
+
+    model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 1), 64)
+    model.l1_to_l1(mesh.tile(1, 0), mesh.tile(2, 1), 64)
+
+    assert model._l1_to_l1_delta_cache_enabled is False
+    assert len(model._l1_to_l1_delta_estimate_cache) == 0
+    assert len(model._flow_cost_cache) == 4
+
+
+def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
+    mesh = Mesh(
+        width=3,
+        height=2,
+        l2_memory=L2Memory(size=4096, bandwidth=64),
+        tiles=tuple(
+            Tile(
+                tile_id=y * 3 + x,
+                x=x,
+                y=y,
+                memory=L1Memory(size=4096, bandwidth=64),
+            )
+            for y in range(2)
+            for x in range(3)
+        ),
+        noc=NoC(
+            nodes=tuple(
+                NoCNode(node_id=y * 3 + x, x=x, y=y)
+                for y in range(2)
+                for x in range(3)
+            ),
+            links=(
+                NoCLink(
+                    link_id=0,
+                    src_node_id=0,
+                    dst_node_id=1,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    bidirectional=True,
+                ),
+                NoCLink(
+                    link_id=1,
+                    src_node_id=1,
+                    dst_node_id=2,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    bidirectional=True,
+                ),
+                NoCLink(
+                    link_id=2,
+                    src_node_id=3,
+                    dst_node_id=4,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=5.0),),
+                    bidirectional=True,
+                ),
+                NoCLink(
+                    link_id=3,
+                    src_node_id=4,
+                    dst_node_id=5,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=5.0),),
+                    bidirectional=True,
+                ),
+                NoCLink(
+                    link_id=4,
+                    src_node_id=0,
+                    dst_node_id=3,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    bidirectional=True,
+                ),
+                NoCLink(
+                    link_id=5,
+                    src_node_id=1,
+                    dst_node_id=4,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    bidirectional=True,
+                ),
+                NoCLink(
+                    link_id=6,
+                    src_node_id=2,
+                    dst_node_id=5,
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    bidirectional=True,
+                ),
+            ),
+            endpoints=tuple(
+                NoCEndpoint(
+                    endpoint_id=tile_id,
+                    kind=EndpointKind.L1,
+                    node_id=tile_id,
+                    tile_id=tile_id,
+                )
+                for tile_id in range(6)
+            ),
+        ),
+    )
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0)
+
+    top_cost = model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 64)
+    bottom_cost = model.l1_to_l1(mesh.tile(0, 1), mesh.tile(1, 1), 64)
+
+    assert model._l1_to_l1_delta_cache_enabled is False
+    assert len(model._l1_to_l1_delta_estimate_cache) == 0
+    assert len(model._flow_cost_cache) == 4
+    assert bottom_cost > top_cost

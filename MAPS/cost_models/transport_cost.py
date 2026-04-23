@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+import math
 
-from MAPS.arch import EndpointKind, Mesh, NoCChannel, NoCRoute, Tile, TrafficKind
+from MAPS.arch import EndpointKind, Mesh, NoCChannel, NoCRoute, RoutingPolicy, Tile, TrafficKind
 
 
 class TransferKind(Enum):
@@ -81,24 +82,113 @@ class TransportCostModel:
     read_request_bytes: int = 1
     write_request_bytes: int = 1
     write_response_bytes: int = 1
+    _estimate_cache: dict[tuple[TransferKind, int, int | None, int | None], TransferCostEstimate] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+        default_factory=dict,
+    )
+    _flow_cost_cache: dict[_NoCFlow, TransferCostEstimate] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+        default_factory=dict,
+    )
+    _route_channels_cache: dict[tuple[tuple[int, ...], TrafficKind], tuple[NoCChannel, ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+        default_factory=dict,
+    )
+    _attachment_channel_cache: dict[tuple[int, str, TrafficKind], NoCChannel | None] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+        default_factory=dict,
+    )
+    _allowed_channel_ids_cache: dict[TrafficKind, tuple[int, ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+        default_factory=dict,
+    )
+    _l1_to_l1_delta_estimate_cache: dict[tuple[int, int, int, float], TransferCostEstimate] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+        default_factory=dict,
+    )
+    _l1_to_l1_delta_cache_enabled: bool | None = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+        default=None,
+    )
 
     def l1_to_l2(self, src: Tile, bytes_: int) -> float:
-        return self._noc_l1_to_l2(src, bytes_)
+        return self.estimate(
+            TransferLeg(
+                kind=TransferKind.L1_TO_L2,
+                bytes=bytes_,
+                src_tile=src,
+            )
+        ).total_cost
 
     def l2_to_l1(self, dst: Tile, bytes_: int) -> float:
-        return self._noc_l2_to_l1(dst, bytes_)
+        return self.estimate(
+            TransferLeg(
+                kind=TransferKind.L2_TO_L1,
+                bytes=bytes_,
+                dst_tile=dst,
+            )
+        ).total_cost
 
     def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
-        return self._noc_l1_to_l1(src, dst, bytes_)
+        return self.estimate(
+            TransferLeg(
+                kind=TransferKind.L1_TO_L1,
+                bytes=bytes_,
+                src_tile=src,
+                dst_tile=dst,
+            )
+        ).total_cost
 
     def estimate(self, leg: TransferLeg) -> TransferCostEstimate:
-        if leg.kind is TransferKind.L1_TO_L2:
-            return self._estimate_l1_to_l2(leg.src_tile, leg.bytes)
-        if leg.kind is TransferKind.L2_TO_L1:
-            return self._estimate_l2_to_l1(leg.dst_tile, leg.bytes)
+        leg_key = self._estimate_cache_key(leg)
+        cached = self._estimate_cache.get(leg_key)
+        if cached is not None:
+            return cached
+
         if leg.kind is TransferKind.L1_TO_L1:
-            return self._estimate_l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
-        raise ValueError(f"unsupported transfer kind: {leg.kind}")
+            delta_key = self._l1_to_l1_delta_cache_key(leg.src_tile, leg.dst_tile, leg.bytes)
+            if delta_key is not None:
+                cached = self._l1_to_l1_delta_estimate_cache.get(delta_key)
+                if cached is not None:
+                    self._estimate_cache[leg_key] = cached
+                    return cached
+
+        if leg.kind is TransferKind.L1_TO_L2:
+            estimate = self._estimate_l1_to_l2(leg.src_tile, leg.bytes)
+        elif leg.kind is TransferKind.L2_TO_L1:
+            estimate = self._estimate_l2_to_l1(leg.dst_tile, leg.bytes)
+        elif leg.kind is TransferKind.L1_TO_L1:
+            estimate = self._estimate_l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
+        else:
+            raise ValueError(f"unsupported transfer kind: {leg.kind}")
+
+        self._estimate_cache[leg_key] = estimate
+        if leg.kind is TransferKind.L1_TO_L1:
+            delta_key = self._l1_to_l1_delta_cache_key(leg.src_tile, leg.dst_tile, leg.bytes)
+            if delta_key is not None:
+                self._l1_to_l1_delta_estimate_cache.setdefault(delta_key, estimate)
+        return estimate
 
     def cost(self, leg: TransferLeg) -> float:
         return self.estimate(leg).total_cost
@@ -229,18 +319,26 @@ class TransportCostModel:
         self,
         flow: _NoCFlow,
     ) -> TransferCostEstimate:
+        cached = self._flow_cost_cache.get(flow)
+        if cached is not None:
+            return cached
+
         src_endpoint = self.mesh.noc.endpoint_by_id(flow.src_endpoint_id)
         dst_endpoint = self.mesh.noc.endpoint_by_id(flow.dst_endpoint_id)
         route = self.mesh.noc.route_endpoints(flow.src_endpoint_id, flow.dst_endpoint_id)
         src_attachment_channel = self._endpoint_attachment_channel(
-            src_endpoint.egress_channels,
-            flow.traffic_kind,
-            f"endpoint {src_endpoint.endpoint_id} egress attachment",
+            endpoint_id=src_endpoint.endpoint_id,
+            direction="egress",
+            channels=src_endpoint.egress_channels,
+            traffic_kind=flow.traffic_kind,
+            resource_name=f"endpoint {src_endpoint.endpoint_id} egress attachment",
         )
         dst_attachment_channel = self._endpoint_attachment_channel(
-            dst_endpoint.ingress_channels,
-            flow.traffic_kind,
-            f"endpoint {dst_endpoint.endpoint_id} ingress attachment",
+            endpoint_id=dst_endpoint.endpoint_id,
+            direction="ingress",
+            channels=dst_endpoint.ingress_channels,
+            traffic_kind=flow.traffic_kind,
+            resource_name=f"endpoint {dst_endpoint.endpoint_id} ingress attachment",
         )
         route_channels = self._route_channels(route, flow.traffic_kind)
         src_endpoint_bandwidth = (
@@ -269,7 +367,7 @@ class TransportCostModel:
             src_endpoint.egress_latency_cycles
             + (src_attachment_channel.hop_latency_cycles if src_attachment_channel is not None else 0.0)
             + dst_endpoint.ingress_latency_cycles
-            + flow.bytes / bandwidth
+            + self._transfer_cycles(flow.bytes, bandwidth)
             + sum(channel.hop_latency_cycles for channel in route_channels)
             + (dst_attachment_channel.hop_latency_cycles if dst_attachment_channel is not None else 0.0)
         )
@@ -303,7 +401,9 @@ class TransportCostModel:
                 resource_loads[self._endpoint_resource_id(dst_endpoint.endpoint_id, "ingress")] = (
                     flow.bytes / dst_endpoint.ingress_bandwidth_bytes
                 )
-        return TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
+        estimate = TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
+        self._flow_cost_cache[flow] = estimate
+        return estimate
 
     def _require_noc(self) -> None:
         if self.mesh is None or not self.mesh.has_noc:
@@ -315,6 +415,10 @@ class TransportCostModel:
             raise ValueError("transport cost model requires at least one NoC L2 endpoint")
 
     def _route_channels(self, route: NoCRoute, traffic_kind: TrafficKind) -> tuple[NoCChannel, ...]:
+        cached = self._route_channels_cache.get((route.link_ids, traffic_kind))
+        if cached is not None:
+            return cached
+
         selected_channels = []
         for link_id in route.link_ids:
             link = self.mesh.noc.link_by_id(link_id)
@@ -326,17 +430,27 @@ class TransportCostModel:
                 )
             )
 
-        return tuple(selected_channels)
+        selected = tuple(selected_channels)
+        self._route_channels_cache[(route.link_ids, traffic_kind)] = selected
+        return selected
 
     def _endpoint_attachment_channel(
         self,
+        endpoint_id: int,
+        direction: str,
         channels: tuple[NoCChannel, ...],
         traffic_kind: TrafficKind,
         resource_name: str,
     ) -> NoCChannel | None:
+        cached = self._attachment_channel_cache.get((endpoint_id, direction, traffic_kind))
+        if cached is not None or (endpoint_id, direction, traffic_kind) in self._attachment_channel_cache:
+            return cached
         if not channels:
+            self._attachment_channel_cache[(endpoint_id, direction, traffic_kind)] = None
             return None
-        return self._select_channel(channels, traffic_kind, resource_name)
+        selected = self._select_channel(channels, traffic_kind, resource_name)
+        self._attachment_channel_cache[(endpoint_id, direction, traffic_kind)] = selected
+        return selected
 
     def _select_channel(
         self,
@@ -344,9 +458,12 @@ class TransportCostModel:
         traffic_kind: TrafficKind,
         resource_name: str,
     ) -> NoCChannel:
-        allowed_channel_ids = ()
-        if self.mesh.noc.traffic_policy is not None:
-            allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(traffic_kind)
+        allowed_channel_ids = self._allowed_channel_ids_cache.get(traffic_kind)
+        if allowed_channel_ids is None:
+            allowed_channel_ids = ()
+            if self.mesh.noc.traffic_policy is not None:
+                allowed_channel_ids = self.mesh.noc.traffic_policy.allowed_channel_ids(traffic_kind)
+            self._allowed_channel_ids_cache[traffic_kind] = allowed_channel_ids
 
         candidates = tuple(
             channel
@@ -370,3 +487,114 @@ class TransportCostModel:
     @staticmethod
     def _endpoint_attachment_resource_id(endpoint_id: int, direction: str, channel_id: int) -> str:
         return f"noc_endpoint_attachment:{endpoint_id}:{direction}:channel:{channel_id}"
+
+    def _l1_to_l1_delta_cache_key(
+        self,
+        src: Tile,
+        dst: Tile,
+        bytes_: int,
+    ) -> tuple[int, int, int, float] | None:
+        if not self._can_use_l1_to_l1_delta_cache():
+            return None
+
+        src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
+        dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
+        src_node = self.mesh.noc.node_by_id(src_endpoint.node_id)
+        dst_node = self.mesh.noc.node_by_id(dst_endpoint.node_id)
+        return (
+            dst_node.x - src_node.x,
+            dst_node.y - src_node.y,
+            bytes_,
+            min(src.memory.bandwidth, dst.memory.bandwidth),
+        )
+
+    def _can_use_l1_to_l1_delta_cache(self) -> bool:
+        cached = self._l1_to_l1_delta_cache_enabled
+        if cached is not None:
+            return cached
+
+        enabled = self._compute_l1_to_l1_delta_cache_enabled()
+        object.__setattr__(self, "_l1_to_l1_delta_cache_enabled", enabled)
+        return enabled
+
+    def _compute_l1_to_l1_delta_cache_enabled(self) -> bool:
+        if self.account_noc_contention or self.mesh is None or not self.mesh.has_noc:
+            return False
+        if self.mesh.noc.routing_policy is not RoutingPolicy.XY:
+            return False
+
+        l1_endpoints = self.mesh.noc.endpoints_of_kind(EndpointKind.L1)
+        if not l1_endpoints:
+            return False
+        if any(endpoint.ingress_channels or endpoint.egress_channels for endpoint in l1_endpoints):
+            return False
+
+        endpoint_signature = (
+            l1_endpoints[0].ingress_latency_cycles,
+            l1_endpoints[0].egress_latency_cycles,
+            l1_endpoints[0].ingress_bandwidth_bytes,
+            l1_endpoints[0].egress_bandwidth_bytes,
+        )
+        if any(
+            (
+                endpoint.ingress_latency_cycles,
+                endpoint.egress_latency_cycles,
+                endpoint.ingress_bandwidth_bytes,
+                endpoint.egress_bandwidth_bytes,
+            ) != endpoint_signature
+            for endpoint in l1_endpoints[1:]
+        ):
+            return False
+
+        max_x = max(node.x for node in self.mesh.noc.nodes)
+        max_y = max(node.y for node in self.mesh.noc.nodes)
+        expected_node_count = (max_x + 1) * (max_y + 1)
+        if len(self.mesh.noc.nodes) != expected_node_count:
+            return False
+
+        channel_signature: tuple[tuple[int, int, float, str | None, frozenset[TrafficKind]], ...] | None = None
+        for y in range(max_y + 1):
+            for x in range(max_x + 1):
+                current = self.mesh.noc.node_at(x, y)
+                for next_x, next_y in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if next_x < 0 or next_x > max_x or next_y < 0 or next_y > max_y:
+                        continue
+                    next_node = self.mesh.noc.node_at(next_x, next_y)
+                    link = self.mesh.noc._link_between_nodes(current.node_id, next_node.node_id)
+                    if link is None:
+                        return False
+                    signature = tuple(
+                        (
+                            channel.channel_id,
+                            channel.width_bytes,
+                            channel.hop_latency_cycles,
+                            channel.tag,
+                            channel.supported_traffic,
+                        )
+                        for channel in link.channels
+                    )
+                    if channel_signature is None:
+                        channel_signature = signature
+                    elif signature != channel_signature:
+                        return False
+
+        return True
+
+    @staticmethod
+    def _estimate_cache_key(
+        leg: TransferLeg,
+    ) -> tuple[TransferKind, int, int | None, int | None]:
+        return (
+            leg.kind,
+            leg.bytes,
+            None if leg.src_tile is None else leg.src_tile.tile_id,
+            None if leg.dst_tile is None else leg.dst_tile.tile_id,
+        )
+
+    @staticmethod
+    def _transfer_cycles(bytes_: int, bandwidth: float) -> float:
+        if bytes_ <= 0:
+            return 0.0
+        if bandwidth == float("inf"):
+            return 1.0
+        return float(max(1, math.ceil(bytes_ / bandwidth)))

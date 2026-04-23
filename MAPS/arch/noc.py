@@ -220,6 +220,42 @@ class NoC:
     _nodes_by_coords: dict[tuple[int, int], NoCNode] = field(init=False, repr=False)
     _links_by_id: dict[int, NoCLink] = field(init=False, repr=False)
     _endpoints_by_id: dict[int, NoCEndpoint] = field(init=False, repr=False)
+    _endpoints_by_kind: dict[EndpointKind, tuple[NoCEndpoint, ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+    _endpoints_by_tile_kind: dict[tuple[int, EndpointKind], NoCEndpoint] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+    _outgoing_links_by_node_id: dict[int, tuple[NoCLink, ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+    _incoming_links_by_node_id: dict[int, tuple[NoCLink, ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+    _links_between_nodes: dict[tuple[int, int], NoCLink] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
+    _routes_by_endpoint_pair: dict[tuple[int, int], NoCRoute] = field(
+        init=False,
+        repr=False,
+        compare=False,
+        hash=False,
+    )
 
     def __post_init__(self) -> None:
         nodes = tuple(self.nodes)
@@ -238,6 +274,9 @@ class NoC:
 
         links_by_id: dict[int, NoCLink] = {}
         channel_ids: set[int] = set()
+        outgoing_links_by_node_id = {node_id: [] for node_id in nodes_by_id}
+        incoming_links_by_node_id = {node_id: [] for node_id in nodes_by_id}
+        links_between_nodes: dict[tuple[int, int], NoCLink] = {}
         for link in links:
             if link.link_id in links_by_id:
                 raise ValueError("link ids must be unique")
@@ -245,14 +284,31 @@ class NoC:
                 raise ValueError("link references unknown node_id")
             links_by_id[link.link_id] = link
             channel_ids.update(channel.channel_id for channel in link.channels)
+            outgoing_links_by_node_id[link.src_node_id].append(link)
+            incoming_links_by_node_id[link.dst_node_id].append(link)
+            links_between_nodes.setdefault((link.src_node_id, link.dst_node_id), link)
+            if link.bidirectional:
+                outgoing_links_by_node_id[link.dst_node_id].append(link)
+                incoming_links_by_node_id[link.src_node_id].append(link)
+                links_between_nodes.setdefault((link.dst_node_id, link.src_node_id), link)
 
         endpoints_by_id: dict[int, NoCEndpoint] = {}
+        endpoints_by_kind = {kind: [] for kind in EndpointKind}
+        endpoints_by_tile_kind: dict[tuple[int, EndpointKind], NoCEndpoint] = {}
         for endpoint in endpoints:
             if endpoint.endpoint_id in endpoints_by_id:
                 raise ValueError("endpoint ids must be unique")
             if endpoint.node_id not in nodes_by_id:
                 raise ValueError("endpoint references unknown node_id")
             endpoints_by_id[endpoint.endpoint_id] = endpoint
+            endpoints_by_kind[endpoint.kind].append(endpoint)
+            if endpoint.tile_id is not None:
+                key = (endpoint.tile_id, endpoint.kind)
+                if key in endpoints_by_tile_kind:
+                    raise ValueError(
+                        f"multiple {endpoint.kind.name} endpoints for tile_id {endpoint.tile_id}"
+                    )
+                endpoints_by_tile_kind[key] = endpoint
             channel_ids.update(channel.channel_id for channel in endpoint.ingress_channels)
             channel_ids.update(channel.channel_id for channel in endpoint.egress_channels)
 
@@ -271,6 +327,30 @@ class NoC:
         object.__setattr__(self, "_nodes_by_coords", {node.coords: node for node in nodes})
         object.__setattr__(self, "_links_by_id", links_by_id)
         object.__setattr__(self, "_endpoints_by_id", endpoints_by_id)
+        object.__setattr__(
+            self,
+            "_endpoints_by_kind",
+            {kind: tuple(kind_endpoints) for kind, kind_endpoints in endpoints_by_kind.items()},
+        )
+        object.__setattr__(self, "_endpoints_by_tile_kind", endpoints_by_tile_kind)
+        object.__setattr__(
+            self,
+            "_outgoing_links_by_node_id",
+            {
+                node_id: tuple(node_links)
+                for node_id, node_links in outgoing_links_by_node_id.items()
+            },
+        )
+        object.__setattr__(
+            self,
+            "_incoming_links_by_node_id",
+            {
+                node_id: tuple(node_links)
+                for node_id, node_links in incoming_links_by_node_id.items()
+            },
+        )
+        object.__setattr__(self, "_links_between_nodes", links_between_nodes)
+        object.__setattr__(self, "_routes_by_endpoint_pair", {})
 
     def node_by_id(self, node_id: int) -> NoCNode:
         try:
@@ -297,48 +377,40 @@ class NoC:
             raise ValueError(f"unknown endpoint_id: {endpoint_id}") from exc
 
     def endpoints_of_kind(self, kind: EndpointKind) -> tuple[NoCEndpoint, ...]:
-        return tuple(endpoint for endpoint in self.endpoints if endpoint.kind is kind)
+        return self._endpoints_by_kind[kind]
 
     def endpoint_for_tile(self, tile_id: int, kind: EndpointKind = EndpointKind.L1) -> NoCEndpoint:
-        matches = tuple(
-            endpoint
-            for endpoint in self.endpoints
-            if endpoint.tile_id == tile_id and endpoint.kind is kind
-        )
-        if not matches:
-            raise ValueError(f"no {kind.name} endpoint for tile_id {tile_id}")
-        if len(matches) > 1:
-            raise ValueError(f"multiple {kind.name} endpoints for tile_id {tile_id}")
-        return matches[0]
+        try:
+            return self._endpoints_by_tile_kind[(tile_id, kind)]
+        except KeyError as exc:
+            raise ValueError(f"no {kind.name} endpoint for tile_id {tile_id}") from exc
 
     def outgoing_links(self, node_id: int) -> tuple[NoCLink, ...]:
         self.node_by_id(node_id)
-        return tuple(
-            link
-            for link in self.links
-            if link.src_node_id == node_id or (link.bidirectional and link.dst_node_id == node_id)
-        )
+        return self._outgoing_links_by_node_id[node_id]
 
     def incoming_links(self, node_id: int) -> tuple[NoCLink, ...]:
         self.node_by_id(node_id)
-        return tuple(
-            link
-            for link in self.links
-            if link.dst_node_id == node_id or (link.bidirectional and link.src_node_id == node_id)
-        )
+        return self._incoming_links_by_node_id[node_id]
 
     def route_endpoints(self, src_endpoint_id: int, dst_endpoint_id: int) -> NoCRoute:
+        cached = self._routes_by_endpoint_pair.get((src_endpoint_id, dst_endpoint_id))
+        if cached is not None:
+            return cached
+
         src_endpoint = self.endpoint_by_id(src_endpoint_id)
         dst_endpoint = self.endpoint_by_id(dst_endpoint_id)
 
         if self.routing_policy is RoutingPolicy.XY:
             node_ids, link_ids = self._route_nodes_xy(src_endpoint.node_id, dst_endpoint.node_id)
-            return NoCRoute(
+            route = NoCRoute(
                 src_endpoint_id=src_endpoint_id,
                 dst_endpoint_id=dst_endpoint_id,
                 node_ids=node_ids,
                 link_ids=link_ids,
             )
+            self._routes_by_endpoint_pair[(src_endpoint_id, dst_endpoint_id)] = route
+            return route
         raise ValueError(f"unsupported routing policy: {self.routing_policy}")
 
     def _route_nodes_xy(self, src_node_id: int, dst_node_id: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
@@ -378,9 +450,4 @@ class NoC:
         return next_node
 
     def _link_between_nodes(self, src_node_id: int, dst_node_id: int) -> NoCLink | None:
-        for link in self.links:
-            if link.src_node_id == src_node_id and link.dst_node_id == dst_node_id:
-                return link
-            if link.bidirectional and link.src_node_id == dst_node_id and link.dst_node_id == src_node_id:
-                return link
-        return None
+        return self._links_between_nodes.get((src_node_id, dst_node_id))
