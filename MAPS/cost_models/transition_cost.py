@@ -18,10 +18,10 @@ class TransitionCost:
     mode: TransitionMode
     total_bytes: int
     legs: tuple[TransferLeg, ...] = field(default_factory=tuple)
-    producer_loads: dict[int, float] = field(default_factory=dict)
-    consumer_loads: dict[int, float] = field(default_factory=dict)
-    resource_loads: dict[str, float] = field(default_factory=dict)
-    total_cost: float = 0.0
+    producer_loads: dict[int, int] = field(default_factory=dict)
+    consumer_loads: dict[int, int] = field(default_factory=dict)
+    resource_loads: dict[str, int] = field(default_factory=dict)
+    total_cost: int = 0
 
 
 def _tensor_slice_num_elements(tensor_slice: TensorSlice) -> int:
@@ -43,9 +43,9 @@ def _aggregate_transition(legs: tuple[TransferLeg, ...],
     obtained by computing the maximum between the maximum fragment transfer
     costs of producer and consumer tiles.
     """
-    producer_loads: dict[int, float] = {}
-    consumer_loads: dict[int, float] = {}
-    resource_loads: dict[str, float] = {}
+    producer_loads: dict[int, int] = {}
+    consumer_loads: dict[int, int] = {}
+    resource_loads: dict[str, int] = {}
 
     for leg in legs:
         estimate = model.estimate(leg)
@@ -53,19 +53,19 @@ def _aggregate_transition(legs: tuple[TransferLeg, ...],
 
         if leg.src_tile is not None:
             producer_loads[leg.src_tile.tile_id] = (
-                producer_loads.get(leg.src_tile.tile_id, 0.0) + cost
+                producer_loads.get(leg.src_tile.tile_id, 0) + cost
             )
         if leg.dst_tile is not None:
             consumer_loads[leg.dst_tile.tile_id] = (
-                consumer_loads.get(leg.dst_tile.tile_id, 0.0) + cost
+                consumer_loads.get(leg.dst_tile.tile_id, 0) + cost
             )
         for resource_id, load in estimate.resource_loads.items():
-            resource_loads[resource_id] = resource_loads.get(resource_id, 0.0) + load
+            resource_loads[resource_id] = resource_loads.get(resource_id, 0) + load
 
     total_cost = max(
-        max(producer_loads.values(), default=0.0),
-        max(consumer_loads.values(), default=0.0),
-        max(resource_loads.values(), default=0.0),
+        max(producer_loads.values(), default=0),
+        max(consumer_loads.values(), default=0),
+        max(resource_loads.values(), default=0),
     )
 
     return TransitionCost(

@@ -15,7 +15,7 @@ class GemmCostModel:
 
     preferred_device_kind: DeviceKind = DeviceKind.SYSTOLIC
 
-    def cost(self, tile_work: GemmTileWork, tile: Tile) -> float:
+    def cost(self, tile_work: GemmTileWork, tile: Tile) -> int:
         amount = _gemm_tile_num_ops(tile_work)
         devices = tuple(device for device in tile.devices if device.supports(WorkKind.GEMM))
         preferred = tuple(

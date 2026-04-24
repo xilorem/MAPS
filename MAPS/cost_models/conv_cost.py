@@ -16,7 +16,7 @@ class ConvCostModel:
 
     preferred_device_kind: DeviceKind = DeviceKind.SYSTOLIC
 
-    def cost(self, tile_work: ConvTileWork, tile: Tile) -> float:
+    def cost(self, tile_work: ConvTileWork, tile: Tile) -> int:
         gemm_work = _conv_tile_work_as_im2col_gemm(tile_work)
         amount = _im2col_gemm_num_ops(gemm_work)
         devices = tuple(device for device in tile.devices if device.supports(WorkKind.GEMM))

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from types import MappingProxyType
-from typing import Mapping
 
 
 class TrafficKind(Enum):
@@ -39,7 +37,7 @@ class NoCChannel:
 
     channel_id: int
     width_bytes: int
-    hop_latency_cycles: float = 0.0
+    hop_latency_cycles: int = 0
     tag: str | None = None
     supported_traffic: frozenset[TrafficKind] = frozenset()
 
@@ -90,10 +88,10 @@ class NoCEndpoint:
     node_id: int
     name: str = ""
     tile_id: int | None = None
-    ingress_latency_cycles: float = 0.0
-    egress_latency_cycles: float = 0.0
-    ingress_bandwidth_bytes: float | None = None
-    egress_bandwidth_bytes: float | None = None
+    ingress_latency_cycles: int = 0
+    egress_latency_cycles: int = 0
+    ingress_bandwidth_bytes: int | None = None
+    egress_bandwidth_bytes: int | None = None
     ingress_channels: tuple[NoCChannel, ...] = ()
     egress_channels: tuple[NoCChannel, ...] = ()
 
@@ -159,7 +157,7 @@ class NoCLink:
 class TrafficPolicy:
     """Traffic-to-channel selection rules."""
 
-    channel_ids_by_traffic: Mapping[TrafficKind, tuple[int, ...]]
+    channel_ids_by_traffic: dict[TrafficKind, tuple[int, ...]]
 
     def __post_init__(self) -> None:
         normalized: dict[TrafficKind, tuple[int, ...]] = {}
@@ -177,7 +175,7 @@ class TrafficPolicy:
 
             normalized[traffic_kind] = normalized_ids
 
-        object.__setattr__(self, "channel_ids_by_traffic", MappingProxyType(normalized))
+        object.__setattr__(self, "channel_ids_by_traffic", normalized)
 
     def allowed_channel_ids(self, traffic_kind: TrafficKind) -> tuple[int, ...]:
         return self.channel_ids_by_traffic.get(traffic_kind, ())

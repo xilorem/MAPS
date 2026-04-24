@@ -27,7 +27,7 @@ def _uniform_l1_only_mesh(
     height: int,
     *,
     link_width_bytes: int = 8,
-    hop_latency_cycles: float = 1.0,
+    hop_latency_cycles: int = 1,
     memory_bandwidth: int = 64,
 ) -> Mesh:
     return Mesh(
@@ -115,14 +115,14 @@ def test_l1_to_l1_transfer_cost_uses_noc_route_hops_when_available() -> None:
                     link_id=0,
                     src_node_id=0,
                     dst_node_id=1,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=1,
                     src_node_id=1,
                     dst_node_id=2,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2),),
                     bidirectional=True,
                 ),
             ),
@@ -155,8 +155,8 @@ def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel
                     src_node_id=0,
                     dst_node_id=1,
                     channels=(
-                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1.0),
-                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1.0),
+                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1),
+                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1),
                     ),
                     bidirectional=True,
                 ),
@@ -222,14 +222,14 @@ def test_l2_transfer_cost_uses_noc_route_to_nearest_l2_endpoint_when_available()
                     link_id=0,
                     src_node_id=0,
                     dst_node_id=1,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=1,
                     src_node_id=1,
                     dst_node_id=2,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=2),),
                     bidirectional=True,
                 ),
             ),
@@ -265,8 +265,8 @@ def test_l2_transfer_cost_respects_directional_traffic_policy_channel_selection(
                     src_node_id=0,
                     dst_node_id=1,
                     channels=(
-                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1.0),
-                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1.0),
+                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1),
+                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1),
                     ),
                     bidirectional=True,
                 ),
@@ -370,24 +370,24 @@ def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops(
                     kind=EndpointKind.L1,
                     node_id=0,
                     tile_id=0,
-                    ingress_latency_cycles=11.0,
-                    egress_latency_cycles=3.0,
+                    ingress_latency_cycles=11,
+                    egress_latency_cycles=3,
                 ),
                 NoCEndpoint(
                     endpoint_id=1,
                     kind=EndpointKind.L2,
                     node_id=0,
                     name="l2",
-                    ingress_latency_cycles=5.0,
-                    egress_latency_cycles=7.0,
+                    ingress_latency_cycles=5,
+                    egress_latency_cycles=7,
                 ),
             ),
         ),
     )
     model = TransportCostModel(mesh=mesh)
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 128.0
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 106.0
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 128
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 106
 
 
 def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() -> None:
@@ -407,16 +407,16 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
                     kind=EndpointKind.L1,
                     node_id=0,
                     tile_id=0,
-                    ingress_bandwidth_bytes=32.0,
-                    egress_bandwidth_bytes=8.0,
+                    ingress_bandwidth_bytes=32,
+                    egress_bandwidth_bytes=8,
                 ),
                 NoCEndpoint(
                     endpoint_id=1,
                     kind=EndpointKind.L2,
                     node_id=0,
                     name="l2",
-                    ingress_bandwidth_bytes=16.0,
-                    egress_bandwidth_bytes=4.0,
+                    ingress_bandwidth_bytes=16,
+                    egress_bandwidth_bytes=4,
                 ),
             ),
         ),
@@ -438,19 +438,19 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 98.0
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 92.0
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 98
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 92
     assert l1_to_l2_estimate.resource_loads == {
-        "noc_endpoint:0:egress": 8.125,
-        "noc_endpoint:1:ingress": 4.0625,
-        "noc_endpoint:1:egress": 0.25,
-        "noc_endpoint:0:ingress": 0.03125,
+        "noc_endpoint:0:egress": 9,
+        "noc_endpoint:1:ingress": 5,
+        "noc_endpoint:1:egress": 1,
+        "noc_endpoint:0:ingress": 1,
     }
     assert l2_to_l1_estimate.resource_loads == {
-        "noc_endpoint:0:egress": 0.125,
-        "noc_endpoint:1:ingress": 0.0625,
-        "noc_endpoint:1:egress": 16.0,
-        "noc_endpoint:0:ingress": 2.0,
+        "noc_endpoint:0:egress": 1,
+        "noc_endpoint:1:ingress": 1,
+        "noc_endpoint:1:egress": 16,
+        "noc_endpoint:0:ingress": 2,
     }
 
 
@@ -474,7 +474,7 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
                         NoCChannel(
                             channel_id=0,
                             width_bytes=8,
-                            hop_latency_cycles=2.0,
+                            hop_latency_cycles=2,
                             supported_traffic=frozenset(
                                 {
                                     TrafficKind.READ_REQ,
@@ -486,7 +486,7 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
                         NoCChannel(
                             channel_id=1,
                             width_bytes=4,
-                            hop_latency_cycles=3.0,
+                            hop_latency_cycles=3,
                             supported_traffic=frozenset(
                                 {
                                     TrafficKind.READ_RSP,
@@ -497,7 +497,7 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
                         NoCChannel(
                             channel_id=2,
                             width_bytes=32,
-                            hop_latency_cycles=1.0,
+                            hop_latency_cycles=1,
                             supported_traffic=frozenset(
                                 {
                                     TrafficKind.READ_RSP,
@@ -510,7 +510,7 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
                         NoCChannel(
                             channel_id=0,
                             width_bytes=8,
-                            hop_latency_cycles=2.0,
+                            hop_latency_cycles=2,
                             supported_traffic=frozenset(
                                 {
                                     TrafficKind.READ_REQ,
@@ -522,7 +522,7 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
                         NoCChannel(
                             channel_id=1,
                             width_bytes=4,
-                            hop_latency_cycles=3.0,
+                            hop_latency_cycles=3,
                             supported_traffic=frozenset(
                                 {
                                     TrafficKind.READ_RSP,
@@ -533,7 +533,7 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
                         NoCChannel(
                             channel_id=2,
                             width_bytes=32,
-                            hop_latency_cycles=1.0,
+                            hop_latency_cycles=1,
                             supported_traffic=frozenset(
                                 {
                                     TrafficKind.READ_RSP,
@@ -572,15 +572,15 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 105.0
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 97.0
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 105
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 97
     assert l1_to_l2_estimate.resource_loads == {
-        "noc_endpoint_attachment:1:ingress:channel:0": 8.125,
-        "noc_endpoint_attachment:1:egress:channel:1": 0.25,
+        "noc_endpoint_attachment:1:ingress:channel:0": 9,
+        "noc_endpoint_attachment:1:egress:channel:1": 1,
     }
     assert l2_to_l1_estimate.resource_loads == {
-        "noc_endpoint_attachment:1:ingress:channel:0": 0.125,
-        "noc_endpoint_attachment:1:egress:channel:1": 16.0,
+        "noc_endpoint_attachment:1:ingress:channel:0": 1,
+        "noc_endpoint_attachment:1:egress:channel:1": 16,
     }
 
 
@@ -601,8 +601,8 @@ def test_l1_to_l2_transfer_cost_respects_write_rsp_traffic_policy_channel_select
                     src_node_id=0,
                     dst_node_id=1,
                     channels=(
-                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1.0),
-                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1.0),
+                        NoCChannel(channel_id=0, width_bytes=4, hop_latency_cycles=1),
+                        NoCChannel(channel_id=1, width_bytes=16, hop_latency_cycles=1),
                     ),
                     bidirectional=True,
                 ),
@@ -673,14 +673,14 @@ def test_transport_cost_rounds_nonzero_flow_transfer_time_up_to_one_cycle() -> N
             ),
         ),
     )
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0)
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
 
-    assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 1) == 2.0
+    assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 1) == 2
 
 
 def test_l1_to_l1_delta_cache_reuses_uniform_no_contention_costs() -> None:
     mesh = _uniform_l1_only_mesh(3, 2)
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0)
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
 
     first_cost = model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 1), 64)
 
@@ -700,7 +700,7 @@ def test_l1_to_l1_delta_cache_is_disabled_when_accounting_noc_contention() -> No
     mesh = _uniform_l1_only_mesh(3, 2)
     model = TransportCostModel(
         mesh=mesh,
-        l1_to_l1_startup_cycles=0.0,
+        l1_to_l1_startup_cycles=0,
         account_noc_contention=True,
     )
 
@@ -729,49 +729,49 @@ def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
                     link_id=0,
                     src_node_id=0,
                     dst_node_id=1,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=1,
                     src_node_id=1,
                     dst_node_id=2,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=2,
                     src_node_id=3,
                     dst_node_id=4,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=5.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=5),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=3,
                     src_node_id=4,
                     dst_node_id=5,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=5.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=5),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=4,
                     src_node_id=0,
                     dst_node_id=3,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=5,
                     src_node_id=1,
                     dst_node_id=4,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1),),
                     bidirectional=True,
                 ),
                 NoCLink(
                     link_id=6,
                     src_node_id=2,
                     dst_node_id=5,
-                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1.0),),
+                    channels=(NoCChannel(channel_id=0, width_bytes=8, hop_latency_cycles=1),),
                     bidirectional=True,
                 ),
             ),
@@ -786,7 +786,7 @@ def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
             ),
         ),
     )
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0)
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
 
     top_cost = model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 64)
     bottom_cost = model.l1_to_l1(mesh.tile(0, 1), mesh.tile(1, 1), 64)

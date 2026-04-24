@@ -46,7 +46,7 @@ def balance_workload(
     iteration = 0
     placement_masks_by_tile_count: dict[int, tuple[int, ...]] = {}
     placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool] = {}
-    decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, float]]] = []
+    decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, int]]] = []
 
     # Seed each stage with the smallest tile count whose tile work fits in L1,
     # then spend any remaining tiles greedily on workload reduction.
@@ -135,7 +135,7 @@ def balance_workload(
         iteration += 1
         worst_stage_id: int | None = None
         worst_stage_tile_count: int | None = None
-        worst_stage_improvement = 0.0
+        worst_stage_improvement = 0
 
         # Rebuild stage plans for the current allocation so candidate growth is
         # compared against the best logical shape available at each tile count.
@@ -325,11 +325,11 @@ def _best_growth_tile_count_for_stage(
     mesh: Mesh,
     tile_counts: dict[int, int],
     used_tiles: int,
-    current_workload: float,
+    current_workload: int,
     placement_masks_by_tile_count: dict[int, tuple[int, ...]],
     placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool],
     debug: bool,
-) -> tuple[int, float] | None:
+) -> tuple[int, int] | None:
     """Return the best feasible growth tile count for one stage.
 
     Growth candidates must still improve workload and preserve global rectangle
@@ -346,7 +346,7 @@ def _best_growth_tile_count_for_stage(
     )
 
     best_candidate_tile_count: int | None = None
-    best_candidate_improvement = 0.0
+    best_candidate_improvement = 0
     best_candidate_shape_count = -1
 
     for candidate_tile_count in candidate_tile_count_options:
@@ -639,7 +639,7 @@ def _best_stage_plan_for_stage_nodes(
 
     submesh = _planning_submesh(mesh, stage_id, tile_count)
     best_plan: StagePlan | None = None
-    best_workload: float | None = None
+    best_workload: int | None = None
 
     for logical_shape in _logical_shape_options(tile_count):
         node_input_layouts, node_output_layouts = _default_layouts_for_stage_nodes(
@@ -741,10 +741,10 @@ def _estimate_workloads(
     plans: dict[int, StagePlan],
     stage_selection: StageSelection,
     debug: bool,
-) -> dict[int, float]:
+) -> dict[int, int]:
     """Estimate per-stage workload for the current stage plans."""
     del debug
-    workloads: dict[int, float] = {}
+    workloads: dict[int, int] = {}
     for stage_id, stage_nodes in stage_selection.items():
         workloads[stage_id] = _estimate_stage_group_workload(
             stage_nodes,
@@ -753,7 +753,7 @@ def _estimate_workloads(
     return workloads
 
 
-def _estimate_stage_workload(node: Node, plan: StagePlan) -> float:
+def _estimate_stage_workload(node: Node, plan: StagePlan) -> int:
     """Estimate compute cost for one node under one stage plan."""
     return _estimate_stage_group_workload((node,), plan)
 
@@ -761,7 +761,7 @@ def _estimate_stage_workload(node: Node, plan: StagePlan) -> float:
 def _estimate_stage_group_workload(
     stage_nodes: tuple[Node, ...],
     plan: StagePlan,
-) -> float:
+) -> int:
     """Estimate one selected stage workload as the sum of member node costs."""
 
     if plan.node_input_layouts and plan.node_output_layouts:
@@ -771,7 +771,7 @@ def _estimate_stage_group_workload(
         node_input_layouts = (plan.input_layouts,)
         node_output_layouts = (plan.output_layouts,)
 
-    total_cost = 0.0
+    total_cost = 0
     for node, input_layouts, output_layouts in zip(
         stage_nodes,
         node_input_layouts,
@@ -791,14 +791,12 @@ def _debug(enabled: bool, message: str) -> None:
         print(message)
 
 
-def _format_debug_cost(value: float) -> str:
-    """Format one reported cost without trailing .0 for whole-cycle values."""
-    if float(value).is_integer():
-        return str(int(value))
+def _format_debug_cost(value: int) -> str:
+    """Format one reported cycle cost."""
     return str(value)
 
 
-def _format_debug_workloads(workloads: dict[int, float]) -> str:
+def _format_debug_workloads(workloads: dict[int, int]) -> str:
     """Format a stage-to-workload dictionary for debug printing."""
     return "{" + ", ".join(
         f"{stage_id}: {_format_debug_cost(workload)}"
@@ -831,7 +829,7 @@ def _debug_final_workloads(
 def _debug_decision_timeline(
     enabled: bool,
     stage_selection: StageSelection,
-    decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, float]]],
+    decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, int]]],
 ) -> None:
     """Print tile counts and workloads after each committed greedy decision."""
     if not enabled:

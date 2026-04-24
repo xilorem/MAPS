@@ -16,7 +16,7 @@ class ElementwiseCostModel:
     work_kind: WorkKind = WorkKind.ELEMENTWISE
     preferred_device_kind: DeviceKind = DeviceKind.SCALAR
 
-    def cost(self, tile_work: ElementwiseTileWork, tile: Tile) -> float:
+    def cost(self, tile_work: ElementwiseTileWork, tile: Tile) -> int:
         amount = tensor_slice_num_elements(tile_work.output_slice)
         devices = tuple(device for device in tile.devices if device.supports(self.work_kind))
         preferred = tuple(

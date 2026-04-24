@@ -57,7 +57,7 @@ def test_allreduce_uses_placement_sensitive_cost() -> None:
     input_layouts = node.payload.default_input_layouts(submesh)
     output_layouts = node.payload.default_output_layouts(submesh)
 
-    assert placement_cost_estimator(node, input_layouts, output_layouts) > 0.0
+    assert placement_cost_estimator(node, input_layouts, output_layouts) > 0
     assert cost_estimator(node, input_layouts, output_layouts) == placement_cost_estimator(
         node,
         input_layouts,

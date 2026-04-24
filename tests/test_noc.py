@@ -109,7 +109,7 @@ def test_noc_endpoint_rejects_negative_attachment_latency() -> None:
             endpoint_id=0,
             kind=EndpointKind.L1,
             node_id=0,
-            ingress_latency_cycles=-1.0,
+            ingress_latency_cycles=-1,
         )
 
     with pytest.raises(ValueError, match="endpoint egress_latency_cycles must be >= 0"):
@@ -117,7 +117,7 @@ def test_noc_endpoint_rejects_negative_attachment_latency() -> None:
             endpoint_id=0,
             kind=EndpointKind.L1,
             node_id=0,
-            egress_latency_cycles=-1.0,
+            egress_latency_cycles=-1,
         )
 
 
@@ -127,7 +127,7 @@ def test_noc_endpoint_rejects_non_positive_attachment_bandwidth() -> None:
             endpoint_id=0,
             kind=EndpointKind.L1,
             node_id=0,
-            ingress_bandwidth_bytes=0.0,
+            ingress_bandwidth_bytes=0,
         )
 
     with pytest.raises(ValueError, match="endpoint egress_bandwidth_bytes must be > 0"):
@@ -135,7 +135,7 @@ def test_noc_endpoint_rejects_non_positive_attachment_bandwidth() -> None:
             endpoint_id=0,
             kind=EndpointKind.L1,
             node_id=0,
-            egress_bandwidth_bytes=-1.0,
+            egress_bandwidth_bytes=-1,
         )
 
 

@@ -23,9 +23,9 @@ class AllReduceCostModel:
         if self.collective_axis not in {"x", "y"}:
             raise ValueError("AllReduceCostModel collective_axis must be 'x' or 'y'")
 
-    def cost(self, tile_work: object, tile: object) -> float:
+    def cost(self, tile_work: object, tile: object) -> int:
         del tile_work, tile
-        return 0.0
+        return 0
 
     def placement_cost(
         self,
@@ -33,7 +33,7 @@ class AllReduceCostModel:
         node: Node,
         input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
-    ) -> float:
+    ) -> int:
         if len(output_layouts) != 1:
             raise ValueError("AllReduceCostModel expects exactly one output layout")
 
@@ -49,7 +49,7 @@ class AllReduceCostModel:
                 if output_tensor.slice_num_bytes(tile_tensor_slice(output_tensor, output_layout, tile)) > 0
             )
             if len(payload_tiles) <= 1:
-                group_costs.append(0.0)
+                group_costs.append(0)
                 continue
 
             root_tile = payload_tiles[0]
@@ -62,7 +62,7 @@ class AllReduceCostModel:
                     )
                     for tile in payload_tiles[1:]
                 ),
-                default=0.0,
+                default=0,
             )
             broadcast_phase = max(
                 (
@@ -73,10 +73,10 @@ class AllReduceCostModel:
                     )
                     for tile in payload_tiles[1:]
                 ),
-                default=0.0,
+                default=0,
             )
             group_costs.append(reduce_phase + broadcast_phase)
-        return max(group_costs, default=0.0)
+        return max(group_costs, default=0)
 
 
 def _logical_collective_groups(

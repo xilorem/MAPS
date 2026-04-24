@@ -108,27 +108,27 @@ def _shared_link_remap_case() -> tuple[Mesh, Tensor, Transition]:
 
 def test_direct_remap_cost_ignores_shared_noc_link_load_when_disabled() -> None:
     mesh, tensor, transition = _shared_link_remap_case()
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0)
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
-    assert cost.producer_loads == {0: 9.0, 1: 9.0}
-    assert cost.consumer_loads == {2: 9.0, 3: 9.0}
+    assert cost.producer_loads == {0: 9, 1: 9}
+    assert cost.consumer_loads == {2: 9, 3: 9}
     assert cost.resource_loads == {}
-    assert cost.total_cost == 9.0
+    assert cost.total_cost == 9
 
 
 def test_direct_remap_cost_accounts_for_shared_noc_link_load_when_enabled() -> None:
     mesh, tensor, transition = _shared_link_remap_case()
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0.0, account_noc_contention=True)
+    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0, account_noc_contention=True)
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
-    assert cost.producer_loads == {0: 9.0, 1: 9.0}
-    assert cost.consumer_loads == {2: 9.0, 3: 9.0}
+    assert cost.producer_loads == {0: 9, 1: 9}
+    assert cost.consumer_loads == {2: 9, 3: 9}
     assert cost.resource_loads == {
-        "noc_link:0:channel:0": 8.125,
-        "noc_link:1:channel:0": 16.25,
-        "noc_link:2:channel:0": 8.125,
+        "noc_link:0:channel:0": 9,
+        "noc_link:1:channel:0": 18,
+        "noc_link:2:channel:0": 9,
     }
-    assert cost.total_cost == 16.25
+    assert cost.total_cost == 18

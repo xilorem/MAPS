@@ -44,7 +44,7 @@ def rectangular_test_noc(width: int, height: int, *, include_l2: bool = True) ->
             link_id=link_id,
             src_node_id=src_node_id,
             dst_node_id=dst_node_id,
-            channels=(NoCChannel(channel_id=0, width_bytes=1, hop_latency_cycles=0.5),),
+            channels=(NoCChannel(channel_id=0, width_bytes=1, hop_latency_cycles=1),),
             bidirectional=True,
         )
         for link_id, (src_node_id, dst_node_id) in enumerate(link_pairs)

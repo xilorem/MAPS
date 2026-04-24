@@ -81,7 +81,7 @@ def test_conv_cost_uses_im2col_gemm_amount() -> None:
             CoreDevice(
                 name="scalar_gemm",
                 kind=DeviceKind.SCALAR,
-                throughput={WorkKind.GEMM: 1.0},
+                throughput={WorkKind.GEMM: 1},
             ),
         ),
         memory=L1Memory(size=4096, bandwidth=1),

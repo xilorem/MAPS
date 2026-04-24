@@ -20,7 +20,7 @@ class ReductionCostModel:
         if self.work_kind not in (WorkKind.REDUCE_SUM, WorkKind.REDUCE_MAX):
             raise ValueError("ReductionCostModel work_kind must be REDUCE_SUM or REDUCE_MAX")
 
-    def cost(self, tile_work: ReductionTileWork, tile: Tile) -> float:
+    def cost(self, tile_work: ReductionTileWork, tile: Tile) -> int:
         amount = tensor_slice_num_elements(tile_work.input_slice)
         devices = tuple(device for device in tile.devices if device.supports(self.work_kind))
         preferred = tuple(

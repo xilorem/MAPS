@@ -55,8 +55,8 @@ class TransferLeg:
 class TransferCostEstimate:
     """Cost plus shared-resource loads for one transfer leg."""
 
-    total_cost: float
-    resource_loads: dict[str, float] = field(default_factory=dict)
+    total_cost: int
+    resource_loads: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,7 @@ class _NoCFlow:
     dst_endpoint_id: int
     bytes: int
     traffic_kind: TrafficKind
-    bandwidth_limit: float = float("inf")
+    bandwidth_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -75,9 +75,9 @@ class TransportCostModel:
     """Primitive latency model for one transfer leg."""
 
     mesh: Mesh | None = None
-    l1_to_l2_startup_cycles: float = 88.0
-    l2_to_l1_startup_cycles: float = 75.0
-    l1_to_l1_startup_cycles: float = 75.0
+    l1_to_l2_startup_cycles: int = 88
+    l2_to_l1_startup_cycles: int = 75
+    l1_to_l1_startup_cycles: int = 75
     account_noc_contention: bool = False
     read_request_bytes: int = 1
     write_request_bytes: int = 1
@@ -117,7 +117,7 @@ class TransportCostModel:
         hash=False,
         default_factory=dict,
     )
-    _l1_to_l1_delta_estimate_cache: dict[tuple[int, int, int, float], TransferCostEstimate] = field(
+    _l1_to_l1_delta_estimate_cache: dict[tuple[int, int, int, int], TransferCostEstimate] = field(
         init=False,
         repr=False,
         compare=False,
@@ -132,7 +132,7 @@ class TransportCostModel:
         default=None,
     )
 
-    def l1_to_l2(self, src: Tile, bytes_: int) -> float:
+    def l1_to_l2(self, src: Tile, bytes_: int) -> int:
         return self.estimate(
             TransferLeg(
                 kind=TransferKind.L1_TO_L2,
@@ -141,7 +141,7 @@ class TransportCostModel:
             )
         ).total_cost
 
-    def l2_to_l1(self, dst: Tile, bytes_: int) -> float:
+    def l2_to_l1(self, dst: Tile, bytes_: int) -> int:
         return self.estimate(
             TransferLeg(
                 kind=TransferKind.L2_TO_L1,
@@ -150,7 +150,7 @@ class TransportCostModel:
             )
         ).total_cost
 
-    def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
+    def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> int:
         return self.estimate(
             TransferLeg(
                 kind=TransferKind.L1_TO_L1,
@@ -190,10 +190,10 @@ class TransportCostModel:
                 self._l1_to_l1_delta_estimate_cache.setdefault(delta_key, estimate)
         return estimate
 
-    def cost(self, leg: TransferLeg) -> float:
+    def cost(self, leg: TransferLeg) -> int:
         return self.estimate(leg).total_cost
 
-    def resource_loads(self, leg: TransferLeg) -> dict[str, float]:
+    def resource_loads(self, leg: TransferLeg) -> dict[str, int]:
         return self.estimate(leg).resource_loads
 
     def _estimate_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
@@ -205,7 +205,7 @@ class TransportCostModel:
     def _estimate_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
         return self._estimate_noc_l1_to_l1(src, dst, bytes_)
 
-    def _noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> float:
+    def _noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> int:
         return self._estimate_noc_l1_to_l1(src, dst, bytes_).total_cost
 
     def _estimate_noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
@@ -231,7 +231,7 @@ class TransportCostModel:
             startup_cycles=self.l1_to_l1_startup_cycles,
         )
 
-    def _noc_l1_to_l2(self, src: Tile, bytes_: int) -> float:
+    def _noc_l1_to_l2(self, src: Tile, bytes_: int) -> int:
         return self._estimate_noc_l1_to_l2(src, bytes_).total_cost
 
     def _estimate_noc_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
@@ -268,7 +268,7 @@ class TransportCostModel:
             key=lambda estimate: estimate.total_cost,
         )
 
-    def _noc_l2_to_l1(self, dst: Tile, bytes_: int) -> float:
+    def _noc_l2_to_l1(self, dst: Tile, bytes_: int) -> int:
         return self._estimate_noc_l2_to_l1(dst, bytes_).total_cost
 
     def _estimate_noc_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
@@ -302,16 +302,16 @@ class TransportCostModel:
     def _route_protocol_cost(
         self,
         flows: tuple[_NoCFlow, ...],
-        startup_cycles: float,
+        startup_cycles: int,
     ) -> TransferCostEstimate:
         total_cost = startup_cycles
-        resource_loads: dict[str, float] = {}
+        resource_loads: dict[str, int] = {}
 
         for flow in flows:
             estimate = self._route_flow_cost(flow)
             total_cost += estimate.total_cost
             for resource_id, load in estimate.resource_loads.items():
-                resource_loads[resource_id] = resource_loads.get(resource_id, 0.0) + load
+                resource_loads[resource_id] = resource_loads.get(resource_id, 0) + load
 
         return TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
 
@@ -344,37 +344,37 @@ class TransportCostModel:
         src_endpoint_bandwidth = (
             src_endpoint.egress_bandwidth_bytes
             if src_endpoint.egress_bandwidth_bytes is not None
-            else float("inf")
+            else None
         )
         dst_endpoint_bandwidth = (
             dst_endpoint.ingress_bandwidth_bytes
             if dst_endpoint.ingress_bandwidth_bytes is not None
-            else float("inf")
+            else None
         )
         route_bandwidth = min(
             (channel.width_bytes for channel in route_channels),
-            default=float("inf"),
+            default=None,
         )
-        bandwidth = min(
+        bandwidth = self._min_bandwidth(
             flow.bandwidth_limit,
             src_endpoint_bandwidth,
             dst_endpoint_bandwidth,
-            src_attachment_channel.width_bytes if src_attachment_channel is not None else float("inf"),
+            src_attachment_channel.width_bytes if src_attachment_channel is not None else None,
             route_bandwidth,
-            dst_attachment_channel.width_bytes if dst_attachment_channel is not None else float("inf"),
+            dst_attachment_channel.width_bytes if dst_attachment_channel is not None else None,
         )
         total_cost = (
             src_endpoint.egress_latency_cycles
-            + (src_attachment_channel.hop_latency_cycles if src_attachment_channel is not None else 0.0)
+            + (src_attachment_channel.hop_latency_cycles if src_attachment_channel is not None else 0)
             + dst_endpoint.ingress_latency_cycles
             + self._transfer_cycles(flow.bytes, bandwidth)
             + sum(channel.hop_latency_cycles for channel in route_channels)
-            + (dst_attachment_channel.hop_latency_cycles if dst_attachment_channel is not None else 0.0)
+            + (dst_attachment_channel.hop_latency_cycles if dst_attachment_channel is not None else 0)
         )
         resource_loads = {}
         if self.account_noc_contention:
             resource_loads = {
-                self._route_resource_id(link_id, channel.channel_id): flow.bytes / channel.width_bytes
+                self._route_resource_id(link_id, channel.channel_id): self._transfer_cycles(flow.bytes, channel.width_bytes)
                 for link_id, channel in zip(route.link_ids, route_channels)
             }
             if src_attachment_channel is not None:
@@ -384,7 +384,7 @@ class TransportCostModel:
                         "egress",
                         src_attachment_channel.channel_id,
                     )
-                ] = flow.bytes / src_attachment_channel.width_bytes
+                ] = self._transfer_cycles(flow.bytes, src_attachment_channel.width_bytes)
             if dst_attachment_channel is not None:
                 resource_loads[
                     self._endpoint_attachment_resource_id(
@@ -392,14 +392,14 @@ class TransportCostModel:
                         "ingress",
                         dst_attachment_channel.channel_id,
                     )
-                ] = flow.bytes / dst_attachment_channel.width_bytes
+                ] = self._transfer_cycles(flow.bytes, dst_attachment_channel.width_bytes)
             if src_endpoint.egress_bandwidth_bytes is not None:
                 resource_loads[self._endpoint_resource_id(src_endpoint.endpoint_id, "egress")] = (
-                    flow.bytes / src_endpoint.egress_bandwidth_bytes
+                    self._transfer_cycles(flow.bytes, src_endpoint.egress_bandwidth_bytes)
                 )
             if dst_endpoint.ingress_bandwidth_bytes is not None:
                 resource_loads[self._endpoint_resource_id(dst_endpoint.endpoint_id, "ingress")] = (
-                    flow.bytes / dst_endpoint.ingress_bandwidth_bytes
+                    self._transfer_cycles(flow.bytes, dst_endpoint.ingress_bandwidth_bytes)
                 )
         estimate = TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
         self._flow_cost_cache[flow] = estimate
@@ -493,7 +493,7 @@ class TransportCostModel:
         src: Tile,
         dst: Tile,
         bytes_: int,
-    ) -> tuple[int, int, int, float] | None:
+    ) -> tuple[int, int, int, int] | None:
         if not self._can_use_l1_to_l1_delta_cache():
             return None
 
@@ -552,7 +552,7 @@ class TransportCostModel:
         if len(self.mesh.noc.nodes) != expected_node_count:
             return False
 
-        channel_signature: tuple[tuple[int, int, float, str | None, frozenset[TrafficKind]], ...] | None = None
+        channel_signature: tuple[tuple[int, int, int, str | None, frozenset[TrafficKind]], ...] | None = None
         for y in range(max_y + 1):
             for x in range(max_x + 1):
                 current = self.mesh.noc.node_at(x, y)
@@ -592,9 +592,14 @@ class TransportCostModel:
         )
 
     @staticmethod
-    def _transfer_cycles(bytes_: int, bandwidth: float) -> float:
+    def _min_bandwidth(*bandwidths: int | None) -> int | None:
+        finite = tuple(bandwidth for bandwidth in bandwidths if bandwidth is not None)
+        return min(finite) if finite else None
+
+    @staticmethod
+    def _transfer_cycles(bytes_: int, bandwidth: int | None) -> int:
         if bytes_ <= 0:
-            return 0.0
-        if bandwidth == float("inf"):
-            return 1.0
-        return float(max(1, math.ceil(bytes_ / bandwidth)))
+            return 0
+        if bandwidth is None:
+            return 1
+        return max(1, math.ceil(bytes_ / bandwidth))

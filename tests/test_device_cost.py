@@ -41,7 +41,7 @@ def test_device_base_class_is_not_directly_instantiable() -> None:
         Device(
             name="base",
             kind=DeviceKind.SCALAR,
-            throughput={WorkKind.ELEMENTWISE: 1.0},
+            throughput={WorkKind.ELEMENTWISE: 1},
         )
     except TypeError as exc:
         assert "concrete device type" in str(exc)

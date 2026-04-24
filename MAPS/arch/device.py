@@ -3,26 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, auto
 from math import ceil
-from types import MappingProxyType
-from typing import Mapping
 
 
-class DeviceKind(IntEnum):
-    SCALAR = 0
-    VECTOR = 1
-    SYSTOLIC = 2
-    DMA = 3
+class DeviceKind(Enum):
+    SCALAR = auto()
+    VECTOR = auto()
+    SYSTOLIC = auto()
+    DMA = auto()
 
 
-class WorkKind(IntEnum):
-    GEMM = 0
-    ELEMENTWISE = 1
-    REDUCE_SUM = 2
-    REDUCE_MAX = 3
-    EXP = 4
-    DMA = 5
+class WorkKind(Enum):
+    GEMM = auto()
+    ELEMENTWISE = auto()
+    REDUCE_SUM = auto()
+    REDUCE_MAX = auto()
+    EXP = auto()
+    DMA = auto()
 
 
 @dataclass(frozen=True)
@@ -31,8 +29,8 @@ class Device:
 
     name: str
     kind: DeviceKind
-    throughput: Mapping[WorkKind, float]
-    startup_cycles: float = 0.0
+    throughput: dict[WorkKind, int]
+    startup_cycles: int = 0
 
     def __post_init__(self) -> None:
         if type(self) is Device:
@@ -45,12 +43,12 @@ class Device:
             raise ValueError("device throughput must not be empty")
         if any(value <= 0 for value in self.throughput.values()):
             raise ValueError("device throughput values must be > 0")
-        object.__setattr__(self, "throughput", MappingProxyType(dict(self.throughput)))
+        object.__setattr__(self, "throughput", dict(self.throughput))
 
     def supports(self, work_kind: WorkKind) -> bool:
         return work_kind in self.throughput
 
-    def cycles(self, work_kind: WorkKind, amount: float, work: object) -> float:
+    def cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
         if amount < 0:
             raise ValueError("device work amount must be >= 0")
         if not self.supports(work_kind):
@@ -60,7 +58,7 @@ class Device:
             raise ValueError("device cycle estimator must return >= 0")
         return self.startup_cycles + compute_cycles
 
-    def compute_cycles(self, work_kind: WorkKind, amount: float, work: object) -> float:
+    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
         raise NotImplementedError
 
 
@@ -73,8 +71,8 @@ class CoreDevice(Device):
         if self.kind is not DeviceKind.SCALAR:
             raise ValueError("CoreDevice must use DeviceKind.SCALAR")
 
-    def compute_cycles(self, work_kind: WorkKind, amount: float, work: object) -> float:
-        return amount / self.throughput[work_kind]
+    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
+        return ceil(amount / self.throughput[work_kind])
 
 
 @dataclass(frozen=True)
@@ -86,8 +84,8 @@ class DMADevice(Device):
         if self.kind is not DeviceKind.DMA:
             raise ValueError("DMADevice must use DeviceKind.DMA")
 
-    def compute_cycles(self, work_kind: WorkKind, amount: float, work: object) -> float:
-        return amount / self.throughput[work_kind]
+    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
+        return ceil(amount / self.throughput[work_kind])
 
 
 @dataclass(frozen=True)
@@ -104,12 +102,12 @@ class SystolicDevice(Device):
         if self.array_width <= 0 or self.array_height <= 0:
             raise ValueError("systolic array dimensions must be > 0")
 
-    def compute_cycles(self, work_kind: WorkKind, amount: float, work: object) -> float:
+    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
         if work_kind is WorkKind.GEMM:
             return self._gemm_cycles(work)
-        return amount / self.throughput[work_kind]
+        return ceil(amount / self.throughput[work_kind])
 
-    def _gemm_cycles(self, work: object) -> float:
+    def _gemm_cycles(self, work: object) -> int:
         from MAPS.ops.gemm import GemmTileWork
 
         if not isinstance(work, GemmTileWork):

@@ -55,9 +55,9 @@ class _PlacementSensitiveTileWork:
 
 @dataclass(frozen=True)
 class _PlacementSensitiveCostModel:
-    def cost(self, tile_work: _PlacementSensitiveTileWork, tile) -> float:
+    def cost(self, tile_work: _PlacementSensitiveTileWork, tile) -> int:
         del tile_work, tile
-        return 0.0
+        return 0
 
     def placement_cost(
         self,
@@ -65,9 +65,9 @@ class _PlacementSensitiveCostModel:
         node: Node,
         input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
-    ) -> float:
+    ) -> int:
         del node, input_layouts
-        return float(output_layouts[0].submesh.x0)
+        return output_layouts[0].submesh.x0
 
 
 @dataclass(frozen=True)
@@ -344,7 +344,7 @@ def test_stage_internal_costs_ignore_ops_without_placement_cost() -> None:
         placement_options={0: (submesh,)},
     )
 
-    assert costs == {0: {0: 0.0}}
+    assert costs == {0: {0: 0}}
 
 
 def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
