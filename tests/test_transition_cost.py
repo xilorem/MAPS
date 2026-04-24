@@ -29,7 +29,7 @@ def _shared_link_remap_case() -> tuple[Mesh, Tensor, Transition]:
     mesh = Mesh(
         width=4,
         height=1,
-        l2_memory=L2Memory(size=4096),
+        l2_memory=L2Memory(size=4096, bandwidth=1),
         tiles=rectangular_test_tiles(4, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(

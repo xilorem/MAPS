@@ -1,13 +1,15 @@
 from MAPS.arch import Device, EndpointKind, L1Memory, NoC, NoCChannel, NoCEndpoint, NoCLink, NoCNode, Tile
-from MAPS.arch.tile import DEFAULT_TILE_DEVICES
+from MAPS.devices.generic import GENERIC_CORE_DEVICE
+
+DEFAULT_TEST_TILE_DEVICES = (GENERIC_CORE_DEVICE,)
 
 
 def rectangular_test_tiles(
     width: int,
     height: int,
     *,
-    memory: L1Memory = L1Memory(size=1),
-    devices: tuple[Device, ...] = DEFAULT_TILE_DEVICES,
+    memory: L1Memory = L1Memory(size=1, bandwidth=1),
+    devices: tuple[Device, ...] = DEFAULT_TEST_TILE_DEVICES,
 ) -> tuple[Tile, ...]:
     return tuple(
         Tile(

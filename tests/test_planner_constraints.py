@@ -26,7 +26,7 @@ def _make_mesh(width: int, height: int, l1_size: int, l2_memory: L2Memory) -> Me
         height=height,
         l2_memory=l2_memory,
         noc=rectangular_test_noc(width, height),
-        tiles=rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size)),
+        tiles=rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size, bandwidth=1)),
     )
 
 
@@ -75,7 +75,7 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
 
 
 def test_validate_constraints_counts_external_inputs_against_l2() -> None:
-    mesh = _make_mesh(1, 1, l1_size=4096, l2_memory=L2Memory(size=32))
+    mesh = _make_mesh(1, 1, l1_size=4096, l2_memory=L2Memory(size=32, bandwidth=1))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
     layout = _make_layout(submesh)
     tensors = (
@@ -119,7 +119,7 @@ def test_validate_constraints_counts_external_inputs_against_l2() -> None:
 
 
 def test_validate_constraints_does_not_count_local_layer_inputs_against_l2() -> None:
-    mesh = _make_mesh(1, 1, l1_size=64, l2_memory=L2Memory(size=1))
+    mesh = _make_mesh(1, 1, l1_size=64, l2_memory=L2Memory(size=1, bandwidth=1))
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
     layout = _make_layout(submesh)
     tensors = (

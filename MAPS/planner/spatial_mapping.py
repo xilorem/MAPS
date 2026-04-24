@@ -18,6 +18,7 @@ from MAPS.builders.transition_builder import build_transition
 from MAPS.cost_models import placement_cost_estimator
 from MAPS.cost_models.transition_cost import estimate_transition_cost
 from MAPS.cost_models.transport_cost import TransportCostModel
+from MAPS.devices.generic import GENERIC_CORE_DEVICE
 from MAPS.core.layout import TensorSlice
 from MAPS.core.layout import TensorLayout
 from MAPS.core.ownership import tile_tensor_slice
@@ -37,7 +38,8 @@ def _default_tiles(width: int, height: int) -> tuple[Tile, ...]:
             tile_id=y * width + x,
             x=x,
             y=y,
-            memory=L1Memory(size=1),
+            memory=L1Memory(size=1, bandwidth=1),
+            devices=(GENERIC_CORE_DEVICE,),
         )
         for y in range(height)
         for x in range(width)
@@ -993,7 +995,7 @@ def _stage_io_costs(
                 shape[1],
                 noc=_default_communication_noc(shape[0], shape[1]),
                 tiles=_default_tiles(shape[0], shape[1]),
-                l2_memory=L2Memory(size=1),
+                l2_memory=L2Memory(size=1, bandwidth=1),
             )
             submesh = Submesh(mesh=mesh, submesh_id=stage_id, x0=0, y0=0, width=shape[0], height=shape[1])
             model = TransportCostModel(mesh=mesh)
@@ -1229,7 +1231,7 @@ def _edge_shape_mode_costs(
         max(src_shape[1], dst_shape[1]),
         noc=_default_communication_noc(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1])),
         tiles=_default_tiles(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1])),
-        l2_memory=L2Memory(size=1),
+        l2_memory=L2Memory(size=1, bandwidth=1),
     )
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=src_shape[0], height=src_shape[1])
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=0, width=dst_shape[0], height=dst_shape[1])

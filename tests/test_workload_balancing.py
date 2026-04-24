@@ -45,11 +45,11 @@ def _batched_gemm_node(name: str, b: int, m: int, k: int, n: int) -> Node:
 
 def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
     return Mesh(
-        width,
-        height,
-        rectangular_test_noc(width, height),
-        rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size)),
-        l2_memory=L2Memory(size=4096),
+        width=width,
+        height=height,
+        l2_memory=L2Memory(size=4096, bandwidth=1),
+        noc=rectangular_test_noc(width, height),
+        tiles=rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size, bandwidth=1)),
     )
 
 
@@ -181,7 +181,13 @@ def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> No
 
 
 def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:
-    mesh = Mesh(2, 2, rectangular_test_noc(2, 2), rectangular_test_tiles(2, 2), l2_memory=L2Memory(size=4096))
+    mesh = Mesh(
+        width=2,
+        height=2,
+        l2_memory=L2Memory(size=4096, bandwidth=1),
+        noc=rectangular_test_noc(2, 2),
+        tiles=rectangular_test_tiles(2, 2),
+    )
 
     options = _tile_count_options_after_growth(
         current_tile_count=2,
@@ -221,7 +227,13 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
 
 
 def test_submesh_placement_feasibility_requires_global_rectangle_packing() -> None:
-    mesh = Mesh(3, 3, rectangular_test_noc(3, 3), rectangular_test_tiles(3, 3), l2_memory=L2Memory(size=4096))
+    mesh = Mesh(
+        width=3,
+        height=3,
+        l2_memory=L2Memory(size=4096, bandwidth=1),
+        noc=rectangular_test_noc(3, 3),
+        tiles=rectangular_test_tiles(3, 3),
+    )
 
     feasible = _has_feasible_submesh_placement(
         {0: 4, 1: 4, 2: 1},

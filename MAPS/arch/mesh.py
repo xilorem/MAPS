@@ -135,5 +135,6 @@ class Mesh:
                         rectangles.append(self.rectangle(x0, y0, width, height))
         return tuple(rectangles)
 
-    def manhattan_distance(self, a: Tile, b: Tile) -> int:
-        return a.manhattan_distance(b)
+    @classmethod
+    def manhattan_distance(cls, a: Tile, b: Tile) -> int:
+        return abs(a.x - b.x) + abs(a.y - b.y)

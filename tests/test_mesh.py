@@ -8,7 +8,7 @@ def test_mesh_preserves_dimension_accessors() -> None:
     mesh = Mesh(
         width=3,
         height=2,
-        l2_memory=L2Memory(size=8192),
+        l2_memory=L2Memory(size=8192, bandwidth=1),
         noc=rectangular_test_noc(3, 2),
         tiles=rectangular_test_tiles(3, 2),
     )
@@ -24,9 +24,9 @@ def test_mesh_can_use_tile_l1_capacity() -> None:
     mesh = Mesh(
         width=2,
         height=2,
-        l2_memory=L2Memory(size=16384),
+        l2_memory=L2Memory(size=16384, bandwidth=1),
         noc=rectangular_test_noc(2, 2),
-        tiles=rectangular_test_tiles(2, 2, memory=L1Memory(size=4096)),
+        tiles=rectangular_test_tiles(2, 2, memory=L1Memory(size=4096, bandwidth=1)),
     )
 
     assert tuple(tile.memory.size for tile in mesh.tiles) == (4096, 4096, 4096, 4096)
@@ -52,7 +52,7 @@ def test_mesh_rectangle_keeps_row_major_order() -> None:
     mesh = Mesh(
         width=4,
         height=3,
-        l2_memory=L2Memory(size=4096),
+        l2_memory=L2Memory(size=4096, bandwidth=1),
         noc=rectangular_test_noc(4, 3),
         tiles=rectangular_test_tiles(4, 3),
     )
@@ -83,7 +83,7 @@ def test_mesh_accepts_attached_noc() -> None:
         ),
     )
 
-    mesh = Mesh(width=2, height=1, l2_memory=L2Memory(size=4096), noc=noc, tiles=rectangular_test_tiles(2, 1))
+    mesh = Mesh(width=2, height=1, l2_memory=L2Memory(size=4096, bandwidth=1), noc=noc, tiles=rectangular_test_tiles(2, 1))
 
     assert mesh.noc == noc
     assert mesh.noc.endpoint_by_id(0).tile_id == 0
@@ -97,4 +97,4 @@ def test_mesh_rejects_attached_noc_endpoint_tile_id_outside_mesh() -> None:
     )
 
     with pytest.raises(ValueError, match="NoC endpoint tile_id out of bounds"):
-        Mesh(width=2, height=2, l2_memory=L2Memory(size=4096), noc=noc, tiles=rectangular_test_tiles(2, 2))
+        Mesh(width=2, height=2, l2_memory=L2Memory(size=4096, bandwidth=1), noc=noc, tiles=rectangular_test_tiles(2, 2))

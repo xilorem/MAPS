@@ -19,11 +19,11 @@ from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
     return Mesh(
-        width,
-        height,
-        rectangular_test_noc(width, height),
-        rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size)),
-        l2_memory=L2Memory(size=4096),
+        width=width,
+        height=height,
+        l2_memory=L2Memory(size=4096, bandwidth=1),
+        noc=rectangular_test_noc(width, height),
+        tiles=rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size, bandwidth=1)),
     )
 
 

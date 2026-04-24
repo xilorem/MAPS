@@ -1,8 +1,9 @@
-from MAPS.arch import CoreDevice, Device, DeviceKind, SystolicDevice, Tile, WorkKind
+from MAPS.arch import CoreDevice, Device, DeviceKind, L1Memory, SystolicDevice, Tile, WorkKind
 from MAPS.chips import magia_mesh
 from MAPS.chips.magia import MAGIA_REDMULE_DEVICE
 from MAPS.core.layout import TensorRange, TensorSlice
 from MAPS.cost_models.gemm_cost import GemmCostModel
+from MAPS.devices.generic import GENERIC_CORE_DEVICE
 from MAPS.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
 from MAPS.ops.gemm import GemmTileWork
 
@@ -48,8 +49,14 @@ def test_device_base_class_is_not_directly_instantiable() -> None:
         raise AssertionError("expected Device base class construction to fail")
 
 
-def test_default_tile_has_core_gemm_device() -> None:
-    tile = Tile(tile_id=0, x=0, y=0)
+def test_tile_can_use_generic_core_device() -> None:
+    tile = Tile(
+        tile_id=0,
+        x=0,
+        y=0,
+        memory=L1Memory(size=4096, bandwidth=1),
+        devices=(GENERIC_CORE_DEVICE,),
+    )
 
     assert tile.devices[0].name == "core"
     assert tile.devices[0].kind is DeviceKind.SCALAR
@@ -57,14 +64,13 @@ def test_default_tile_has_core_gemm_device() -> None:
     assert tile.devices[0].supports(WorkKind.GEMM)
 
 
-def test_empty_tile_devices_fall_back_to_generic_core() -> None:
-    tile = Tile(tile_id=0, x=0, y=0, devices=())
-
-    assert tile.devices[0].name == "core"
-    assert tile.devices[0].kind is DeviceKind.SCALAR
-    assert isinstance(tile.devices[0], CoreDevice)
-    assert tile.devices[0].supports(WorkKind.GEMM)
-    assert tile.devices[0].supports(WorkKind.EXP)
+def test_tile_rejects_empty_devices() -> None:
+    try:
+        Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=1), devices=())
+    except ValueError as exc:
+        assert "tile devices must not be empty" in str(exc)
+    else:
+        raise AssertionError("expected Tile construction to fail")
 
 
 def test_redmule_is_a_named_systolic_device() -> None:
@@ -80,7 +86,13 @@ def test_redmule_is_a_named_systolic_device() -> None:
 
 
 def test_gemm_cost_uses_systolic_device_when_available() -> None:
-    scalar_tile = Tile(tile_id=0, x=0, y=0)
+    scalar_tile = Tile(
+        tile_id=0,
+        x=0,
+        y=0,
+        memory=L1Memory(size=4096, bandwidth=1),
+        devices=(GENERIC_CORE_DEVICE,),
+    )
     redmule_tile = magia_mesh().tile(0, 0)
     model = GemmCostModel()
     tile_work = _tile_work()

@@ -26,11 +26,11 @@ from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 def _test_mesh(width: int, height: int) -> Mesh:
     return Mesh(
-        width,
-        height,
-        rectangular_test_noc(width, height),
-        rectangular_test_tiles(width, height),
-        l2_memory=L2Memory(size=4096),
+        width=width,
+        height=height,
+        l2_memory=L2Memory(size=4096, bandwidth=1),
+        noc=rectangular_test_noc(width, height),
+        tiles=rectangular_test_tiles(width, height),
     )
 
 
@@ -391,7 +391,7 @@ def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
             ),
         ),
         tiles=rectangular_test_tiles(2, 1),
-        l2_memory=L2Memory(size=4096),
+        l2_memory=L2Memory(size=4096, bandwidth=1),
     )
 
     mapping = map_spatially(
@@ -449,7 +449,7 @@ def test_map_spatially_can_require_l2_access_point_from_noc_endpoint() -> None:
             ),
         ),
         tiles=rectangular_test_tiles(2, 1),
-        l2_memory=L2Memory(size=4096),
+        l2_memory=L2Memory(size=4096, bandwidth=1),
     )
 
     mapping = map_spatially(

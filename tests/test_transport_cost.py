@@ -15,6 +15,7 @@ from MAPS.arch import (
     TrafficPolicy,
 )
 from MAPS.chips.magia import magia_mesh
+from MAPS.devices.generic import GENERIC_CORE_DEVICE
 import pytest
 
 from MAPS.cost_models import TransferKind, TransferLeg, TransportCostModel
@@ -81,7 +82,13 @@ def _uniform_l1_only_mesh(
 
 
 def test_transport_cost_requires_mesh_for_communication() -> None:
-    tile = Tile(tile_id=0, x=0, y=0)
+    tile = Tile(
+        tile_id=0,
+        x=0,
+        y=0,
+        memory=L1Memory(size=4096, bandwidth=1),
+        devices=(GENERIC_CORE_DEVICE,),
+    )
     model = TransportCostModel(mesh=None)
 
     with pytest.raises(ValueError, match="requires a mesh"):
@@ -95,7 +102,7 @@ def test_l1_to_l1_transfer_cost_uses_noc_route_hops_when_available() -> None:
     mesh = Mesh(
         width=3,
         height=1,
-        l2_memory=L2Memory(size=4096),
+        l2_memory=L2Memory(size=4096, bandwidth=1),
         tiles=rectangular_test_tiles(3, 1, memory=L1Memory(size=4096, bandwidth=16)),
         noc=NoC(
             nodes=(
@@ -135,7 +142,7 @@ def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel
     wide_mesh = Mesh(
         width=2,
         height=1,
-        l2_memory=L2Memory(size=4096),
+        l2_memory=L2Memory(size=4096, bandwidth=1),
         tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(
@@ -169,7 +176,7 @@ def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel
     narrow_mesh = Mesh(
         width=2,
         height=1,
-        l2_memory=L2Memory(size=4096),
+        l2_memory=L2Memory(size=4096, bandwidth=1),
         tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=wide_mesh.noc.nodes,

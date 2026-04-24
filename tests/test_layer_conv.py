@@ -1,4 +1,4 @@
-from MAPS.arch import CoreDevice, DeviceKind, Tile, WorkKind
+from MAPS.arch import CoreDevice, DeviceKind, L1Memory, Tile, WorkKind
 from MAPS.chips import magia_mesh
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
@@ -84,6 +84,7 @@ def test_conv_cost_uses_im2col_gemm_amount() -> None:
                 throughput={WorkKind.GEMM: 1.0},
             ),
         ),
+        memory=L1Memory(size=4096, bandwidth=1),
     )
     redmule_tile = submesh.tiles[0]
     model = ConvCostModel()
