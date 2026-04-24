@@ -406,8 +406,8 @@ class TransportCostModel:
         return estimate
 
     def _require_noc(self) -> None:
-        if self.mesh is None or not self.mesh.has_noc:
-            raise ValueError("transport cost model requires a mesh with a NoC")
+        if self.mesh is None:
+            raise ValueError("transport cost model requires a mesh")
 
     def _require_noc_with_l2(self) -> None:
         self._require_noc()
@@ -518,7 +518,7 @@ class TransportCostModel:
         return enabled
 
     def _compute_l1_to_l1_delta_cache_enabled(self) -> bool:
-        if self.account_noc_contention or self.mesh is None or not self.mesh.has_noc:
+        if self.account_noc_contention or self.mesh is None:
             return False
         if self.mesh.noc.routing_policy is not RoutingPolicy.XY:
             return False

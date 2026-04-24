@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from MAPS.arch import EndpointKind, Mesh, NoC, NoCChannel, NoCEndpoint, NoCLink, NoCNode
 from MAPS.cost_models.transport_cost import TransportCostModel
 from MAPS.core.graph import Node
 from MAPS.core.layout import TensorLayout
@@ -40,8 +39,7 @@ class AllReduceCostModel:
 
         output_layout = output_layouts[0]
         output_tensor = node.outputs[0]
-        comm_mesh = _communication_mesh(output_layout.submesh.mesh)
-        model = TransportCostModel(mesh=comm_mesh)
+        model = TransportCostModel(mesh=output_layout.submesh.mesh)
         groups = _logical_collective_groups(output_layout, self.collective_axis)
         group_costs = []
         for group_tiles in groups:
@@ -97,57 +95,4 @@ def _logical_collective_groups(
     return tuple(
         tuple(group_tiles)
         for _, group_tiles in sorted(groups.items())
-    )
-
-
-def _default_noc_node_id(x: int, y: int, width: int) -> int:
-    return y * width + x
-
-
-def _default_communication_noc(width: int, height: int) -> NoC:
-    nodes = tuple(
-        NoCNode(node_id=_default_noc_node_id(x, y, width), x=x, y=y)
-        for y in range(height)
-        for x in range(width)
-    )
-    link_pairs = tuple(
-        (_default_noc_node_id(x, y, width), _default_noc_node_id(x + 1, y, width))
-        for y in range(height)
-        for x in range(width - 1)
-    ) + tuple(
-        (_default_noc_node_id(x, y, width), _default_noc_node_id(x, y + 1, width))
-        for y in range(height - 1)
-        for x in range(width)
-    )
-    links = tuple(
-        NoCLink(
-            link_id=link_id,
-            src_node_id=src_node_id,
-            dst_node_id=dst_node_id,
-            channels=(NoCChannel(channel_id=0, width_bytes=1, hop_latency_cycles=0.5),),
-            bidirectional=True,
-        )
-        for link_id, (src_node_id, dst_node_id) in enumerate(link_pairs)
-    )
-    endpoints = tuple(
-        NoCEndpoint(
-            endpoint_id=tile_id,
-            kind=EndpointKind.L1,
-            node_id=tile_id,
-            tile_id=tile_id,
-        )
-        for tile_id in range(width * height)
-    )
-    return NoC(nodes=nodes, links=links, endpoints=endpoints)
-
-
-def _communication_mesh(mesh: Mesh) -> Mesh:
-    if mesh.has_noc:
-        return mesh
-    return Mesh(
-        width=mesh.width,
-        height=mesh.height,
-        l2_memory=mesh.l2_memory,
-        tiles=mesh.tiles,
-        noc=_default_communication_noc(mesh.width, mesh.height),
     )

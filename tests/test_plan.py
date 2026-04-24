@@ -1,7 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.arch import L1Memory, L2Memory, Mesh
 from MAPS.chips import magia_mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.layer import ExternalInput, LocalInput, TransitionInput
@@ -14,18 +14,16 @@ from MAPS.planner import PlannerConstraints, validate_constraints
 import MAPS.planner.plan as plan_module
 from MAPS.planner.plan import _build_pipeline_from_graph, build_pipeline
 from MAPS.planner.workload_balancing import StagePlan
+from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 
 def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
     return Mesh(
         width,
         height,
+        rectangular_test_noc(width, height),
+        rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size)),
         l2_memory=L2Memory(size=4096),
-        tiles=tuple(
-            Tile(tile_id=(y * width + x), x=x, y=y, memory=L1Memory(size=l1_size))
-            for y in range(height)
-            for x in range(width)
-        ),
     )
 
 

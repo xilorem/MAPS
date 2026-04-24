@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from MAPS.arch import (
     EndpointKind,
+    L1Memory,
     L2Memory,
     Mesh,
     NoC,
@@ -11,6 +12,7 @@ from MAPS.arch import (
     NoCEndpoint,
     NoCLink,
     NoCNode,
+    Tile,
 )
 from MAPS.builders.transition_builder import build_transition
 from MAPS.cost_models import placement_cost_estimator
@@ -25,9 +27,21 @@ from MAPS.core.tensor import Tensor
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import StagePlan
 
-_COMMUNICATION_MESHES_BY_MESH_ID: dict[int, Mesh] = {}
 _TRANSPORT_MODELS_BY_MESH_ID: dict[int, TransportCostModel] = {}
 _DEFAULT_COMMUNICATION_NOCS_BY_SHAPE: dict[tuple[int, int], NoC] = {}
+
+
+def _default_tiles(width: int, height: int) -> tuple[Tile, ...]:
+    return tuple(
+        Tile(
+            tile_id=y * width + x,
+            x=x,
+            y=y,
+            memory=L1Memory(size=1),
+        )
+        for y in range(height)
+        for x in range(width)
+    )
 
 
 def map_spatially(
@@ -431,23 +445,6 @@ def _default_communication_noc(width: int, height: int) -> NoC:
     return noc
 
 
-def _communication_mesh(mesh: Mesh) -> Mesh:
-    if mesh.has_noc:
-        return mesh
-    cached = _COMMUNICATION_MESHES_BY_MESH_ID.get(id(mesh))
-    if cached is not None:
-        return cached
-    comm_mesh = Mesh(
-        width=mesh.width,
-        height=mesh.height,
-        l2_memory=mesh.l2_memory,
-        tiles=mesh.tiles,
-        noc=_default_communication_noc(mesh.width, mesh.height),
-    )
-    _COMMUNICATION_MESHES_BY_MESH_ID[id(mesh)] = comm_mesh
-    return comm_mesh
-
-
 def _transport_model(mesh: Mesh) -> TransportCostModel:
     cached = _TRANSPORT_MODELS_BY_MESH_ID.get(id(mesh))
     if cached is not None:
@@ -455,20 +452,6 @@ def _transport_model(mesh: Mesh) -> TransportCostModel:
     model = TransportCostModel(mesh=mesh)
     _TRANSPORT_MODELS_BY_MESH_ID[id(mesh)] = model
     return model
-
-
-def _communication_submesh(submesh: Submesh) -> Submesh:
-    comm_mesh = _communication_mesh(submesh.mesh)
-    if comm_mesh is submesh.mesh:
-        return submesh
-    return Submesh(
-        mesh=comm_mesh,
-        submesh_id=submesh.submesh_id,
-        x0=submesh.x0,
-        y0=submesh.y0,
-        width=submesh.width,
-        height=submesh.height,
-    )
 
 
 def _filter_l2_access_point_placements(
@@ -525,15 +508,14 @@ def _filter_l2_access_point_placements(
 
 def _l2_access_point_tile_ids(mesh: Mesh) -> set[int]:
     """Return tiles that should count as L2 access points for boundary placement."""
-    comm_mesh = _communication_mesh(mesh)
     l1_endpoints = tuple(
         endpoint
-        for endpoint in comm_mesh.noc.endpoints
+        for endpoint in mesh.noc.endpoints
         if endpoint.kind is EndpointKind.L1 and endpoint.tile_id is not None
     )
     return {
         endpoint.tile_id
-        for l2_endpoint in comm_mesh.noc.endpoints_of_kind(EndpointKind.L2)
+        for l2_endpoint in mesh.noc.endpoints_of_kind(EndpointKind.L2)
         for endpoint in l1_endpoints
         if endpoint.node_id == l2_endpoint.node_id
     }
@@ -1009,8 +991,9 @@ def _stage_io_costs(
             mesh = Mesh(
                 shape[0],
                 shape[1],
-                l2_memory=L2Memory(size=1),
                 noc=_default_communication_noc(shape[0], shape[1]),
+                tiles=_default_tiles(shape[0], shape[1]),
+                l2_memory=L2Memory(size=1),
             )
             submesh = Submesh(mesh=mesh, submesh_id=stage_id, x0=0, y0=0, width=shape[0], height=shape[1])
             model = TransportCostModel(mesh=mesh)
@@ -1074,15 +1057,14 @@ def _stage_io_costs_for_placements(
     for stage_id, stage_nodes in resolved_stage_selection.items():
         io_costs[stage_id] = {}
         for placement_idx, submesh in enumerate(placement_options[stage_id]):
-            comm_submesh = _communication_submesh(submesh)
-            model = _transport_model(comm_submesh.mesh)
+            model = _transport_model(submesh.mesh)
 
             plan = None if stage_plans is None else stage_plans[stage_id]
             read_cost = max(
                 (
                     _stage_l2_read_cost(
                         node.inputs,
-                        _node_input_layouts(node, comm_submesh, plan),
+                        _node_input_layouts(node, submesh, plan),
                         graph_inputs,
                         model,
                     )
@@ -1095,7 +1077,7 @@ def _stage_io_costs_for_placements(
                 (
                     _stage_l2_write_cost(
                         node.outputs,
-                        _node_output_layouts(node, comm_submesh, plan),
+                        _node_output_layouts(node, submesh, plan),
                         graph_outputs,
                         model,
                     )
@@ -1138,14 +1120,13 @@ def _stage_internal_costs_for_placements(
     for stage_id, stage_nodes in resolved_stage_selection.items():
         internal_costs[stage_id] = {}
         for placement_idx, submesh in enumerate(placement_options[stage_id]):
-            comm_submesh = _communication_submesh(submesh)
             plan = None if stage_plans is None else stage_plans[stage_id]
             internal_costs[stage_id][placement_idx] = float(
                 sum(
                     placement_cost_estimator(
                         node=node,
-                        input_layouts=_node_input_layouts(node, comm_submesh, plan),
-                        output_layouts=_node_output_layouts(node, comm_submesh, plan),
+                        input_layouts=_node_input_layouts(node, submesh, plan),
+                        output_layouts=_node_output_layouts(node, submesh, plan),
                     )
                     for node in stage_nodes
                 )
@@ -1246,8 +1227,9 @@ def _edge_shape_mode_costs(
     mesh = Mesh(
         max(src_shape[0], dst_shape[0]),
         max(src_shape[1], dst_shape[1]),
-        l2_memory=L2Memory(size=1),
         noc=_default_communication_noc(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1])),
+        tiles=_default_tiles(max(src_shape[0], dst_shape[0]), max(src_shape[1], dst_shape[1])),
+        l2_memory=L2Memory(size=1),
     )
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=src_shape[0], height=src_shape[1])
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=0, width=dst_shape[0], height=dst_shape[1])
@@ -1320,8 +1302,6 @@ def _edge_placement_mode_costs(
     dst_plan: StagePlan | None = None,
 ) -> dict[str, float]:
     """Estimate L1-remap and L2-roundtrip costs for one concrete placement pair."""
-    src_submesh = _communication_submesh(src_submesh)
-    dst_submesh = _communication_submesh(dst_submesh)
     src_output_layout = _node_output_layout(
         src_node,
         tensor,

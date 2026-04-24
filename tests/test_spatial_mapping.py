@@ -21,6 +21,17 @@ from MAPS.planner.spatial_mapping import (
     print_spatial_mapping_details,
 )
 from MAPS.planner.workload_balancing import StagePlan
+from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
+
+
+def _test_mesh(width: int, height: int) -> Mesh:
+    return Mesh(
+        width,
+        height,
+        rectangular_test_noc(width, height),
+        rectangular_test_tiles(width, height),
+        l2_memory=L2Memory(size=4096),
+    )
 
 
 @dataclass(frozen=True)
@@ -121,7 +132,7 @@ def _assert_valid_mapping(
     assert len(all_tiles) == len(set(all_tiles))
 
 def test_shape_options_for_area_two_on_2x2_mesh() -> None:
-    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(2, 2)
 
     shapes = _shape_options(2, mesh)
 
@@ -129,7 +140,7 @@ def test_shape_options_for_area_two_on_2x2_mesh() -> None:
 
 
 def test_shape_options_raise_when_tile_count_cannot_fit_mesh() -> None:
-    mesh = Mesh(2, 2, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(2, 2)
 
     try:
         _shape_options(3, mesh)
@@ -140,7 +151,7 @@ def test_shape_options_raise_when_tile_count_cannot_fit_mesh() -> None:
 
 
 def test_lossless_pruning_removes_placements_without_global_support() -> None:
-    mesh = Mesh(4, 2, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(4, 2)
     placement_options = {
         0: (
             Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1),
@@ -164,7 +175,7 @@ def test_lossless_pruning_removes_placements_without_global_support() -> None:
 
 
 def test_layout_on_submesh_preserves_logical_shape() -> None:
-    mesh = Mesh(6, 2, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(6, 2)
     planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
     node = _gemm_node("node", 8, 8, 8)
@@ -188,7 +199,7 @@ def test_layout_on_submesh_preserves_logical_shape() -> None:
 
 
 def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
-    mesh = Mesh(6, 2, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(6, 2)
     planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
     node = _gemm_node("node", 8, 8, 8)
@@ -238,7 +249,7 @@ def test_map_spatially_returns_non_overlapping_submeshes_on_4x4_mesh() -> None:
         nodes=(producer, consumer),
         edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
     )
-    mesh = Mesh(4, 4, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(4, 4)
 
     mapping = map_spatially(
         graph,
@@ -277,7 +288,7 @@ def test_map_spatially_prunes_placement_candidates() -> None:
         nodes=(producer, consumer),
         edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
     )
-    mesh = Mesh(4, 4, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(4, 4)
     tile_counts = {0: 4, 1: 4}
 
     mapping = map_spatially(
@@ -309,7 +320,7 @@ def test_map_spatially_uses_stage_internal_placement_costs() -> None:
         tensors=(y,),
         nodes=(node,),
     )
-    mesh = Mesh(3, 2, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(3, 2)
 
     mapping = map_spatially(
         graph,
@@ -325,7 +336,7 @@ def test_map_spatially_uses_stage_internal_placement_costs() -> None:
 def test_stage_internal_costs_ignore_ops_without_placement_cost() -> None:
     node = _gemm_node("gemm", 8, 8, 8)
     graph = Graph(name="g", nodes=(node,))
-    mesh = Mesh(2, 1, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(2, 1)
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
 
     costs = _stage_internal_costs_for_placements(
@@ -359,7 +370,6 @@ def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
     mesh = Mesh(
         2,
         1,
-        l2_memory=L2Memory(size=4096),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -380,6 +390,8 @@ def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
                 NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
             ),
         ),
+        tiles=rectangular_test_tiles(2, 1),
+        l2_memory=L2Memory(size=4096),
     )
 
     mapping = map_spatially(
@@ -416,7 +428,6 @@ def test_map_spatially_can_require_l2_access_point_from_noc_endpoint() -> None:
     mesh = Mesh(
         2,
         1,
-        l2_memory=L2Memory(size=4096),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -437,6 +448,8 @@ def test_map_spatially_can_require_l2_access_point_from_noc_endpoint() -> None:
                 NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
             ),
         ),
+        tiles=rectangular_test_tiles(2, 1),
+        l2_memory=L2Memory(size=4096),
     )
 
     mapping = map_spatially(
@@ -499,7 +512,7 @@ def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
             Edge(tensor=node3_input, src=node2, dst=node3),
         ),
     )
-    mesh = Mesh(6, 6, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(6, 6)
     tile_counts = {0: 3, 1: 4, 2: 5, 3: 6}
 
     mapping = map_spatially(
@@ -580,7 +593,7 @@ def test_stage_io_costs_skip_initializer_reads() -> None:
         outputs=(out,),
         initializers=(w,),
     )
-    mesh = Mesh(2, 1, l2_memory=L2Memory(size=4096))
+    mesh = _test_mesh(2, 1)
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
 
     costs = _stage_io_costs_for_placements(

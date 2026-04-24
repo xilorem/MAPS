@@ -8,7 +8,6 @@ from MAPS.arch import (
     NoCEndpoint,
     NoCLink,
     NoCNode,
-    Tile,
 )
 from MAPS.core import (
     LayoutAxis,
@@ -23,6 +22,7 @@ from MAPS.core import (
     TransitionMode,
 )
 from MAPS.cost_models import TransportCostModel, estimate_transition_cost
+from tests.noc_utils import rectangular_test_tiles
 
 
 def _shared_link_remap_case() -> tuple[Mesh, Tensor, Transition]:
@@ -30,12 +30,7 @@ def _shared_link_remap_case() -> tuple[Mesh, Tensor, Transition]:
         width=4,
         height=1,
         l2_memory=L2Memory(size=4096),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-            Tile(tile_id=2, x=2, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-            Tile(tile_id=3, x=3, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        ),
+        tiles=rectangular_test_tiles(4, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),

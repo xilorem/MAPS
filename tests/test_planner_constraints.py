@@ -1,4 +1,4 @@
-from MAPS.arch import L1Memory, L2Memory, Mesh, Tile
+from MAPS.arch import L1Memory, L2Memory, Mesh
 from MAPS.chips import magia_mesh
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.layer import Layer, LayerInput, LayerOutput
@@ -9,6 +9,7 @@ from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.gemm import GemmLayerOp
 from MAPS.planner import PlannerConstraints, validate_constraints
+from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 
 def _make_layout(submesh: Submesh) -> TensorLayout:
@@ -24,11 +25,8 @@ def _make_mesh(width: int, height: int, l1_size: int, l2_memory: L2Memory) -> Me
         width=width,
         height=height,
         l2_memory=l2_memory,
-        tiles=tuple(
-            Tile(tile_id=(y * width + x), x=x, y=y, memory=L1Memory(size=l1_size))
-            for y in range(height)
-            for x in range(width)
-        ),
+        noc=rectangular_test_noc(width, height),
+        tiles=rectangular_test_tiles(width, height, memory=L1Memory(size=l1_size)),
     )
 
 

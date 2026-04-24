@@ -18,6 +18,7 @@ from MAPS.chips.magia import magia_mesh
 import pytest
 
 from MAPS.cost_models import TransferKind, TransferLeg, TransportCostModel
+from tests.noc_utils import rectangular_test_tiles
 
 
 def _uniform_l1_only_mesh(
@@ -32,16 +33,7 @@ def _uniform_l1_only_mesh(
         width=width,
         height=height,
         l2_memory=L2Memory(size=4096, bandwidth=memory_bandwidth),
-        tiles=tuple(
-            Tile(
-                tile_id=y * width + x,
-                x=x,
-                y=y,
-                memory=L1Memory(size=4096, bandwidth=memory_bandwidth),
-            )
-            for y in range(height)
-            for x in range(width)
-        ),
+        tiles=rectangular_test_tiles(width, height, memory=L1Memory(size=4096, bandwidth=memory_bandwidth)),
         noc=NoC(
             nodes=tuple(
                 NoCNode(node_id=y * width + x, x=x, y=y)
@@ -88,15 +80,14 @@ def _uniform_l1_only_mesh(
     )
 
 
-def test_transport_cost_requires_noc_for_communication() -> None:
-    mesh = Mesh(width=1, height=1, l2_memory=L2Memory(size=4096))
-    tile = mesh.tile(0, 0)
-    model = TransportCostModel(mesh=mesh)
+def test_transport_cost_requires_mesh_for_communication() -> None:
+    tile = Tile(tile_id=0, x=0, y=0)
+    model = TransportCostModel(mesh=None)
 
-    with pytest.raises(ValueError, match="requires a mesh with a NoC"):
+    with pytest.raises(ValueError, match="requires a mesh"):
         model.l1_to_l1(tile, tile, 64)
 
-    with pytest.raises(ValueError, match="requires a mesh with a NoC"):
+    with pytest.raises(ValueError, match="requires a mesh"):
         model.l1_to_l2(tile, 64)
 
 
@@ -105,11 +96,7 @@ def test_l1_to_l1_transfer_cost_uses_noc_route_hops_when_available() -> None:
         width=3,
         height=1,
         l2_memory=L2Memory(size=4096),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=16)),
-            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=16)),
-            Tile(tile_id=2, x=2, y=0, memory=L1Memory(size=4096, bandwidth=16)),
-        ),
+        tiles=rectangular_test_tiles(3, 1, memory=L1Memory(size=4096, bandwidth=16)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -149,10 +136,7 @@ def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        ),
+        tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -186,7 +170,7 @@ def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096),
-        tiles=wide_mesh.tiles,
+        tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=wide_mesh.noc.nodes,
             links=wide_mesh.noc.links,
@@ -219,11 +203,7 @@ def test_l2_transfer_cost_uses_noc_route_to_nearest_l2_endpoint_when_available()
         width=3,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=16),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=16)),
-            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=16)),
-            Tile(tile_id=2, x=2, y=0, memory=L1Memory(size=4096, bandwidth=16)),
-        ),
+        tiles=rectangular_test_tiles(3, 1, memory=L1Memory(size=4096, bandwidth=16)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -266,10 +246,7 @@ def test_l2_transfer_cost_respects_directional_traffic_policy_channel_selection(
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        ),
+        tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -307,7 +284,7 @@ def test_l2_transfer_cost_respects_directional_traffic_policy_channel_selection(
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=write_wide_read_narrow_mesh.tiles,
+        tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=write_wide_read_narrow_mesh.noc.nodes,
             links=write_wide_read_narrow_mesh.noc.links,
@@ -374,9 +351,7 @@ def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops(
         width=1,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=16),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=16)),
-        ),
+        tiles=rectangular_test_tiles(1, 1, memory=L1Memory(size=4096, bandwidth=16)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -413,9 +388,7 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
         width=1,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        ),
+        tiles=rectangular_test_tiles(1, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -479,9 +452,7 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
         width=1,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        ),
+        tiles=rectangular_test_tiles(1, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(NoCNode(node_id=0, x=0, y=0),),
             links=(),
@@ -611,10 +582,7 @@ def test_l1_to_l2_transfer_cost_respects_write_rsp_traffic_policy_channel_select
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        ),
+        tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -649,7 +617,7 @@ def test_l1_to_l2_transfer_cost_respects_write_rsp_traffic_policy_channel_select
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=ack_wide_mesh.tiles,
+        tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=ack_wide_mesh.noc.nodes,
             links=ack_wide_mesh.noc.links,
@@ -677,10 +645,7 @@ def test_transport_cost_rounds_nonzero_flow_transfer_time_up_to_one_cycle() -> N
         width=2,
         height=1,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=(
-            Tile(tile_id=0, x=0, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-            Tile(tile_id=1, x=1, y=0, memory=L1Memory(size=4096, bandwidth=64)),
-        ),
+        tiles=rectangular_test_tiles(2, 1, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=(
                 NoCNode(node_id=0, x=0, y=0),
@@ -745,16 +710,7 @@ def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
         width=3,
         height=2,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=tuple(
-            Tile(
-                tile_id=y * 3 + x,
-                x=x,
-                y=y,
-                memory=L1Memory(size=4096, bandwidth=64),
-            )
-            for y in range(2)
-            for x in range(3)
-        ),
+        tiles=rectangular_test_tiles(3, 2, memory=L1Memory(size=4096, bandwidth=64)),
         noc=NoC(
             nodes=tuple(
                 NoCNode(node_id=y * 3 + x, x=x, y=y)

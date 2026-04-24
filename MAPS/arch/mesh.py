@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .memory import L2Memory
 from .noc import NoC
@@ -16,37 +16,34 @@ class Mesh:
     width: int
     height: int
     l2_memory: L2Memory
-    noc: NoC | None
-    _tiles: tuple[Tile, ...] = field(init=False, repr=False)
-    
+    noc: NoC
+    tiles: tuple[Tile, ...]
+
     def __init__(
         self,
         width: int,
-        height: int,      
-        l2_memory: L2Memory = L2Memory(size=1),
-        tiles: tuple[Tile, ...] | None = None,
-        noc: NoC | None = None,
+        height: int,
+        noc: NoC,
+        tiles: tuple[Tile, ...],
+        l2_memory: L2Memory,
     ) -> None:
+
         if width <= 0:
             raise ValueError("width must be > 0")
         if height <= 0:
             raise ValueError("height must be > 0")
 
+        # check for valid tiles and noc descriptions
+        self._validate_tiles(width, height, tiles)
+        self._validate_noc(width, height, noc)
+
+        # set attributes to the mesh (need obj.__setattr__ 
+        # in order to bypass frozen = True)
         object.__setattr__(self, "width", width)
         object.__setattr__(self, "height", height)
         object.__setattr__(self, "l2_memory", l2_memory)
-        if tiles is None:
-            tiles = tuple(
-                Tile(tile_id=(y * width + x), x=x, y=y)
-                for y in range(height)
-                for x in range(width)
-            )
-        else:
-            self._validate_tiles(width, height, tiles)
-
-        self._validate_noc(width, height, noc)
         object.__setattr__(self, "noc", noc)
-        object.__setattr__(self, "_tiles", tiles)
+        object.__setattr__(self, "tiles", tiles)
 
     @staticmethod
     def _validate_tiles(width: int, height: int, tiles: tuple[Tile, ...]) -> None:
@@ -62,24 +59,13 @@ class Mesh:
                 raise ValueError("tile coordinates must match row-major tile placement")
 
     @staticmethod
-    def _validate_noc(width: int, height: int, noc: NoC | None) -> None:
-        if noc is None:
-            return
-
+    def _validate_noc(width: int, height: int, noc: NoC) -> None:
         num_tiles = width * height
         for endpoint in noc.endpoints:
             if endpoint.tile_id is None:
                 continue
             if not (0 <= endpoint.tile_id < num_tiles):
                 raise ValueError(f"NoC endpoint tile_id out of bounds: {endpoint.tile_id}")
-
-    @property
-    def x_size(self) -> int:
-        return self.width
-
-    @property
-    def y_size(self) -> int:
-        return self.height
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -89,14 +75,6 @@ class Mesh:
     def num_tiles(self) -> int:
         return self.width * self.height
 
-    @property
-    def tiles(self) -> tuple[Tile, ...]:
-        return self._tiles
-
-    @property
-    def has_noc(self) -> bool:
-        return self.noc is not None
-
     def contains_coord(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
 
@@ -104,28 +82,34 @@ class Mesh:
         return 0 <= tile_id < self.num_tiles
 
     def tile_id(self, x: int, y: int) -> int:
+        """Returns id value of a tile given xy coordinates"""
+
         if not self.contains_coord(x, y):
             raise ValueError(f"coordinates out of bounds: ({x}, {y})")
         return y * self.width + x
 
     def coords(self, tile_id: int) -> tuple[int, int]:
+        """Returns xy coordinates of a tile given it's id value"""
+
         if not self.contains_tile_id(tile_id):
             raise ValueError(f"tile_id out of bounds: {tile_id}")
         return tile_id % self.width, tile_id // self.width
 
     def tile(self, x: int, y: int) -> Tile:
+        """Returns tile object give it's xy coordinates"""
+
         return self.tile_by_id(self.tile_id(x, y))
 
     def tile_by_id(self, tile_id: int) -> Tile:
         if not self.contains_tile_id(tile_id):
             raise ValueError(f"tile_id out of bounds: {tile_id}")
-        return self._tiles[tile_id]
+        return self.tiles[tile_id]
 
     def row(self, y: int) -> tuple[Tile, ...]:
         if y < 0 or y >= self.height:
             raise ValueError(f"row out of bounds: {y}")
         start = y * self.width
-        return self._tiles[start:start + self.width]
+        return self.tiles[start:start + self.width]
 
     def column(self, x: int) -> tuple[Tile, ...]:
         if x < 0 or x >= self.width:
