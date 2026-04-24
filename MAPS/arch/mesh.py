@@ -19,31 +19,17 @@ class Mesh:
     noc: NoC
     tiles: tuple[Tile, ...]
 
-    def __init__(
-        self,
-        width: int,
-        height: int,
-        noc: NoC,
-        tiles: tuple[Tile, ...],
-        l2_memory: L2Memory,
-    ) -> None:
-
-        if width <= 0:
+    def __post_init__(self) -> None:
+        # check for invalid sizes
+        if self.width <= 0:
             raise ValueError("width must be > 0")
-        if height <= 0:
+        if self.height <= 0:
             raise ValueError("height must be > 0")
 
         # check for valid tiles and noc descriptions
-        self._validate_tiles(width, height, tiles)
-        self._validate_noc(width, height, noc)
+        self._validate_tiles(self.width, self.height, self.tiles)
+        self._validate_noc(self.width, self.height, self.noc)
 
-        # set attributes to the mesh (need obj.__setattr__ 
-        # in order to bypass frozen = True)
-        object.__setattr__(self, "width", width)
-        object.__setattr__(self, "height", height)
-        object.__setattr__(self, "l2_memory", l2_memory)
-        object.__setattr__(self, "noc", noc)
-        object.__setattr__(self, "tiles", tiles)
 
     @staticmethod
     def _validate_tiles(width: int, height: int, tiles: tuple[Tile, ...]) -> None:
