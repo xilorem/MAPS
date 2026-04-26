@@ -29,4 +29,4 @@ class ReductionCostModel:
         candidates = preferred or devices
         if not candidates:
             raise ValueError(f"tile {tile.tile_id} has no device for {self.work_kind.name} work")
-        return min(device.cycles(self.work_kind, amount, tile_work) for device in candidates)
+        return min(device.cycles(self.work_kind, amount) for device in candidates)

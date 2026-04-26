@@ -48,18 +48,15 @@ class Device:
     def supports(self, work_kind: WorkKind) -> bool:
         return work_kind in self.throughput
 
-    def cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
+    def cycles(self, work_kind: WorkKind, amount: int) -> int:
         if amount < 0:
             raise ValueError("device work amount must be >= 0")
         if not self.supports(work_kind):
             raise ValueError(f"device {self.name} does not support {work_kind.name} work")
-        compute_cycles = self.compute_cycles(work_kind, amount, work)
+        compute_cycles = ceil(amount / self.throughput[work_kind])
         if compute_cycles < 0:
             raise ValueError("device cycle estimator must return >= 0")
         return self.startup_cycles + compute_cycles
-
-    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
-        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -71,9 +68,6 @@ class CoreDevice(Device):
         if self.kind is not DeviceKind.SCALAR:
             raise ValueError("CoreDevice must use DeviceKind.SCALAR")
 
-    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
-        return ceil(amount / self.throughput[work_kind])
-
 
 @dataclass(frozen=True)
 class DMADevice(Device):
@@ -83,9 +77,6 @@ class DMADevice(Device):
         super().__post_init__()
         if self.kind is not DeviceKind.DMA:
             raise ValueError("DMADevice must use DeviceKind.DMA")
-
-    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
-        return ceil(amount / self.throughput[work_kind])
 
 
 @dataclass(frozen=True)
@@ -101,32 +92,3 @@ class SystolicDevice(Device):
             raise ValueError("SystolicDevice must use DeviceKind.SYSTOLIC")
         if self.array_width <= 0 or self.array_height <= 0:
             raise ValueError("systolic array dimensions must be > 0")
-
-    def compute_cycles(self, work_kind: WorkKind, amount: int, work: object) -> int:
-        if work_kind is WorkKind.GEMM:
-            return self._gemm_cycles(work)
-        return ceil(amount / self.throughput[work_kind])
-
-    def _gemm_cycles(self, work: object) -> int:
-        from MAPS.ops.gemm import GemmTileWork
-
-        if not isinstance(work, GemmTileWork):
-            raise ValueError("systolic GEMM estimation requires GemmTileWork")
-
-        batch_volume = 1
-        for dim in work.output_slice.dims[:-2]:
-            batch_volume *= dim.length
-
-        m_size = work.output_slice.dims[-2].length
-        n_size = work.output_slice.dims[-1].length
-        k_size = work.x_slice.dims[-1].length
-        m_blocks = ceil(m_size / self.array_height)
-        n_blocks = ceil(n_size / self.array_width)
-        fill_and_drain_cycles = self.array_height + self.array_width - 2
-
-        return (
-            batch_volume
-            * m_blocks
-            * n_blocks
-            * (k_size + fill_and_drain_cycles)
-        )

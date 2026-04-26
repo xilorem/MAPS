@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
 from MAPS.core.layout import TensorRange, TensorSlice
+from MAPS.cost_models.gemm_cost import _gemm_cycles_on_device
 from MAPS.ops.conv import ConvTileWork
 from MAPS.ops.gemm import GemmTileWork
 
@@ -18,7 +19,6 @@ class ConvCostModel:
 
     def cost(self, tile_work: ConvTileWork, tile: Tile) -> int:
         gemm_work = _conv_tile_work_as_im2col_gemm(tile_work)
-        amount = _im2col_gemm_num_ops(gemm_work)
         devices = tuple(device for device in tile.devices if device.supports(WorkKind.GEMM))
         preferred = tuple(
             device for device in devices if device.kind is self.preferred_device_kind
@@ -26,16 +26,7 @@ class ConvCostModel:
         candidates = preferred or devices
         if not candidates:
             raise ValueError(f"tile {tile.tile_id} has no device for Conv work")
-        return min(device.cycles(WorkKind.GEMM, amount, gemm_work) for device in candidates)
-
-
-def _slice_num_elements(tensor_slice: TensorSlice) -> int:
-    total = 1
-    for dim in tensor_slice.dims:
-        total *= dim.length
-    return total
-
-
+        return min(_gemm_cycles_on_device(device, gemm_work) for device in candidates)
 def _conv_tile_work_as_im2col_gemm(tile_work: ConvTileWork) -> GemmTileWork:
     output_slice = tile_work.output_slice
     batch = output_slice.dims[0].length
@@ -72,9 +63,3 @@ def _conv_tile_work_as_im2col_gemm(tile_work: ConvTileWork) -> GemmTileWork:
         ),
         y_slice=None,
     )
-
-
-def _im2col_gemm_num_ops(tile_work: GemmTileWork) -> int:
-    output_elements = _slice_num_elements(tile_work.output_slice)
-    k_depth = tile_work.x_slice.dims[-1].length
-    return output_elements * k_depth
