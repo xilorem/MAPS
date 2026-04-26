@@ -10,7 +10,7 @@ from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import TensorSliceRef, default_sharded_layout
+from MAPS.ops.base import TensorSliceRef, default_sharded_layout, tensor_slice_num_elements
 
 if TYPE_CHECKING:
     from MAPS.core.layer import LayerInput, LayerOutput
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class ElementwiseTileWork:
     """Concrete elementwise slices associated with one tile."""
 
+    work_kind: WorkKind
     output: Tensor
     output_slice: TensorSlice
     inputs: tuple[Tensor, ...]
@@ -42,6 +43,9 @@ class ElementwiseTileWork:
 
     def fits_l1(self, tile: Tile) -> bool:
         return self.l1_bytes <= tile.memory.size
+
+    def operation_count(self) -> int:
+        return tensor_slice_num_elements(self.output_slice)
 
 
 @dataclass(frozen=True)
@@ -87,6 +91,7 @@ class UnaryElementwiseOp:
         del input_layouts
         output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
         return ElementwiseTileWork(
+            work_kind=self.work_kind,
             output=self.output,
             output_slice=output_slice,
             inputs=(self.x,),
@@ -166,6 +171,7 @@ class BinaryElementwiseOp:
         del input_layouts
         output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
         return ElementwiseTileWork(
+            work_kind=self.work_kind,
             output=self.output,
             output_slice=output_slice,
             inputs=(self.lhs, self.rhs),

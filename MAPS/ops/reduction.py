@@ -10,7 +10,7 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSli
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import TensorSliceRef, default_sharded_layout
+from MAPS.ops.base import TensorSliceRef, default_sharded_layout, tensor_slice_num_elements
 
 if TYPE_CHECKING:
     from MAPS.core.layer import LayerInput, LayerOutput
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class ReductionTileWork:
     """Concrete reduction slices associated with one tile."""
 
+    work_kind: WorkKind
     x: Tensor
     output: Tensor
     input_slice: TensorSlice
@@ -39,6 +40,9 @@ class ReductionTileWork:
 
     def fits_l1(self, tile: Tile) -> bool:
         return self.l1_bytes <= tile.memory.size
+
+    def operation_count(self) -> int:
+        return tensor_slice_num_elements(self.input_slice)
 
 
 @dataclass(frozen=True)
@@ -99,6 +103,7 @@ class ReduceOp:
         tile: Tile,
     ) -> ReductionTileWork:
         return ReductionTileWork(
+            work_kind=self.work_kind,
             x=self.x,
             output=self.output,
             input_slice=tile_tensor_slice(self.x, input_layouts[0], tile),

@@ -41,6 +41,8 @@ class Device:
             raise ValueError("device startup_cycles must be >= 0")
         if not self.throughput:
             raise ValueError("device throughput must not be empty")
+
+        # check for invalid throughput value
         if any(value <= 0 for value in self.throughput.values()):
             raise ValueError("device throughput values must be > 0")
         object.__setattr__(self, "throughput", dict(self.throughput))
@@ -48,7 +50,10 @@ class Device:
     def supports(self, work_kind: WorkKind) -> bool:
         return work_kind in self.throughput
 
-    def cycles(self, work_kind: WorkKind, amount: int) -> int:
+    def cycles(self, work: object) -> int:
+        raise NotImplementedError
+
+    def _throughput_cycles(self, work_kind: WorkKind, amount: int) -> int:
         if amount < 0:
             raise ValueError("device work amount must be >= 0")
         if not self.supports(work_kind):
@@ -68,6 +73,11 @@ class CoreDevice(Device):
         if self.kind is not DeviceKind.SCALAR:
             raise ValueError("CoreDevice must use DeviceKind.SCALAR")
 
+    def cycles(self, work: object) -> int:
+        work_kind = work.work_kind
+        amount = work.operation_count()
+        return self._throughput_cycles(work_kind, amount)
+
 
 @dataclass(frozen=True)
 class DMADevice(Device):
@@ -77,6 +87,11 @@ class DMADevice(Device):
         super().__post_init__()
         if self.kind is not DeviceKind.DMA:
             raise ValueError("DMADevice must use DeviceKind.DMA")
+
+    def cycles(self, work: object) -> int:
+        work_kind = work.work_kind
+        amount = work.operation_count()
+        return self._throughput_cycles(work_kind, amount)
 
 
 @dataclass(frozen=True)
@@ -92,3 +107,11 @@ class SystolicDevice(Device):
             raise ValueError("SystolicDevice must use DeviceKind.SYSTOLIC")
         if self.array_width <= 0 or self.array_height <= 0:
             raise ValueError("systolic array dimensions must be > 0")
+
+    def cycles(self, work: object) -> int:
+        batch_volume, m_size, n_size, k_size = work.dimensions()
+        m_blocks = ceil(m_size / self.array_height)
+        n_blocks = ceil(n_size / self.array_width)
+        fill_and_drain_cycles = self.array_height + self.array_width - 2
+        compute_cycles = batch_volume * m_blocks * n_blocks * (k_size + fill_and_drain_cycles)
+        return self.startup_cycles + compute_cycles

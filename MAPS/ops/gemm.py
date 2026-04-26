@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from MAPS.arch import Tile
+from MAPS.arch import Tile, WorkKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import TensorSliceRef
+from MAPS.ops.base import TensorSliceRef, tensor_slice_num_elements
 
 if TYPE_CHECKING:
     from MAPS.core.layer import LayerInput, LayerOutput
@@ -28,6 +28,10 @@ class GemmTileWork:
     w: Tensor | None = None
     y: Tensor | None = None
     output: Tensor | None = None
+
+    @property
+    def work_kind(self) -> WorkKind:
+        return WorkKind.GEMM
 
     @property
     def input_slices(self) -> tuple[TensorSliceRef, ...]:
@@ -52,6 +56,18 @@ class GemmTileWork:
 
     def fits_l1(self, tile: Tile) -> bool:
         return self.l1_bytes <= tile.memory.size
+
+    def operation_count(self) -> int:
+        return tensor_slice_num_elements(self.output_slice) * self.x_slice.dims[-1].length
+
+    def dimensions(self) -> tuple[int, int, int, int]:
+        batch_volume = 1
+        for dim in self.output_slice.dims[:-2]:
+            batch_volume *= dim.length
+        m_size = self.output_slice.dims[-2].length
+        n_size = self.output_slice.dims[-1].length
+        k_size = self.x_slice.dims[-1].length
+        return batch_volume, m_size, n_size, k_size
 
 
 def _full_range(dim: int) -> TensorRange:

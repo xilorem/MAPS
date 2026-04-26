@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
 from MAPS.core.layout import TensorRange, TensorSlice
-from MAPS.cost_models.gemm_cost import _gemm_cycles_on_device
 from MAPS.ops.conv import ConvTileWork
 from MAPS.ops.gemm import GemmTileWork
 
@@ -26,7 +25,9 @@ class ConvCostModel:
         candidates = preferred or devices
         if not candidates:
             raise ValueError(f"tile {tile.tile_id} has no device for Conv work")
-        return min(_gemm_cycles_on_device(device, gemm_work) for device in candidates)
+        return min(device.cycles(gemm_work) for device in candidates)
+
+
 def _conv_tile_work_as_im2col_gemm(tile_work: ConvTileWork) -> GemmTileWork:
     output_slice = tile_work.output_slice
     batch = output_slice.dims[0].length
