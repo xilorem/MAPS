@@ -14,8 +14,8 @@ from MAPS.arch import (
     TrafficKind,
     TrafficPolicy,
 )
-from MAPS.chips.magia import magia_mesh
-from MAPS.devices.generic import GENERIC_CORE_DEVICE
+from MAPS.hw.chips.magia import magia_mesh
+from MAPS.hw.devices.generic import GENERIC_CORE_DEVICE
 import pytest
 
 from MAPS.transitions import TransferKind, TransferLeg, TransportCostModel

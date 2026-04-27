@@ -1,10 +1,10 @@
 from MAPS.arch import CoreDevice, Device, DeviceKind, L1Memory, SystolicDevice, Tile, WorkKind
-from MAPS.chips import magia_mesh
-from MAPS.chips.magia import MAGIA_REDMULE_DEVICE
+from MAPS.hw.chips import magia_mesh
+from MAPS.hw.chips.magia import MAGIA_REDMULE_DEVICE
 from MAPS.core.layout import TensorRange, TensorSlice
 from MAPS.ops.costs.gemm_cost import GemmCostModel
-from MAPS.devices.generic import GENERIC_CORE_DEVICE
-from MAPS.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
+from MAPS.hw.devices.generic import GENERIC_CORE_DEVICE
+from MAPS.hw.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
 from MAPS.ops.defs.gemm import GemmTileWork
 
 

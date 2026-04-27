@@ -6,13 +6,13 @@ from pathlib import Path
 
 from MAPS.arch import Mesh
 from MAPS.core.graph import Graph, Node
-from MAPS.core.layer import Layer, LayerInput, LayerOutput
-from MAPS.core.pipeline import Pipeline
-from MAPS.core.stage import Stage
-from MAPS.core.transition import Transition
+from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
+from MAPS.pipeline.pipeline import Pipeline
+from MAPS.pipeline.stage import Stage
 from MAPS.importers.onnx.importer import import_onnx_graph
 from MAPS.planner.select_stage import select_stages
 from MAPS.transitions import build_transition
+from MAPS.transitions.model import Transition
 from MAPS.planner.spatial_mapping import map_spatially, place_stage_plans
 from MAPS.planner.workload_balancing import StagePlan, balance_workload
 

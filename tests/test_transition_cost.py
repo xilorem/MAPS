@@ -9,18 +9,8 @@ from MAPS.arch import (
     NoCLink,
     NoCNode,
 )
-from MAPS.core import (
-    LayoutAxis,
-    LayoutAxisMode,
-    Submesh,
-    Tensor,
-    TensorLayout,
-    TensorRange,
-    TensorSlice,
-    Transition,
-    TransitionFragment,
-    TransitionMode,
-)
+from MAPS.core import LayoutAxis, LayoutAxisMode, Submesh, Tensor, TensorLayout, TensorRange, TensorSlice
+from MAPS.transitions.model import Transition, TransitionFragment, TransitionMode
 from MAPS.transitions import TransportCostModel, estimate_transition_cost
 from tests.noc_utils import rectangular_test_tiles
 

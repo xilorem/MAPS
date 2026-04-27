@@ -1,8 +1,8 @@
 from MAPS.core.graph import Node, OpKind
-from MAPS.core.layer import Layer
+from MAPS.pipeline.layer import Layer
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
-from MAPS.chips import magia_mesh
-from MAPS.core.stage import Stage
+from MAPS.hw.chips import magia_mesh
+from MAPS.pipeline.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.defs.gemm import GemmPayload

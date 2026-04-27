@@ -1,5 +1,5 @@
 from MAPS.arch import EndpointKind, RoutingPolicy, TrafficKind
-from MAPS.chips.magia import (
+from MAPS.hw.chips.magia import (
     MAGIA_NOC_CHANNEL_WIDTH_BYTES,
     MAGIA_NOC_HOP_LATENCY_CYCLES,
     MAGIA_NOC_WIDE_CHANNEL_WIDTH_BYTES,

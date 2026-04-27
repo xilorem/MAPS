@@ -1,11 +1,13 @@
+"""Pipeline IR for one scheduled execution plan."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from MAPS.arch import Mesh
-from .stage import Stage
-from .tensor import Tensor
-from .transition import Transition
+from MAPS.core.tensor import Tensor
+from MAPS.pipeline.stage import Stage
+from MAPS.transitions.model import Transition
 
 
 @dataclass(frozen=True)

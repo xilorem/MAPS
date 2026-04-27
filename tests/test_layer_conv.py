@@ -1,5 +1,5 @@
 from MAPS.arch import CoreDevice, DeviceKind, L1Memory, Tile, WorkKind
-from MAPS.chips import magia_mesh
+from MAPS.hw.chips import magia_mesh
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor

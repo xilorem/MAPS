@@ -17,8 +17,8 @@ from MAPS.arch import (
     TrafficKind,
     TrafficPolicy,
 )
-from MAPS.devices import IDMA_DEVICE, SCALAR_CORE_DEVICE
-from MAPS.devices.redmule import REDMULE_DEVICE
+from MAPS.hw.devices import IDMA_DEVICE, SCALAR_CORE_DEVICE
+from MAPS.hw.devices.redmule import REDMULE_DEVICE
 
 MAGIA_MESH_WIDTH = 8
 MAGIA_MESH_HEIGHT = 8

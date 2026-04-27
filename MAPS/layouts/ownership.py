@@ -1,7 +1,7 @@
 """Helpers to turn abstract layouts into concrete per-tile tensor slices."""
 
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
 from MAPS.arch import Tile
+from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
 from MAPS.core.tensor import Tensor
 
 

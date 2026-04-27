@@ -1,5 +1,5 @@
 from MAPS.arch import Device, EndpointKind, L1Memory, NoC, NoCChannel, NoCEndpoint, NoCLink, NoCNode, Tile
-from MAPS.devices.generic import GENERIC_CORE_DEVICE
+from MAPS.hw.devices.generic import GENERIC_CORE_DEVICE
 
 DEFAULT_TEST_TILE_DEVICES = (GENERIC_CORE_DEVICE,)
 

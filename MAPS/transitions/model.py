@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
 
-from .layout import TensorLayout, TensorSlice
-from .tensor import Tensor
+from MAPS.core.layout import TensorLayout, TensorSlice
+from MAPS.core.tensor import Tensor
 
 
 class TransitionMode(IntEnum):

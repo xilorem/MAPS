@@ -1,4 +1,4 @@
-from MAPS.chips import magia_mesh
+from MAPS.hw.chips import magia_mesh
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor

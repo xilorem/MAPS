@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from MAPS.arch import Mesh
 from MAPS.core.tensor import Tensor
-from MAPS.core.transition import Transition, TransitionFragment, TransitionMode
+from MAPS.transitions.model import Transition, TransitionFragment, TransitionMode
 
 from .transport import TransferKind, TransferLeg, TransportCostModel
 

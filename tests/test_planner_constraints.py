@@ -1,10 +1,10 @@
 from MAPS.arch import L1Memory, L2Memory, Mesh
-from MAPS.chips import magia_mesh
+from MAPS.hw.chips import magia_mesh
 from MAPS.core.graph import Node, OpKind
-from MAPS.core.layer import Layer, LayerInput, LayerOutput
+from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
-from MAPS.core.pipeline import Pipeline
-from MAPS.core.stage import Stage
+from MAPS.pipeline.pipeline import Pipeline
+from MAPS.pipeline.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.defs.gemm import GemmPayload

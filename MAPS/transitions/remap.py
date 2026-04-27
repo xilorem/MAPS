@@ -2,9 +2,9 @@
 
 from MAPS.arch import Tile
 from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
-from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.tensor import Tensor
-from MAPS.core.transition import TransitionFragment
+from MAPS.layouts.ownership import tile_tensor_slice
+from MAPS.transitions.model import TransitionFragment
 
 
 def _intersect_range(a: TensorRange, b: TensorRange) -> TensorRange | None:

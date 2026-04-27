@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .layer import Layer
-from .submesh import Submesh
+from MAPS.core.submesh import Submesh
+from MAPS.pipeline.layer import Layer
 
 if TYPE_CHECKING:
-    from .tensor import Tensor
+    from MAPS.core.tensor import Tensor
 
 
 @dataclass(frozen=True)

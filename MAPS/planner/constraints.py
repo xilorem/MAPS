@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from MAPS.core.layout import TensorRange, TensorSlice
-from MAPS.core.layer import ExternalInput, Layer, LocalInput, TransitionInput
-from MAPS.core.ownership import tile_tensor_slice
-from MAPS.core.pipeline import Pipeline
-from MAPS.core.stage import Stage
+from MAPS.layouts.ownership import tile_tensor_slice
 from MAPS.core.tensor import Tensor
-from MAPS.core.transition import Transition
+from MAPS.pipeline.layer import ExternalInput, Layer, LocalInput, TransitionInput
+from MAPS.pipeline.pipeline import Pipeline
+from MAPS.pipeline.stage import Stage
+from MAPS.transitions.model import Transition
 
 
 @dataclass(frozen=True)

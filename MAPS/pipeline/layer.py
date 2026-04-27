@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .layout import TensorLayout
+from MAPS.core.layout import TensorLayout
 
 if TYPE_CHECKING:
-    from .graph import Node
-    from .tensor import Tensor
+    from MAPS.core.graph import Node
+    from MAPS.core.tensor import Tensor
 
 
 @dataclass(frozen=True)

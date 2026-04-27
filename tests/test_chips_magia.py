@@ -1,5 +1,5 @@
 from MAPS.arch import CoreDevice, DMADevice, DeviceKind, SystolicDevice
-from MAPS.chips.magia import (
+from MAPS.hw.chips.magia import (
     MAGIA_L1_BANDWIDTH_BYTES,
     MAGIA_L1_RESERVED_BYTES,
     MAGIA_L1_SIZE_BYTES,

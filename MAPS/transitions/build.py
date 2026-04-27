@@ -2,7 +2,7 @@
 
 from MAPS.core.layout import TensorLayout
 from MAPS.core.tensor import Tensor
-from MAPS.core.transition import Transition, TransitionMode
+from MAPS.transitions.model import Transition, TransitionMode
 
 from .remap import build_direct_remap_fragments
 
