@@ -62,13 +62,6 @@ class AllReducePayload(OpPayload):
             collective_axis=self.collective_axis,
         )
 
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        return (self._collective_layout(self.x, submesh, logical_shape),)
-
     def output_layouts(
         self,
         submesh: Submesh,
@@ -97,16 +90,19 @@ class AllReducePayload(OpPayload):
             logical_height=layout.logical_height,
         )
 
+    def _input_layout_from_output_layout(self, output_layout: TensorLayout) -> TensorLayout:
+        return output_layout
+
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> CollectiveTileWork:
+        input_layout = self._input_layout_from_output_layout(output_layouts[0])
         return CollectiveTileWork(
             x=self.x,
             output=self.output,
-            input_slice=tile_tensor_slice(self.x, input_layouts[0], tile),
+            input_slice=tile_tensor_slice(self.x, input_layout, tile),
             output_slice=tile_tensor_slice(self.output, output_layouts[0], tile),
         )
 

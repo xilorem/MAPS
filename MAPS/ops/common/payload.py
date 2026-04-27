@@ -1,9 +1,10 @@
 """Shared payload contract and layout helpers for operation definitions.
 
 An operation payload is the planner-facing semantic object stored in
-``Node.payload``. It describes what an operation is, which layouts it expects,
-which cost model should evaluate it, and how to lower that high-level
-operation into concrete per-tile work once a placement has been chosen.
+``Node.payload``. It describes what an operation is, which output layout it
+produces, which cost model should evaluate it, and how to lower that
+high-level operation into concrete per-tile work once a placement has been
+chosen.
 
 Payloads stay at the operation level; they do not describe one tile's exact
 reads and writes directly. That lower-level description belongs to
@@ -28,21 +29,14 @@ class OpPayload(ABC):
     """Planner-facing operation contract attached to one graph node.
 
     A payload owns operation semantics at the MAPS IR level. It chooses the
-    canonical layouts for the op's inputs and outputs, exposes the cost model
-    family used to estimate execution, and can lower itself into tile-local
-    work for one concrete tile once placement is fixed.
+    canonical output layouts for the op, exposes the cost model family used to
+    estimate execution, and can lower itself into tile-local work for one
+    concrete tile once placement is fixed.
     """
 
     @property
     @abstractmethod
     def cost_model(self) -> object: ...
-
-    @abstractmethod
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]: ...
 
     @abstractmethod
     def output_layouts(
@@ -54,7 +48,6 @@ class OpPayload(ABC):
     @abstractmethod
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: "Tile",
     ) -> TileWork: ...

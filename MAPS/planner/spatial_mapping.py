@@ -273,13 +273,8 @@ def place_stage_plans(
             stage_id=plan.stage_id,
             tile_count=plan.tile_count,
             logical_shape=plan.logical_shape,
-            input_layouts=_layouts_on_submesh(plan.input_layouts, mapping[stage_id]),
             output_layouts=_layouts_on_submesh(plan.output_layouts, mapping[stage_id]),
             nodes=plan.nodes,
-            node_input_layouts=tuple(
-                _layouts_on_submesh(layouts, mapping[stage_id])
-                for layouts in plan.node_input_layouts
-            ),
             node_output_layouts=tuple(
                 _layouts_on_submesh(layouts, mapping[stage_id])
                 for layouts in plan.node_output_layouts
@@ -998,8 +993,8 @@ def _stage_io_costs(
             read_cost = max(
                 (
                     _stage_l2_read_cost(
-                        node.inputs,
-                        node.payload.input_layouts(submesh),
+                        node,
+                        node.payload.output_layouts(submesh),
                         graph_inputs,
                         model,
                     )
@@ -1060,8 +1055,8 @@ def _stage_io_costs_for_placements(
             read_cost = max(
                 (
                     _stage_l2_read_cost(
-                        node.inputs,
-                        _node_input_layouts(node, submesh, plan),
+                        node,
+                        _node_output_layouts(node, submesh, plan),
                         graph_inputs,
                         model,
                     )
@@ -1121,7 +1116,6 @@ def _stage_internal_costs_for_placements(
             internal_costs[stage_id][placement_idx] = sum(
                 placement_cost_estimator(
                     node=node,
-                    input_layouts=_node_input_layouts(node, submesh, plan),
                     output_layouts=_node_output_layouts(node, submesh, plan),
                 )
                 for node in stage_nodes
@@ -1133,19 +1127,22 @@ def _stage_internal_costs_for_placements(
 
 
 def _stage_l2_read_cost(
-    tensors: tuple[Tensor, ...],
-    layouts: tuple[TensorLayout, ...],
+    node: Node,
+    output_layouts: tuple[TensorLayout, ...],
     graph_inputs: set[Tensor],
     model: TransportCostModel,
 ) -> int:
-    """Return worst per-tensor L2 read cost for external graph inputs."""
-    return max(
+    """Return aggregate L2 read cost for external graph inputs."""
+    return sum(
         (
-            _max_l2_read_cost(tensor, layout, model)
-            for tensor, layout in zip(tensors, layouts)
+            _max_l2_read_cost_from_required_slices(
+                tensor,
+                _required_input_slices_for_tensor(node, tensor, output_layouts),
+                model,
+            )
+            for tensor in node.inputs
             if tensor in graph_inputs
-        ),
-        default=0,
+        )
     )
 
 
@@ -1173,18 +1170,6 @@ def _plan_node_index(plan: StagePlan, node: Node) -> int:
         if candidate is node:
             return node_idx
     raise ValueError(f"node {node.name} is not present in stage plan {plan.stage_id}")
-
-
-def _node_input_layouts(
-    node: Node,
-    submesh: Submesh,
-    plan: StagePlan | None,
-) -> tuple[TensorLayout, ...]:
-    """Return one node's input layouts on a concrete submesh."""
-
-    if plan is None or not plan.nodes:
-        return node.payload.input_layouts(submesh)
-    return _layouts_on_submesh(plan.node_input_layouts[_plan_node_index(plan, node)], submesh)
 
 
 def _node_output_layouts(
@@ -1232,14 +1217,17 @@ def _edge_shape_mode_costs(
     src_output_layout = src_node.payload.output_layouts(src_submesh)[
         _node_output_index(src_node, tensor)
     ]
-    dst_input_layouts = dst_node.payload.input_layouts(dst_submesh)
     dst_output_layouts = dst_node.payload.output_layouts(dst_submesh)
     dst_input_idx = _node_input_index(dst_node, tensor)
-    dst_input_layout = dst_input_layouts[dst_input_idx]
+    dst_required_slices = _required_input_slices_for_tensor(
+        dst_node,
+        tensor,
+        dst_output_layouts,
+    )
 
     model = _transport_model(mesh)
     l1_cost = 0
-    if src_output_layout != dst_input_layout:
+    if _requires_direct_remap(tensor, src_output_layout, dst_required_slices):
         transition = build_transition(
             name=f"spatial_map_{src_node.name}_to_{dst_node.name}_{tensor.name}",
             tensor=tensor,
@@ -1249,7 +1237,8 @@ def _edge_shape_mode_costs(
             dst_layer_id=1,
             dst_input_idx=dst_input_idx,
             src_layout=src_output_layout,
-            dst_layout=dst_input_layout,
+            dst_layout=dst_output_layouts[0],
+            dst_required_slices=dst_required_slices,
         )
         l1_cost = estimate_transition_cost(
             transition=transition,
@@ -1267,15 +1256,7 @@ def _edge_shape_mode_costs(
         )
 
     max_l2_to_tile_cost = 0
-    for tile in dst_submesh.tiles:
-        tile_work = dst_node.payload.build_tile_work(
-            input_layouts=dst_input_layouts,
-            output_layouts=dst_output_layouts,
-            tile=tile,
-        )
-        required_slice = _required_input_slice_for_tensor(tensor, tile_work)
-        if required_slice is None:
-            continue
+    for tile, required_slice in dst_required_slices:
         max_l2_to_tile_cost = max(
             max_l2_to_tile_cost,
             model.l2_to_l1(tile, tensor.slice_num_bytes(required_slice)),
@@ -1303,17 +1284,21 @@ def _edge_placement_mode_costs(
         src_submesh,
         src_plan,
     )
-    dst_input_layouts = _node_input_layouts(
+    dst_input_idx = _node_input_index(dst_node, tensor)
+    dst_output_layouts = _node_output_layouts(
         dst_node,
         dst_submesh,
         dst_plan,
     )
-    dst_input_idx = _node_input_index(dst_node, tensor)
-    dst_input_layout = dst_input_layouts[dst_input_idx]
+    dst_required_slices = _required_input_slices_for_tensor(
+        dst_node,
+        tensor,
+        dst_output_layouts,
+    )
 
     model = _transport_model(src_submesh.mesh)
     l1_cost = 0
-    if src_output_layout != dst_input_layout:
+    if _requires_direct_remap(tensor, src_output_layout, dst_required_slices):
         transition = build_transition(
             name=f"spatial_map_{src_node.name}_to_{dst_node.name}_{tensor.name}",
             tensor=tensor,
@@ -1323,7 +1308,8 @@ def _edge_placement_mode_costs(
             dst_layer_id=1,
             dst_input_idx=dst_input_idx,
             src_layout=src_output_layout,
-            dst_layout=dst_input_layout,
+            dst_layout=dst_output_layouts[0],
+            dst_required_slices=dst_required_slices,
         )
         l1_cost = estimate_transition_cost(
             transition=transition,
@@ -1341,20 +1327,7 @@ def _edge_placement_mode_costs(
         )
 
     max_l2_to_tile_cost = 0
-    dst_output_layouts = _node_output_layouts(
-        dst_node,
-        dst_submesh,
-        dst_plan,
-    )
-    for tile in dst_submesh.tiles:
-        tile_work = dst_node.payload.build_tile_work(
-            input_layouts=dst_input_layouts,
-            output_layouts=dst_output_layouts,
-            tile=tile,
-        )
-        required_slice = _required_input_slice_for_tensor(tensor, tile_work)
-        if required_slice is None:
-            continue
+    for tile, required_slice in dst_required_slices:
         max_l2_to_tile_cost = max(
             max_l2_to_tile_cost,
             model.l2_to_l1(tile, tensor.slice_num_bytes(required_slice)),
@@ -1372,6 +1345,40 @@ def _required_input_slice_for_tensor(tensor: Tensor, tile_work: object) -> Tenso
         if ref.tensor == tensor:
             return ref.tensor_slice
     return None
+
+
+def _required_input_slices_for_tensor(
+    node: Node,
+    tensor: Tensor,
+    output_layouts: tuple[TensorLayout, ...],
+) -> tuple[tuple[object, TensorSlice], ...]:
+    """Return every tile-local input slice a node needs for one tensor."""
+    required_slices = []
+    for tile in output_layouts[0].submesh.tiles:
+        tile_work = node.payload.build_tile_work(
+            output_layouts=output_layouts,
+            tile=tile,
+        )
+        required_slice = _required_input_slice_for_tensor(tensor, tile_work)
+        if required_slice is not None:
+            required_slices.append((tile, required_slice))
+    return tuple(required_slices)
+
+
+def _requires_direct_remap(
+    tensor: Tensor,
+    src_layout: TensorLayout,
+    dst_required_slices: tuple[tuple[object, TensorSlice], ...],
+) -> bool:
+    """Return whether consumer demand requires explicit inter-tile transfer."""
+    src_owned_by_tile = {
+        tile.tile_id: tile_tensor_slice(tensor, src_layout, tile)
+        for tile in src_layout.submesh.tiles
+    }
+    for tile, required_slice in dst_required_slices:
+        if src_owned_by_tile.get(tile.tile_id) != required_slice:
+            return True
+    return False
 
 
 def _max_slice_bytes(
@@ -1406,19 +1413,19 @@ def _max_l2_write_cost(
     )
 
 
-def _max_l2_read_cost(
+def _max_l2_read_cost_from_required_slices(
     tensor: Tensor,
-    layout,
+    required_slices: tuple[tuple[object, TensorSlice], ...],
     model: TransportCostModel,
 ) -> int:
-    """Return the slowest L2-to-tile read cost for one tensor layout."""
+    """Return the slowest L2-to-tile read cost for one tensor demand."""
     return max(
         (
             model.l2_to_l1(
                 tile,
-                tensor.slice_num_bytes(tile_tensor_slice(tensor, layout, tile)),
+                tensor.slice_num_bytes(tensor_slice),
             )
-            for tile in layout.submesh.tiles
+            for tile, tensor_slice in required_slices
         ),
         default=0,
     )

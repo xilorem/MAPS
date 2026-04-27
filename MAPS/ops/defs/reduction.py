@@ -63,13 +63,6 @@ class ReductionPayload(OpPayload):
 
         return ReductionCostModel(work_kind=self.work_kind)
 
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        return (sharded_layout(self.x, submesh, logical_shape),)
-
     def output_layouts(
         self,
         submesh: Submesh,
@@ -92,17 +85,27 @@ class ReductionPayload(OpPayload):
             ),
         )
 
+    def _input_layout_from_output_layout(self, output_layout: TensorLayout) -> TensorLayout:
+        return sharded_layout(
+            self.x,
+            output_layout.submesh,
+            (
+                output_layout.effective_logical_width,
+                output_layout.effective_logical_height,
+            ),
+        )
+
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> ReductionTileWork:
+        input_layout = self._input_layout_from_output_layout(output_layouts[0])
         return ReductionTileWork(
             work_kind=self.work_kind,
             x=self.x,
             output=self.output,
-            input_slice=tile_tensor_slice(self.x, input_layouts[0], tile),
+            input_slice=tile_tensor_slice(self.x, input_layout, tile),
             output_slice=tile_tensor_slice(self.output, output_layouts[0], tile),
         )
 

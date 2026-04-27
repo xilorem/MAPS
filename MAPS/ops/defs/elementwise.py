@@ -64,13 +64,6 @@ class UnaryElementwisePayload(OpPayload):
 
         return ElementwiseCostModel(work_kind=self.work_kind)
 
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        return (sharded_layout(self.x, submesh, logical_shape),)
-
     def output_layouts(
         self,
         submesh: Submesh,
@@ -85,11 +78,9 @@ class UnaryElementwisePayload(OpPayload):
 
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> ElementwiseTileWork:
-        del input_layouts
         output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
         return ElementwiseTileWork(
             work_kind=self.work_kind,
@@ -125,16 +116,6 @@ class BinaryElementwisePayload(OpPayload):
 
         return ElementwiseCostModel(work_kind=self.work_kind)
 
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        return (
-            sharded_layout(self.lhs, submesh, logical_shape),
-            sharded_layout(self.rhs, submesh, logical_shape),
-        )
-
     def output_layouts(
         self,
         submesh: Submesh,
@@ -150,11 +131,9 @@ class BinaryElementwisePayload(OpPayload):
 
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> ElementwiseTileWork:
-        del input_layouts
         output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
         return ElementwiseTileWork(
             work_kind=self.work_kind,

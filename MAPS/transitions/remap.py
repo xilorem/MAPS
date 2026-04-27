@@ -1,4 +1,4 @@
-"""Helpers to build direct-remap fragments from concrete tile ownership."""
+"""Helpers to build direct-remap fragments from producer ownership and consumer demand."""
 
 from MAPS.arch import Tile
 from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice, tile_tensor_slice
@@ -53,16 +53,15 @@ def tile_owned_slices(tensor: Tensor, layout: TensorLayout) -> tuple[tuple[Tile,
 def build_direct_remap_fragments(
     tensor: Tensor,
     src_layout: TensorLayout,
-    dst_layout: TensorLayout,
+    dst_required_slices: tuple[tuple[Tile, TensorSlice], ...],
 ) -> tuple[TransitionFragment, ...]:
     """Build direct-remap fragments for one tensor."""
 
     src_owned = tile_owned_slices(tensor, src_layout)
-    dst_owned = tile_owned_slices(tensor, dst_layout)
 
     fragments: list[TransitionFragment] = []
     for src_tile, src_slice in src_owned:
-        for dst_tile, dst_slice in dst_owned:
+        for dst_tile, dst_slice in dst_required_slices:
             overlap = _intersect_slice(src_slice, dst_slice)
             if overlap is None:
                 continue

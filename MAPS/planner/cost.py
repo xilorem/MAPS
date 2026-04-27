@@ -8,7 +8,6 @@ from MAPS.core.layout import TensorLayout
 
 def cost_estimator(
     node: Node,
-    input_layouts: tuple[TensorLayout, ...],
     output_layouts: tuple[TensorLayout, ...],
 ) -> int:
     """Estimate one node per-step cost from explicit execution assumptions."""
@@ -19,7 +18,6 @@ def cost_estimator(
         return int(
             placement_cost(
                 node=node,
-                input_layouts=input_layouts,
                 output_layouts=output_layouts,
             )
         )
@@ -28,7 +26,6 @@ def cost_estimator(
         (
             tile,
             node.payload.build_tile_work(
-                input_layouts=input_layouts,
                 output_layouts=output_layouts,
                 tile=tile,
             ),
@@ -40,7 +37,6 @@ def cost_estimator(
 
 def placement_cost_estimator(
     node: Node,
-    input_layouts: tuple[TensorLayout, ...],
     output_layouts: tuple[TensorLayout, ...],
 ) -> int:
     """Estimate one node cost for one concrete placement."""
@@ -52,7 +48,6 @@ def placement_cost_estimator(
     return int(
         placement_cost(
             node=node,
-            input_layouts=input_layouts,
             output_layouts=output_layouts,
         )
     )

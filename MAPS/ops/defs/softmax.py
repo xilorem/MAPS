@@ -30,14 +30,6 @@ class SoftmaxPayload(OpPayload):
     def cost_model(self) -> object:
         raise NotImplementedError("SoftmaxPayload must be decomposed before cost estimation")
 
-    def input_layouts(
-        self,
-        submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[object, ...]:
-        del submesh, logical_shape
-        raise NotImplementedError("SoftmaxPayload must be decomposed before layout selection")
-
     def output_layouts(
         self,
         submesh,
@@ -48,11 +40,10 @@ class SoftmaxPayload(OpPayload):
 
     def build_tile_work(
         self,
-        input_layouts,
         output_layouts,
         tile,
     ) -> object:
-        del input_layouts, output_layouts, tile
+        del output_layouts, tile
         raise NotImplementedError("SoftmaxPayload must be decomposed before tile work generation")
 
     def validate_shapes(self) -> None:

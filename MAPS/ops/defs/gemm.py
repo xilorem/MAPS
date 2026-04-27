@@ -120,20 +120,6 @@ class GemmPayload(OpPayload):
 
         return GemmCostModel()
 
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        return tuple(
-            self._tensor_layout(tensor, submesh, logical_shape)
-            for tensor in (self.x, self.w)
-        ) + (
-            (self._tensor_layout(self.y, submesh, logical_shape),)
-            if self.y is not None
-            else ()
-        )
-
     def output_layouts(
         self,
         submesh: Submesh,
@@ -188,11 +174,9 @@ class GemmPayload(OpPayload):
 
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> GemmTileWork:
-        del input_layouts
         output_slice = tile_tensor_slice(
             tensor=self.output,
             layout=output_layouts[0],

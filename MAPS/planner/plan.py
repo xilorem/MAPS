@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from MAPS.arch import Mesh
+from MAPS.arch import Mesh, Tile
+from MAPS.core.layout import TensorSlice
 from MAPS.core.graph import Graph, Node
 from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
 from MAPS.pipeline.pipeline import Pipeline
@@ -94,6 +95,7 @@ def _build_pipeline_from_graph(
                 src_plan = stage_plans[src_stage_id]
                 src_output_idx = _node_output_index(src_node, tensor)
                 transition_id = len(transitions)
+                dst_output_layouts = _node_output_layout(dst_plan, dst_node)
                 transitions.append(
                     build_transition(
                         name=f"transition_{src_node.name}_to_{dst_node.name}_{tensor.name}",
@@ -104,7 +106,12 @@ def _build_pipeline_from_graph(
                         dst_layer_id=dst_stage_id,
                         dst_input_idx=dst_input_idx,
                         src_layout=_node_output_layout(src_plan, src_node)[src_output_idx],
-                        dst_layout=_node_input_layout(dst_plan, dst_node)[dst_input_idx],
+                        dst_layout=dst_output_layouts[0],
+                        dst_required_slices=_transition_required_slices(
+                            tensor=tensor,
+                            dst_node=dst_node,
+                            dst_output_layouts=dst_output_layouts,
+                        ),
                     )
                 )
                 transition_id_by_stage_layer_input[(dst_stage_id, dst_layer_idx, dst_input_idx)] = transition_id
@@ -224,23 +231,9 @@ def _stage_submesh(plan: StagePlan):
         for layouts in plan.node_output_layouts:
             if layouts:
                 return layouts[0].submesh
-    if plan.node_input_layouts:
-        for layouts in plan.node_input_layouts:
-            if layouts:
-                return layouts[0].submesh
     if plan.output_layouts:
         return plan.output_layouts[0].submesh
-    if plan.input_layouts:
-        return plan.input_layouts[0].submesh
     raise ValueError(f"stage {plan.stage_id} has no layouts bound to a submesh")
-
-
-def _node_input_layout(plan: StagePlan, node: Node):
-    """Return one node's input layouts from a stage plan."""
-
-    if plan.node_input_layouts:
-        return plan.node_input_layouts[_plan_node_index(plan, node)]
-    return plan.input_layouts
 
 
 def _node_output_layout(plan: StagePlan, node: Node):
@@ -258,6 +251,25 @@ def _plan_node_index(plan: StagePlan, node: Node) -> int:
         if candidate is node:
             return node_idx
     raise ValueError(f"node {node.name} is not present in stage plan {plan.stage_id}")
+
+
+def _transition_required_slices(
+    tensor: object,
+    dst_node: Node,
+    dst_output_layouts: tuple,
+) -> tuple[tuple[Tile, TensorSlice], ...]:
+    required_slices = []
+    submesh = dst_output_layouts[0].submesh
+    for tile in submesh.tiles:
+        tile_work = dst_node.payload.build_tile_work(
+            output_layouts=dst_output_layouts,
+            tile=tile,
+        )
+        for ref in tile_work.input_slices:
+            if ref.tensor is tensor:
+                required_slices.append((tile, ref.tensor_slice))
+                break
+    return tuple(required_slices)
 
 
 def _node_output_index(node: Node, tensor: object) -> int:

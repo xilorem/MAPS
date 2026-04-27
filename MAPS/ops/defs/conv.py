@@ -103,19 +103,6 @@ class ConvPayload(OpPayload):
 
         return ConvCostModel()
 
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        layouts = (
-            self._x_layout(submesh, logical_shape),
-            self._w_layout(submesh, logical_shape),
-        )
-        if self.b is None:
-            return layouts
-        return layouts + (self._b_layout(submesh, logical_shape),)
-
     def output_layouts(
         self,
         submesh: Submesh,
@@ -249,11 +236,9 @@ class ConvPayload(OpPayload):
 
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> ConvTileWork:
-        del input_layouts
         output_slice = tile_tensor_slice(
             tensor=self.output,
             layout=output_layouts[0],

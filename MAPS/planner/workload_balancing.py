@@ -18,10 +18,8 @@ class StagePlan:
     stage_id: int
     tile_count: int
     logical_shape: tuple[int, int]
-    input_layouts: tuple
     output_layouts: tuple
     nodes: tuple[Node, ...] = ()
-    node_input_layouts: tuple[tuple, ...] = ()
     node_output_layouts: tuple[tuple, ...] = ()
 
 
@@ -566,17 +564,11 @@ def _layouts_for_node(
     node: Node,
     submesh: Submesh,
     logical_shape: tuple[int, int],
-) -> tuple[tuple, tuple]:
-    """Return the op input and output layouts for one logical shape."""
-    return (
-        node.payload.input_layouts(
+) -> tuple:
+    """Return the op output layouts for one logical shape."""
+    return node.payload.output_layouts(
             submesh,
             logical_shape=logical_shape,
-        ),
-        node.payload.output_layouts(
-            submesh,
-            logical_shape=logical_shape,
-        ),
     )
 
 
@@ -603,20 +595,18 @@ def _layouts_for_stage_nodes(
     stage_nodes: tuple[Node, ...],
     submesh: Submesh,
     logical_shape: tuple[int, int],
-) -> tuple[tuple[tuple, ...], tuple[tuple, ...]]:
-    """Return layouts for every node inside one selected stage."""
+) -> tuple[tuple, ...]:
+    """Return output layouts for every node inside one selected stage."""
 
-    node_input_layouts = []
     node_output_layouts = []
     for node in stage_nodes:
-        input_layouts, output_layouts = _layouts_for_node(
+        output_layouts = _layouts_for_node(
             node,
             submesh,
             logical_shape,
         )
-        node_input_layouts.append(input_layouts)
         node_output_layouts.append(output_layouts)
-    return tuple(node_input_layouts), tuple(node_output_layouts)
+    return tuple(node_output_layouts)
 
 
 def _best_stage_plan_for_stage_nodes(
@@ -630,7 +620,7 @@ def _best_stage_plan_for_stage_nodes(
 
     submesh = _planning_submesh(mesh, stage_id, tile_count)
     logical_shape = (submesh.width, submesh.height)
-    node_input_layouts, node_output_layouts = _layouts_for_stage_nodes(
+    node_output_layouts = _layouts_for_stage_nodes(
         stage_nodes,
         submesh,
         logical_shape,
@@ -640,13 +630,11 @@ def _best_stage_plan_for_stage_nodes(
     min_l1_capacity = None
     for tile in submesh.tiles:
         tile_peak_l1_bytes = 0
-        for node, input_layouts, output_layouts in zip(
+        for node, output_layouts in zip(
             stage_nodes,
-            node_input_layouts,
             node_output_layouts,
         ):
             tile_work = node.payload.build_tile_work(
-                input_layouts=input_layouts,
                 output_layouts=output_layouts,
                 tile=tile,
             )
@@ -680,10 +668,8 @@ def _best_stage_plan_for_stage_nodes(
         stage_id=stage_id,
         tile_count=tile_count,
         logical_shape=logical_shape,
-        input_layouts=node_input_layouts[0],
         output_layouts=node_output_layouts[-1],
         nodes=stage_nodes,
-        node_input_layouts=node_input_layouts,
         node_output_layouts=node_output_layouts,
     )
     workload = _estimate_stage_group_workload(stage_nodes, plan)
@@ -740,22 +726,18 @@ def _estimate_stage_group_workload(
 ) -> int:
     """Estimate one selected stage workload as the sum of member node costs."""
 
-    if plan.node_input_layouts and plan.node_output_layouts:
-        node_input_layouts = plan.node_input_layouts
+    if plan.node_output_layouts:
         node_output_layouts = plan.node_output_layouts
     else:
-        node_input_layouts = (plan.input_layouts,)
         node_output_layouts = (plan.output_layouts,)
 
     total_cost = 0
-    for node, input_layouts, output_layouts in zip(
+    for node, output_layouts in zip(
         stage_nodes,
-        node_input_layouts,
         node_output_layouts,
     ):
         total_cost += cost_estimator(
             node=node,
-            input_layouts=input_layouts,
             output_layouts=output_layouts,
         )
     return total_cost

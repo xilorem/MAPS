@@ -30,7 +30,6 @@ class AllReduceCostModel:
         self,
         *,
         node: Node,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
     ) -> int:
         if len(output_layouts) != 1:

@@ -1,7 +1,9 @@
-"""Helpers to build transition objects from layout ownership."""
+"""Helpers to build transition objects from producer ownership and consumer demand."""
 
 from MAPS.core.layout import TensorLayout
+from MAPS.core.layout import TensorSlice
 from MAPS.core.tensor import Tensor
+from MAPS.arch import Tile
 from MAPS.transitions.model import Transition, TransitionMode
 
 from .remap import build_direct_remap_fragments
@@ -17,19 +19,17 @@ def build_transition(
     dst_input_idx: int,
     src_layout: TensorLayout,
     dst_layout: TensorLayout,
+    dst_required_slices: tuple[tuple[Tile, TensorSlice], ...],
 ) -> Transition:
     """Build one concrete transition instance."""
 
     src_layout.validate_for(tensor)
     dst_layout.validate_for(tensor)
 
-    if src_layout == dst_layout:
-        raise ValueError("identical layouts do not require a transition")
-
     fragments = build_direct_remap_fragments(
         tensor=tensor,
         src_layout=src_layout,
-        dst_layout=dst_layout,
+        dst_required_slices=dst_required_slices,
     )
     return Transition(
         name=name,
