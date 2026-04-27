@@ -73,14 +73,12 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
         stage_id=0,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm0.input_layouts(src_submesh, logical_shape=(2, 1)),
         output_layouts=gemm0.output_layouts(src_submesh, logical_shape=(2, 1)),
     )
     plan1 = StagePlan(
         stage_id=1,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm1.input_layouts(dst_submesh, logical_shape=(2, 1)),
         output_layouts=gemm1.output_layouts(dst_submesh, logical_shape=(2, 1)),
     )
 
@@ -101,12 +99,12 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
     assert transition.src_layer_id == 0
     assert transition.dst_layer_id == 1
     assert transition.src_layout == pipeline.stages[0].layers[-1].outputs[0].layout
-    assert transition.dst_layout == plan1.input_layouts[0]
-    assert len(transition.fragments) == 2
+    assert transition.dst_layout == plan1.output_layouts[0]
+    assert len(transition.fragments) == 4
     assert {
         (fragment.src_hartid, fragment.dst_hartid)
         for fragment in transition.fragments
-    } == {(0, 8), (1, 9)}
+    } == {(0, 8), (1, 8), (0, 9), (1, 9)}
     assert {
         fragment.src_slice
         for fragment in transition.fragments
@@ -118,8 +116,8 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
         fragment.dst_slice
         for fragment in transition.fragments
     } == {
-        tile_tensor_slice(y, transition.dst_layout, tile)
-        for tile in transition.dst_layout.submesh.tiles
+        tile_tensor_slice(y, transition.src_layout, tile)
+        for tile in transition.src_layout.submesh.tiles
     }
 
     report = validate_constraints(pipeline, PlannerConstraints())
@@ -184,13 +182,8 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
         stage_id=0,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm0.input_layouts(stage0_submesh, logical_shape=(2, 1)),
         output_layouts=gemm1.output_layouts(stage0_submesh, logical_shape=(2, 1)),
         nodes=(node0, node1),
-        node_input_layouts=(
-            gemm0.input_layouts(stage0_submesh, logical_shape=(2, 1)),
-            gemm1.input_layouts(stage0_submesh, logical_shape=(2, 1)),
-        ),
         node_output_layouts=(
             gemm0.output_layouts(stage0_submesh, logical_shape=(2, 1)),
             gemm1.output_layouts(stage0_submesh, logical_shape=(2, 1)),
@@ -200,10 +193,8 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
         stage_id=1,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm2.input_layouts(stage1_submesh, logical_shape=(2, 1)),
         output_layouts=gemm2.output_layouts(stage1_submesh, logical_shape=(2, 1)),
         nodes=(node2,),
-        node_input_layouts=(gemm2.input_layouts(stage1_submesh, logical_shape=(2, 1)),),
         node_output_layouts=(gemm2.output_layouts(stage1_submesh, logical_shape=(2, 1)),),
     )
 
@@ -261,7 +252,7 @@ def test_build_pipeline_parses_balances_maps_and_builds_transitions() -> None:
         assert transition.src_layer_id == 0
         assert transition.dst_layer_id == 1
         assert transition.src_layout == pipeline.stages[0].layers[-1].outputs[0].layout
-        assert transition.dst_layout == pipeline.stages[1].layers[0].node.payload.input_layouts(
+        assert transition.dst_layout == pipeline.stages[1].layers[0].node.payload.output_layouts(
             pipeline.stages[1].submesh,
             logical_shape=(
                 transition.dst_layout.effective_logical_width,

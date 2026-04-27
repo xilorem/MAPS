@@ -84,10 +84,9 @@ class _PlacementSensitiveCostModel:
         self,
         *,
         node: Node,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
     ) -> int:
-        del node, input_layouts
+        del node
         return output_layouts[0].submesh.x0
 
 
@@ -99,14 +98,6 @@ class _PlacementSensitiveOp(OpPayload):
     def cost_model(self) -> object:
         return _PlacementSensitiveCostModel()
 
-    def input_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        del submesh, logical_shape
-        return ()
-
     def output_layouts(
         self,
         submesh: Submesh,
@@ -116,11 +107,10 @@ class _PlacementSensitiveOp(OpPayload):
 
     def build_tile_work(
         self,
-        input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile,
     ) -> _PlacementSensitiveTileWork:
-        del input_layouts, output_layouts, tile
+        del output_layouts, tile
         return _PlacementSensitiveTileWork()
 
 def _gemm_node(name: str, m: int, k: int, n: int) -> Node:
@@ -204,7 +194,6 @@ def test_layout_on_submesh_preserves_logical_shape() -> None:
         stage_id=0,
         tile_count=6,
         logical_shape=(3, 2),
-        input_layouts=(),
         output_layouts=(layout,),
     )
 
@@ -220,10 +209,6 @@ def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
     planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
     node = _gemm_node("node", 8, 8, 8)
-    input_layouts = node.payload.input_layouts(
-        planning_submesh,
-        logical_shape=(3, 2),
-    )
     output_layouts = node.payload.output_layouts(
         planning_submesh,
         logical_shape=(3, 2),
@@ -232,7 +217,6 @@ def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
         stage_id=0,
         tile_count=6,
         logical_shape=(3, 2),
-        input_layouts=input_layouts,
         output_layouts=output_layouts,
     )
 

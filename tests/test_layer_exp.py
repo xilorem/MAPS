@@ -27,7 +27,6 @@ def test_exp_tile_work_uses_output_slice_as_input_slice() -> None:
     )
 
     tile_work = op.build_tile_work(
-        input_layouts=(output_layout,),
         output_layouts=(output_layout,),
         tile=submesh.tiles[0],
     )
@@ -53,7 +52,6 @@ def test_exp_cost_uses_exp_capable_device() -> None:
         mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
     )
     tile_work = op.build_tile_work(
-        input_layouts=(layout,),
         output_layouts=(layout,),
         tile=submesh.tiles[0],
     )
@@ -75,7 +73,6 @@ def test_binary_elementwise_tile_work_supports_broadcasting() -> None:
     )
 
     tile_work = op.build_tile_work(
-        input_layouts=(output_layout, output_layout),
         output_layouts=(output_layout,),
         tile=submesh.tiles[1],
     )

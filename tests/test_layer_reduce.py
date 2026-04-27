@@ -21,15 +21,12 @@ def test_reduce_op_replicates_output_along_reduced_mesh_axis() -> None:
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
     op = _make_reduce_sum_op()
 
-    input_layout = op.input_layouts(submesh)[0]
     output_layout = op.output_layouts(submesh)[0]
     tile0_work = op.build_tile_work(
-        input_layouts=(input_layout,),
         output_layouts=(output_layout,),
         tile=submesh.tiles[0],
     )
     tile1_work = op.build_tile_work(
-        input_layouts=(input_layout,),
         output_layouts=(output_layout,),
         tile=submesh.tiles[1],
     )
@@ -54,10 +51,8 @@ def test_reduce_cost_counts_input_elements() -> None:
     mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
     op = _make_reduce_sum_op()
-    input_layout = op.input_layouts(submesh)[0]
     output_layout = op.output_layouts(submesh)[0]
     tile_work = op.build_tile_work(
-        input_layouts=(input_layout,),
         output_layouts=(output_layout,),
         tile=submesh.tiles[0],
     )

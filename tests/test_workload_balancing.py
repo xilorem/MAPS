@@ -121,7 +121,6 @@ def test_balance_workload_accepts_explicit_stage_selection() -> None:
     assert tuple(plans) == (0,)
     assert plans[0].tile_count == mesh.num_tiles
     assert plans[0].nodes == (node0, node1)
-    assert len(plans[0].node_input_layouts) == 2
     assert len(plans[0].node_output_layouts) == 2
 
 
@@ -193,6 +192,7 @@ def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:
         current_tile_count=2,
         remaining_tiles=2,
         mesh=mesh,
+        max_added_tiles=2,
     )
 
     assert options == (4,)
@@ -219,11 +219,41 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
         current_workload=_estimate_stage_workload(node, current_plan),
         placement_masks_by_tile_count={},
         placement_feasibility_cache={},
+        max_added_tiles=2,
         debug=False,
     )
 
     assert best_growth is not None
     assert best_growth[0] == 4
+
+
+def test_tile_count_growth_horizon_expands_incrementally() -> None:
+    mesh = Mesh(
+        width=4,
+        height=2,
+        l2_memory=L2Memory(size=4096, bandwidth=1),
+        noc=rectangular_test_noc(4, 2),
+        tiles=rectangular_test_tiles(4, 2),
+    )
+
+    assert _tile_count_options_after_growth(
+        current_tile_count=1,
+        remaining_tiles=7,
+        mesh=mesh,
+        max_added_tiles=1,
+    ) == (2,)
+    assert _tile_count_options_after_growth(
+        current_tile_count=1,
+        remaining_tiles=7,
+        mesh=mesh,
+        max_added_tiles=2,
+    ) == (2, 3)
+    assert _tile_count_options_after_growth(
+        current_tile_count=1,
+        remaining_tiles=7,
+        mesh=mesh,
+        max_added_tiles=3,
+    ) == (2, 3, 4)
 
 
 def test_submesh_placement_feasibility_requires_global_rectangle_packing() -> None:

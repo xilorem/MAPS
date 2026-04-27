@@ -31,20 +31,16 @@ def test_allreduce_op_replicates_collective_axis_layout() -> None:
     node = _make_allreduce_sum_node()
     op = node.payload
 
-    input_layout = op.input_layouts(submesh)[0]
     output_layout = op.output_layouts(submesh)[0]
     tile0_work = op.build_tile_work(
-        input_layouts=(input_layout,),
         output_layouts=(output_layout,),
         tile=submesh.tiles[0],
     )
     tile1_work = op.build_tile_work(
-        input_layouts=(input_layout,),
         output_layouts=(output_layout,),
         tile=submesh.tiles[1],
     )
 
-    assert input_layout.mesh_x.mode.name == "REPLICATE"
     assert output_layout.mesh_x.mode.name == "REPLICATE"
     assert tile0_work.input_slice == tile1_work.input_slice
     assert tile0_work.output_slice == tile1_work.output_slice
@@ -54,12 +50,10 @@ def test_allreduce_uses_placement_sensitive_cost() -> None:
     mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
     node = _make_allreduce_sum_node()
-    input_layouts = node.payload.input_layouts(submesh)
     output_layouts = node.payload.output_layouts(submesh)
 
-    assert placement_cost_estimator(node, input_layouts, output_layouts) > 0
-    assert cost_estimator(node, input_layouts, output_layouts) == placement_cost_estimator(
+    assert placement_cost_estimator(node, output_layouts) > 0
+    assert cost_estimator(node, output_layouts) == placement_cost_estimator(
         node,
-        input_layouts,
         output_layouts,
     )

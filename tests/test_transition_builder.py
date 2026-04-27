@@ -7,6 +7,7 @@ from MAPS.core.layout import (
     TensorLayout,
     TensorRange,
     TensorSlice,
+    tile_tensor_slice,
 )
 from MAPS.hw.chips import magia_mesh
 from MAPS.core.submesh import Submesh
@@ -14,7 +15,7 @@ from MAPS.core.tensor import Tensor
 from MAPS.transitions.model import TransitionMode
 
 
-def test_build_transition_rejects_identical_layouts() -> None:
+def test_build_transition_allows_empty_demand() -> None:
     mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
     tensor = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
@@ -24,18 +25,20 @@ def test_build_transition_rejects_identical_layouts() -> None:
         mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
     )
 
-    with pytest.raises(ValueError, match="identical layouts"):
-        build_transition(
-            name="reuse",
-            tensor=tensor,
-            tensor_id=0,
-            src_layer_id=0,
-            src_output_idx=0,
-            dst_layer_id=1,
-            dst_input_idx=0,
-            src_layout=layout,
-            dst_layout=layout,
-        )
+    transition = build_transition(
+        name="reuse",
+        tensor=tensor,
+        tensor_id=0,
+        src_layer_id=0,
+        src_output_idx=0,
+        dst_layer_id=1,
+        dst_input_idx=0,
+        src_layout=layout,
+        dst_layout=layout,
+        dst_required_slices=(),
+    )
+
+    assert transition.fragments == ()
 
 
 def test_build_transition_builds_direct_remap_fragments() -> None:
@@ -63,6 +66,10 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
         dst_input_idx=0,
         src_layout=src_layout,
         dst_layout=dst_layout,
+        dst_required_slices=tuple(
+            (tile, tile_tensor_slice(tensor, dst_layout, tile))
+            for tile in dst_layout.submesh.tiles
+        ),
     )
 
     assert transition.mode is TransitionMode.DIRECT_REMAP
@@ -138,6 +145,10 @@ def test_build_transition_builds_direct_remap_between_different_submeshes() -> N
         dst_input_idx=0,
         src_layout=src_layout,
         dst_layout=dst_layout,
+        dst_required_slices=tuple(
+            (tile, tile_tensor_slice(tensor, dst_layout, tile))
+            for tile in dst_layout.submesh.tiles
+        ),
     )
 
     assert transition.mode is TransitionMode.DIRECT_REMAP

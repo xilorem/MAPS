@@ -31,7 +31,6 @@ def test_conv_tile_work_uses_required_im2col_slices() -> None:
     layout = _replicated_layout(submesh)
 
     tile_work = op.build_tile_work(
-        input_layouts=(layout, layout, layout),
         output_layouts=(layout,),
         tile=submesh.tiles[0],
     )
@@ -68,7 +67,6 @@ def test_conv_cost_uses_im2col_gemm_amount() -> None:
     op = _make_conv_op()
     layout = _replicated_layout(submesh)
     tile_work = op.build_tile_work(
-        input_layouts=(layout, layout, layout),
         output_layouts=(layout,),
         tile=submesh.tiles[0],
     )
