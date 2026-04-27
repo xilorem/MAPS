@@ -5,10 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from MAPS.arch import Tile, WorkKind
 from MAPS.core.graph import OpKind
-from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice, TensorSliceRef
+from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice, TensorSliceRef, tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.layouts.ownership import tile_tensor_slice
 from MAPS.ops.common.payload import OpPayload, sharded_layout
 from MAPS.ops.common.tile_work import TileWork
 from MAPS.ops.registry import register_op

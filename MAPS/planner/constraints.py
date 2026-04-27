@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from MAPS.core.layout import TensorRange, TensorSlice
-from MAPS.layouts.ownership import tile_tensor_slice
+from MAPS.core.layout import TensorRange, TensorSlice, tile_tensor_slice
 from MAPS.core.tensor import Tensor
 from MAPS.pipeline.layer import ExternalInput, Layer, LocalInput, TransitionInput
 from MAPS.pipeline.pipeline import Pipeline

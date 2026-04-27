@@ -4,9 +4,10 @@ from MAPS.core.layout import (
     TensorLayout,
     TensorRange,
     TensorSlice,
+    _apply_layout_axis,
+    tile_tensor_slice,
 )
 from MAPS.hw.chips import magia_mesh
-from MAPS.layouts.ownership import _apply_layout_axis, tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 

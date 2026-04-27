@@ -4,8 +4,8 @@ from tempfile import TemporaryDirectory
 from MAPS.arch import L1Memory, L2Memory, Mesh
 from MAPS.hw.chips import magia_mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
+from MAPS.core.layout import tile_tensor_slice
 from MAPS.pipeline.layer import ExternalInput, LocalInput, TransitionInput
-from MAPS.layouts.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.transitions.model import TransitionMode

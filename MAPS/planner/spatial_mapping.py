@@ -15,12 +15,11 @@ from MAPS.arch import (
     Tile,
 )
 from MAPS.core.layout import TensorSlice
-from MAPS.core.layout import TensorLayout
+from MAPS.core.layout import TensorLayout, tile_tensor_slice
 from MAPS.core.graph import Graph, Node
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.hw.devices.generic import GENERIC_CORE_DEVICE
-from MAPS.layouts.ownership import tile_tensor_slice
 from MAPS.planner.cost import placement_cost_estimator
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import StagePlan
