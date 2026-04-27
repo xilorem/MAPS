@@ -7,40 +7,44 @@ from dataclasses import dataclass
 from MAPS.arch import WorkKind
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.tensor import Tensor
-from MAPS.ops.defs.collective import AllReduceOp
-from MAPS.ops.defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
-from MAPS.ops.defs.reduction import ReduceOp
+from MAPS.ops.common.payload import OpPayload
+from MAPS.ops.defs.collective import AllReducePayload
+from MAPS.ops.defs.elementwise import BinaryElementwisePayload, UnaryElementwisePayload
+from MAPS.ops.defs.reduction import ReductionPayload
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
 
 
 @dataclass(frozen=True)
-class SoftmaxOp:
+class SoftmaxPayload(OpPayload):
     """High-level softmax payload that must be decomposed before planning."""
 
     x: Tensor
     output: Tensor
     axis: int
 
+    def __post_init__(self) -> None:
+        self.validate_shapes()
+
     @property
     def cost_model(self) -> object:
-        raise NotImplementedError("SoftmaxOp must be decomposed before cost estimation")
+        raise NotImplementedError("SoftmaxPayload must be decomposed before cost estimation")
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[object, ...]:
         del submesh, logical_shape
-        raise NotImplementedError("SoftmaxOp must be decomposed before layout selection")
+        raise NotImplementedError("SoftmaxPayload must be decomposed before layout selection")
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[object, ...]:
         del submesh, logical_shape
-        raise NotImplementedError("SoftmaxOp must be decomposed before layout selection")
+        raise NotImplementedError("SoftmaxPayload must be decomposed before layout selection")
 
     def build_tile_work(
         self,
@@ -49,15 +53,7 @@ class SoftmaxOp:
         tile,
     ) -> object:
         del input_layouts, output_layouts, tile
-        raise NotImplementedError("SoftmaxOp must be decomposed before tile work generation")
-
-    def validate_tensors(self, inputs, outputs, tensors) -> None:
-        del tensors
-        if len(inputs) != 1:
-            raise ValueError("Softmax stages require exactly one input")
-        if len(outputs) != 1:
-            raise ValueError("Softmax stages require exactly one output")
-        self.validate_shapes()
+        raise NotImplementedError("SoftmaxPayload must be decomposed before tile work generation")
 
     def validate_shapes(self) -> None:
         if self.axis < 0 or self.axis >= self.x.rank:
@@ -86,16 +82,14 @@ def lower_softmax_onnx(
     axis = int(attributes.get("axis", -1))
     if axis < 0:
         axis += x.rank
-    payload = SoftmaxOp(x=x, output=output, axis=axis)
-    payload.validate_shapes()
-    return OpKind.CUSTOM, payload
+    return OpKind.CUSTOM, SoftmaxPayload(x=x, output=output, axis=axis)
 
 
 def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, ...]]:
     """Lower one high-level softmax node into grouped primitive planner nodes."""
 
-    if not isinstance(node.payload, SoftmaxOp):
-        raise TypeError("decompose_softmax_node expects a Node with SoftmaxOp payload")
+    if not isinstance(node.payload, SoftmaxPayload):
+        raise TypeError("decompose_softmax_node expects a Node with SoftmaxPayload payload")
 
     op = node.payload
     x = op.x
@@ -116,7 +110,7 @@ def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, 
             kind=OpKind.REDUCTION,
             inputs=(x,),
             outputs=(max_local,),
-            payload=ReduceOp(
+            payload=ReductionPayload(
                 op_name="ReduceMax",
                 x=x,
                 output=max_local,
@@ -136,7 +130,7 @@ def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, 
                 kind=OpKind.CUSTOM,
                 inputs=(max_local,),
                 outputs=(max_global,),
-                payload=AllReduceOp(
+                payload=AllReducePayload(
                     op_name="AllReduceMax",
                     x=max_local,
                     output=max_global,
@@ -159,7 +153,7 @@ def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, 
                 kind=OpKind.ELEMENTWISE,
                 inputs=(x, max_value),
                 outputs=(shifted,),
-                payload=BinaryElementwiseOp(
+                payload=BinaryElementwisePayload(
                     op_name="Sub",
                     lhs=x,
                     rhs=max_value,
@@ -173,7 +167,7 @@ def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, 
                 kind=OpKind.ELEMENTWISE,
                 inputs=(shifted,),
                 outputs=(exp,),
-                payload=UnaryElementwiseOp(
+                payload=UnaryElementwisePayload(
                     op_name="Exp",
                     x=shifted,
                     output=exp,
@@ -186,7 +180,7 @@ def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, 
                 kind=OpKind.REDUCTION,
                 inputs=(exp,),
                 outputs=(sum_local,),
-                payload=ReduceOp(
+                payload=ReductionPayload(
                     op_name="ReduceSum",
                     x=exp,
                     output=sum_local,
@@ -208,7 +202,7 @@ def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, 
                 kind=OpKind.CUSTOM,
                 inputs=(sum_local,),
                 outputs=(sum_global,),
-                payload=AllReduceOp(
+                payload=AllReducePayload(
                     op_name="AllReduceSum",
                     x=sum_local,
                     output=sum_global,
@@ -226,7 +220,7 @@ def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, 
             kind=OpKind.ELEMENTWISE,
             inputs=(exp, sum_value),
             outputs=(output,),
-            payload=BinaryElementwiseOp(
+            payload=BinaryElementwisePayload(
                 op_name="Div",
                 lhs=exp,
                 rhs=sum_value,
@@ -274,7 +268,7 @@ register_op(
         onnx_names=("Softmax",),
         lower_onnx=lower_softmax_onnx,
         decompose=decompose_softmax_node,
-        payload_type=SoftmaxOp,
+        payload_type=SoftmaxPayload,
         work_kinds=(WorkKind.REDUCE_MAX, WorkKind.EXP, WorkKind.REDUCE_SUM, WorkKind.ELEMENTWISE),
     )
 )

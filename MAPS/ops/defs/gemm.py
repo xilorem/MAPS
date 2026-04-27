@@ -3,24 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from MAPS.arch import Tile, WorkKind
 from MAPS.core.graph import OpKind
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
+from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice, TensorSliceRef
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common.base import TensorSliceRef, tensor_slice_num_elements
+from MAPS.ops.common.payload import OpPayload
+from MAPS.ops.common.tile_work import TileWork
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
 
-if TYPE_CHECKING:
-    from MAPS.core.layer import LayerInput, LayerOutput
-
 
 @dataclass(frozen=True)
-class GemmTileWork:
+class GemmTileWork(TileWork):
     """Concrete GEMM slices associated with one tile."""
 
     output_slice: TensorSlice
@@ -61,7 +58,7 @@ class GemmTileWork:
         return self.l1_bytes <= tile.memory.size
 
     def operation_count(self) -> int:
-        return tensor_slice_num_elements(self.output_slice) * self.x_slice.dims[-1].length
+        return self.output_slice.num_elements * self.x_slice.dims[-1].length
 
     def dimensions(self) -> tuple[int, int, int, int]:
         batch_volume = 1
@@ -78,7 +75,7 @@ def _full_range(dim: int) -> TensorRange:
 
 
 @dataclass(frozen=True)
-class GemmLayerOp:
+class GemmPayload(OpPayload):
     """GEMM-specific operation payload.
 
     The planner-side GEMM convention is:
@@ -93,41 +90,66 @@ class GemmLayerOp:
     y: Tensor | None
     output: Tensor
 
+    def __post_init__(self) -> None:
+        for tensor_name, tensor in (
+            ("X", self.x),
+            ("W", self.w),
+            ("output", self.output),
+        ):
+            if tensor.rank < 2:
+                raise ValueError(f"{tensor_name} tensor rank must be >= 2 for GEMM")
+
+        if self.x.elem_bytes != self.w.elem_bytes or self.x.elem_bytes != self.output.elem_bytes:
+            raise ValueError("GEMM tensors must agree on element size")
+
+        if self.x.dims[-1] != self.w.dims[-2]:
+            raise ValueError("GEMM tensors must agree on K dimension")
+        if self.x.dims[-2] != self.output.dims[-2]:
+            raise ValueError("GEMM X and output must agree on M dimension")
+        if self.w.dims[-1] != self.output.dims[-1]:
+            raise ValueError("GEMM W and output must agree on N dimension")
+
+        if self.y is not None:
+            if self.y.rank != self.output.rank or self.y.dims != self.output.dims:
+                raise ValueError("Y input must match output tensor shape exactly")
+            if self.y.elem_bytes != self.output.elem_bytes:
+                raise ValueError("Y input element size must match output tensor")
+
     @property
     def cost_model(self) -> object:
         from MAPS.ops.costs.gemm_cost import GemmCostModel
 
         return GemmCostModel()
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
         return tuple(
-            self._default_tensor_layout(tensor, submesh, logical_shape)
+            self._tensor_layout(tensor, submesh, logical_shape)
             for tensor in (self.x, self.w)
         ) + (
-            (self._default_tensor_layout(self.y, submesh, logical_shape),)
+            (self._tensor_layout(self.y, submesh, logical_shape),)
             if self.y is not None
             else ()
         )
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (self._default_tensor_layout(self.output, submesh, logical_shape),)
+        return (self._tensor_layout(self.output, submesh, logical_shape),)
 
-    def _default_tensor_layout(
+    def _tensor_layout(
         self,
         tensor: Tensor,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None,
     ) -> TensorLayout:
         if tensor.rank < 2:
-            raise ValueError("default GEMM layout requires rank >= 2")
+            raise ValueError("GEMM layout requires rank >= 2")
 
         logical_width = None
         logical_height = None
@@ -188,56 +210,6 @@ class GemmLayerOp:
             output=self.output,
         )
 
-    def validate_tensors(
-        self,
-        inputs: tuple[LayerInput, ...],
-        outputs: tuple[LayerOutput, ...],
-        tensors: tuple[Tensor, ...],
-    ) -> None:
-        """Validate tensor availability against one GEMM stage instance."""
-
-        if len(inputs) < 2:
-            raise ValueError("GEMM stages require at least two inputs")
-        if len(outputs) == 0:
-            raise ValueError("GEMM stages require at least one output")
-
-        bound_inputs = tuple(tensors[binding.tensor_id] for binding in inputs)
-        bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)
-
-        if self.x not in bound_inputs:
-            raise ValueError("GEMM X tensor is not present in stage inputs")
-        if self.w not in bound_inputs:
-            raise ValueError("GEMM W tensor is not present in stage inputs")
-        if self.y is not None and self.y not in bound_inputs:
-            raise ValueError("GEMM Y tensor is not present in stage inputs")
-        if self.output not in bound_outputs:
-            raise ValueError("GEMM output tensor is not present in stage outputs")
-
-        for tensor_name, tensor in (
-            ("X", self.x),
-            ("W", self.w),
-            ("output", self.output),
-        ):
-            if tensor.rank < 2:
-                raise ValueError(f"{tensor_name} tensor rank must be >= 2 for GEMM")
-
-        if self.x.elem_bytes != self.w.elem_bytes or self.x.elem_bytes != self.output.elem_bytes:
-            raise ValueError("GEMM tensors must agree on element size")
-
-        if self.x.dims[-1] != self.w.dims[-2]:
-            raise ValueError("GEMM tensors must agree on K dimension")
-        if self.x.dims[-2] != self.output.dims[-2]:
-            raise ValueError("GEMM X and output must agree on M dimension")
-        if self.w.dims[-1] != self.output.dims[-1]:
-            raise ValueError("GEMM W and output must agree on N dimension")
-
-        if self.y is not None:
-            if self.y.rank != self.output.rank or self.y.dims != self.output.dims:
-                raise ValueError("Y input must match output tensor shape exactly")
-            if self.y.elem_bytes != self.output.elem_bytes:
-                raise ValueError("Y input element size must match output tensor")
-
-
 def lower_gemm_node(
     node_name: str,
     inputs: tuple[Tensor, ...],
@@ -254,7 +226,7 @@ def lower_gemm_node(
 
     return (
         OpKind.GEMM,
-        GemmLayerOp(
+        GemmPayload(
             x=inputs[0],
             w=inputs[1],
             y=inputs[2] if len(inputs) == 3 else None,
@@ -279,7 +251,7 @@ def lower_matmul_node(
 
     return (
         OpKind.GEMM,
-        GemmLayerOp(
+        GemmPayload(
             x=inputs[0],
             w=inputs[1],
             y=None,

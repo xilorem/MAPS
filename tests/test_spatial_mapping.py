@@ -5,8 +5,8 @@ from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.layout import TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common import default_sharded_layout
-from MAPS.ops.defs.gemm import GemmLayerOp
+from MAPS.ops.common import OpPayload, TileWork, sharded_layout
+from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.planner.spatial_mapping import (
     _edge_placement_costs,
     _edge_shape_costs,
@@ -34,8 +34,29 @@ def _test_mesh(width: int, height: int) -> Mesh:
     )
 
 
+def test_sharded_layout_accepts_explicit_mesh_axes() -> None:
+    mesh = _test_mesh(2, 2)
+    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
+    tensor = Tensor(name="t", rank=4, dims=(2, 3, 5, 7), elem_bytes=2)
+
+    layout = sharded_layout(
+        tensor,
+        submesh,
+        logical_shape=(2, 2),
+        mesh_x_axis=1,
+        mesh_y_axis=3,
+    )
+
+    assert layout.mesh_x.mode.name == "SHARD"
+    assert layout.mesh_x.tensor_axis == 1
+    assert layout.mesh_y.mode.name == "SHARD"
+    assert layout.mesh_y.tensor_axis == 3
+    assert layout.logical_width == 2
+    assert layout.logical_height == 2
+
+
 @dataclass(frozen=True)
-class _PlacementSensitiveTileWork:
+class _PlacementSensitiveTileWork(TileWork):
     @property
     def input_slices(self) -> tuple:
         return ()
@@ -71,14 +92,14 @@ class _PlacementSensitiveCostModel:
 
 
 @dataclass(frozen=True)
-class _PlacementSensitiveOp:
+class _PlacementSensitiveOp(OpPayload):
     output: Tensor
 
     @property
     def cost_model(self) -> object:
         return _PlacementSensitiveCostModel()
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
@@ -86,12 +107,12 @@ class _PlacementSensitiveOp:
         del submesh, logical_shape
         return ()
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (default_sharded_layout(self.output, submesh, logical_shape),)
+        return (sharded_layout(self.output, submesh, logical_shape),)
 
     def build_tile_work(
         self,
@@ -102,15 +123,11 @@ class _PlacementSensitiveOp:
         del input_layouts, output_layouts, tile
         return _PlacementSensitiveTileWork()
 
-    def validate_tensors(self, inputs, outputs, tensors) -> None:
-        del inputs, outputs, tensors
-
-
 def _gemm_node(name: str, m: int, k: int, n: int) -> Node:
     x = Tensor(name=f"{name}_x", rank=2, dims=(m, k), elem_bytes=2)
     w = Tensor(name=f"{name}_w", rank=2, dims=(k, n), elem_bytes=2)
     out = Tensor(name=f"{name}_out", rank=2, dims=(m, n), elem_bytes=2)
-    op = GemmLayerOp(x=x, w=w, y=None, output=out)
+    op = GemmPayload(x=x, w=w, y=None, output=out)
     return Node(
         name=name,
         kind=OpKind.GEMM,
@@ -179,7 +196,7 @@ def test_layout_on_submesh_preserves_logical_shape() -> None:
     planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
     node = _gemm_node("node", 8, 8, 8)
-    layout = node.payload.default_output_layouts(
+    layout = node.payload.output_layouts(
         planning_submesh,
         logical_shape=(3, 2),
     )[0]
@@ -203,11 +220,11 @@ def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
     planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
     placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
     node = _gemm_node("node", 8, 8, 8)
-    input_layouts = node.payload.default_input_layouts(
+    input_layouts = node.payload.input_layouts(
         planning_submesh,
         logical_shape=(3, 2),
     )
-    output_layouts = node.payload.default_output_layouts(
+    output_layouts = node.payload.output_layouts(
         planning_submesh,
         logical_shape=(3, 2),
     )
@@ -236,7 +253,7 @@ def test_map_spatially_returns_non_overlapping_submeshes_on_4x4_mesh() -> None:
     consumer_input = producer.outputs[0]
     consumer_w = Tensor(name="consumer_w", rank=2, dims=(8, 8), elem_bytes=2)
     consumer_out = Tensor(name="consumer_out", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer_op = GemmLayerOp(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
+    consumer_op = GemmPayload(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
     consumer = Node(
         name="consumer",
         kind=OpKind.GEMM,
@@ -281,7 +298,7 @@ def test_map_spatially_prunes_placement_candidates() -> None:
         kind=OpKind.GEMM,
         inputs=(consumer_input, consumer_w),
         outputs=(consumer_out,),
-        payload=GemmLayerOp(x=consumer_input, w=consumer_w, y=None, output=consumer_out),
+        payload=GemmPayload(x=consumer_input, w=consumer_w, y=None, output=consumer_out),
     )
     graph = Graph(
         name="g",
@@ -478,7 +495,7 @@ def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
         kind=OpKind.GEMM,
         inputs=(node1_input, node1_w),
         outputs=(node1_out,),
-        payload=GemmLayerOp(x=node1_input, w=node1_w, y=None, output=node1_out),
+        payload=GemmPayload(x=node1_input, w=node1_w, y=None, output=node1_out),
     )
 
     node2_input = node1.outputs[0]
@@ -489,7 +506,7 @@ def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
         kind=OpKind.GEMM,
         inputs=(node2_input, node2_w),
         outputs=(node2_out,),
-        payload=GemmLayerOp(x=node2_input, w=node2_w, y=None, output=node2_out),
+        payload=GemmPayload(x=node2_input, w=node2_w, y=None, output=node2_out),
     )
 
     node3_input = node2.outputs[0]
@@ -500,7 +517,7 @@ def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
         kind=OpKind.GEMM,
         inputs=(node3_input, node3_w),
         outputs=(node3_out,),
-        payload=GemmLayerOp(x=node3_input, w=node3_w, y=None, output=node3_out),
+        payload=GemmPayload(x=node3_input, w=node3_w, y=None, output=node3_out),
     )
 
     graph = Graph(
@@ -545,7 +562,7 @@ def test_edge_shape_costs_include_l2_data_movement() -> None:
     consumer_input = producer.outputs[0]
     consumer_w = Tensor(name="consumer_w", rank=2, dims=(8, 8), elem_bytes=2)
     consumer_out = Tensor(name="consumer_out", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer_op = GemmLayerOp(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
+    consumer_op = GemmPayload(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
     consumer = Node(
         name="consumer",
         kind=OpKind.GEMM,
@@ -578,7 +595,7 @@ def test_stage_io_costs_skip_initializer_reads() -> None:
         kind=OpKind.GEMM,
         inputs=(x, w),
         outputs=(out,),
-        payload=GemmLayerOp(x=x, w=w, y=None, output=out),
+        payload=GemmPayload(x=x, w=w, y=None, output=out),
     )
     graph = Graph(
         name="g",

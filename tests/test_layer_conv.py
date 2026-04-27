@@ -4,11 +4,11 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.costs.conv_cost import ConvCostModel
-from MAPS.ops.defs.conv import ConvLayerOp
+from MAPS.ops.defs.conv import ConvPayload
 
 
-def _make_conv_op() -> ConvLayerOp:
-    return ConvLayerOp(
+def _make_conv_op() -> ConvPayload:
+    return ConvPayload(
         x=Tensor(name="x", rank=4, dims=(1, 3, 5, 5), elem_bytes=2),
         w=Tensor(name="w", rank=4, dims=(8, 3, 3, 3), elem_bytes=2),
         b=Tensor(name="b", rank=1, dims=(8,), elem_bytes=2),

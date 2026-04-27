@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from MAPS.arch import Mesh
-from MAPS.core.layout import TensorSlice
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import Transition, TransitionFragment, TransitionMode
 from MAPS.cost_models.transport_cost import TransferKind, TransferLeg, TransportCostModel
@@ -24,16 +23,9 @@ class TransitionCost:
     total_cost: int = 0
 
 
-def _tensor_slice_num_elements(tensor_slice: TensorSlice) -> int:
-    total = 1
-    for dim in tensor_slice.dims:
-        total *= dim.length
-    return total
-
-
 def _transition_fragment_num_bytes(fragment: TransitionFragment,
                                    tensor: Tensor) -> int:
-    return _tensor_slice_num_elements(fragment.src_slice) * tensor.elem_bytes
+    return fragment.src_slice.num_elements * tensor.elem_bytes
 
 
 def _aggregate_transition(legs: tuple[TransferLeg, ...],

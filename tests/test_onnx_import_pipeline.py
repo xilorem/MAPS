@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 from MAPS.core.graph import Graph
 from MAPS.importers.onnx.importer import import_onnx_graph
-from MAPS.ops.defs.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmPayload
 
 
 def test_load_onnx_model_requires_existing_path() -> None:
@@ -34,7 +34,7 @@ def test_import_onnx_graph_returns_scheduler_graph_ir() -> None:
         assert isinstance(lowered_graph, Graph)
         assert lowered_graph.name == "tiny_matmul"
         assert len(lowered_graph.nodes) == 1
-        assert isinstance(lowered_graph.nodes[0].payload, GemmLayerOp)
+        assert isinstance(lowered_graph.nodes[0].payload, GemmPayload)
 
 
 def _print_graph(graph: Graph) -> None:

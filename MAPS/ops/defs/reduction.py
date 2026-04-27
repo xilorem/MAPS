@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
 from MAPS.arch import Tile, WorkKind
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice
+from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice, TensorSliceRef
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common.base import TensorSliceRef, default_sharded_layout, tensor_slice_num_elements
-
-if TYPE_CHECKING:
-    from MAPS.core.layer import LayerInput, LayerOutput
+from MAPS.ops.common.payload import OpPayload, sharded_layout
+from MAPS.ops.common.tile_work import TileWork
 
 
 @dataclass(frozen=True)
-class ReductionTileWork:
+class ReductionTileWork(TileWork):
     """Concrete reduction slices associated with one tile."""
 
     work_kind: WorkKind
@@ -42,11 +38,11 @@ class ReductionTileWork:
         return self.l1_bytes <= tile.memory.size
 
     def operation_count(self) -> int:
-        return tensor_slice_num_elements(self.input_slice)
+        return self.input_slice.num_elements
 
 
 @dataclass(frozen=True)
-class ReduceOp:
+class ReductionPayload(OpPayload):
     """Configured tile-local reduction operation."""
 
     op_name: str
@@ -57,9 +53,10 @@ class ReduceOp:
 
     def __post_init__(self) -> None:
         if self.work_kind not in (WorkKind.REDUCE_SUM, WorkKind.REDUCE_MAX):
-            raise ValueError("ReduceOp work_kind must be REDUCE_SUM or REDUCE_MAX")
+            raise ValueError("ReductionPayload work_kind must be REDUCE_SUM or REDUCE_MAX")
         if self.axis < 0 or self.axis >= self.x.rank:
-            raise ValueError("ReduceOp axis must be in input tensor rank")
+            raise ValueError("ReductionPayload axis must be in input tensor rank")
+        self.validate_shapes()
 
     @property
     def cost_model(self) -> object:
@@ -67,19 +64,19 @@ class ReduceOp:
 
         return ReductionCostModel(work_kind=self.work_kind)
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (default_sharded_layout(self.x, submesh, logical_shape),)
+        return (sharded_layout(self.x, submesh, logical_shape),)
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        input_layout = default_sharded_layout(self.x, submesh, logical_shape)
+        input_layout = sharded_layout(self.x, submesh, logical_shape)
         mesh_x = input_layout.mesh_x
         mesh_y = input_layout.mesh_y
         if mesh_x.tensor_axis == self.axis:
@@ -109,24 +106,6 @@ class ReduceOp:
             input_slice=tile_tensor_slice(self.x, input_layouts[0], tile),
             output_slice=tile_tensor_slice(self.output, output_layouts[0], tile),
         )
-
-    def validate_tensors(
-        self,
-        inputs: tuple[LayerInput, ...],
-        outputs: tuple[LayerOutput, ...],
-        tensors: tuple[Tensor, ...],
-    ) -> None:
-        if len(inputs) != 1:
-            raise ValueError(f"{self.op_name} stages require exactly one input")
-        if len(outputs) != 1:
-            raise ValueError(f"{self.op_name} stages require exactly one output")
-        bound_inputs = tuple(tensors[binding.tensor_id] for binding in inputs)
-        bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)
-        if self.x not in bound_inputs:
-            raise ValueError(f"{self.op_name} input tensor is not present in stage inputs")
-        if self.output not in bound_outputs:
-            raise ValueError(f"{self.op_name} output tensor is not present in stage outputs")
-        self.validate_shapes()
 
     def validate_shapes(self) -> None:
         if self.x.rank != self.output.rank:

@@ -4,11 +4,11 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
-from MAPS.ops.defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
+from MAPS.ops.defs.elementwise import BinaryElementwisePayload, UnaryElementwisePayload
 
 
-def _make_exp_op() -> UnaryElementwiseOp:
-    return UnaryElementwiseOp(
+def _make_exp_op() -> UnaryElementwisePayload:
+    return UnaryElementwisePayload(
         op_name="Exp",
         x=Tensor(name="x", rank=2, dims=(4, 8), elem_bytes=2),
         output=Tensor(name="out", rank=2, dims=(4, 8), elem_bytes=2),
@@ -67,7 +67,7 @@ def test_binary_elementwise_tile_work_supports_broadcasting() -> None:
     lhs = Tensor(name="lhs", rank=2, dims=(4, 8), elem_bytes=2)
     rhs = Tensor(name="rhs", rank=1, dims=(8,), elem_bytes=2)
     output = Tensor(name="out", rank=2, dims=(4, 8), elem_bytes=2)
-    op = BinaryElementwiseOp(op_name="Add", lhs=lhs, rhs=rhs, output=output)
+    op = BinaryElementwisePayload(op_name="Add", lhs=lhs, rhs=rhs, output=output)
     output_layout = TensorLayout(
         submesh=submesh,
         mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),

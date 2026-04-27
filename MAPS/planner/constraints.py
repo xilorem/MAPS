@@ -85,7 +85,7 @@ def _infer_input_slice_for_tile(
             output_layouts[0].effective_logical_height,
         )
         tile_work = node.payload.build_tile_work(
-            input_layouts=node.payload.default_input_layouts(submesh, logical_shape=logical_shape),
+            input_layouts=node.payload.input_layouts(submesh, logical_shape=logical_shape),
             output_layouts=output_layouts,
             tile=tile,
         )
@@ -294,20 +294,6 @@ def _validate_stage(
             kind="stage_tensor_binding_invalid",
             message=f"stage {stage_id}: {exc}",
         )
-
-    for layer_idx, layer in enumerate(stage.layers):
-        node = layer.node
-        validator = getattr(node.payload, "validate_tensors", None)
-        if validator is None:
-            continue
-        try:
-            validator(layer.inputs, layer.outputs, pipeline.tensors)
-        except ValueError as exc:
-            _append_violation(
-                violations,
-                kind="stage_payload_invalid",
-                message=f"stage {stage_id} layer {layer_idx} node '{node.name}': {exc}",
-            )
 
     for layer_idx, layer in enumerate(stage.layers):
         for binding_idx, binding in enumerate(layer.inputs):

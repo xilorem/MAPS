@@ -98,3 +98,15 @@ class TensorSlice:
         for dim in self.dims:
             total *= dim.length
         return total
+
+
+@dataclass(frozen=True)
+class TensorSliceRef:
+    """A concrete slice tied to its logical tensor."""
+
+    tensor: Tensor
+    tensor_slice: TensorSlice
+
+    @property
+    def num_bytes(self) -> int:
+        return self.tensor.slice_num_bytes(self.tensor_slice)

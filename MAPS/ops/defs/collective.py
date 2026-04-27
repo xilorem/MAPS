@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
 from MAPS.arch import Tile
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice
+from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice, TensorSliceRef
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common.base import TensorSliceRef, default_sharded_layout
-
-if TYPE_CHECKING:
-    from MAPS.core.layer import LayerInput, LayerOutput
+from MAPS.ops.common.payload import OpPayload, sharded_layout
+from MAPS.ops.common.tile_work import TileWork
 
 
 @dataclass(frozen=True)
-class CollectiveTileWork:
+class CollectiveTileWork(TileWork):
     """Concrete collective slices associated with one tile."""
 
     x: Tensor
@@ -42,7 +38,7 @@ class CollectiveTileWork:
 
 
 @dataclass(frozen=True)
-class AllReduceOp:
+class AllReducePayload(OpPayload):
     """Configured intra-stage allreduce collective."""
 
     op_name: str
@@ -53,9 +49,10 @@ class AllReduceOp:
 
     def __post_init__(self) -> None:
         if self.reduction not in {"sum", "max"}:
-            raise ValueError("AllReduceOp reduction must be 'sum' or 'max'")
+            raise ValueError("AllReducePayload reduction must be 'sum' or 'max'")
         if self.collective_axis not in {"x", "y"}:
-            raise ValueError("AllReduceOp collective_axis must be 'x' or 'y'")
+            raise ValueError("AllReducePayload collective_axis must be 'x' or 'y'")
+        self.validate_shapes()
 
     @property
     def cost_model(self) -> object:
@@ -66,14 +63,14 @@ class AllReduceOp:
             collective_axis=self.collective_axis,
         )
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
         return (self._collective_layout(self.x, submesh, logical_shape),)
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
@@ -86,7 +83,7 @@ class AllReduceOp:
         submesh: Submesh,
         logical_shape: tuple[int, int] | None,
     ) -> TensorLayout:
-        layout = default_sharded_layout(tensor, submesh, logical_shape)
+        layout = sharded_layout(tensor, submesh, logical_shape)
         mesh_x = layout.mesh_x
         mesh_y = layout.mesh_y
         if self.collective_axis == "x":
@@ -113,24 +110,6 @@ class AllReduceOp:
             input_slice=tile_tensor_slice(self.x, input_layouts[0], tile),
             output_slice=tile_tensor_slice(self.output, output_layouts[0], tile),
         )
-
-    def validate_tensors(
-        self,
-        inputs: tuple[LayerInput, ...],
-        outputs: tuple[LayerOutput, ...],
-        tensors: tuple[Tensor, ...],
-    ) -> None:
-        if len(inputs) != 1:
-            raise ValueError(f"{self.op_name} stages require exactly one input")
-        if len(outputs) != 1:
-            raise ValueError(f"{self.op_name} stages require exactly one output")
-        bound_inputs = tuple(tensors[binding.tensor_id] for binding in inputs)
-        bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)
-        if self.x not in bound_inputs:
-            raise ValueError(f"{self.op_name} input tensor is not present in stage inputs")
-        if self.output not in bound_outputs:
-            raise ValueError(f"{self.op_name} output tensor is not present in stage outputs")
-        self.validate_shapes()
 
     def validate_shapes(self) -> None:
         if self.x.rank != self.output.rank or self.x.dims != self.output.dims:

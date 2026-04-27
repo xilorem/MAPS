@@ -1,23 +1,23 @@
 """Operation definitions."""
 
-from .collective import AllReduceOp, CollectiveTileWork
-from .conv import ConvLayerOp, ConvTileWork
-from .elementwise import BinaryElementwiseOp, ElementwiseTileWork, UnaryElementwiseOp
-from .gemm import GemmLayerOp, GemmTileWork
-from .reduction import ReduceOp, ReductionTileWork
-from .softmax import SoftmaxOp
+from .collective import AllReducePayload, CollectiveTileWork
+from .conv import ConvPayload, ConvTileWork
+from .elementwise import BinaryElementwisePayload, ElementwiseTileWork, UnaryElementwisePayload
+from .gemm import GemmPayload, GemmTileWork
+from .reduction import ReductionPayload, ReductionTileWork
+from .softmax import SoftmaxPayload
 
 __all__ = [
-    "AllReduceOp",
-    "BinaryElementwiseOp",
+    "AllReducePayload",
+    "BinaryElementwisePayload",
     "CollectiveTileWork",
-    "ConvLayerOp",
+    "ConvPayload",
     "ConvTileWork",
     "ElementwiseTileWork",
-    "GemmLayerOp",
+    "GemmPayload",
     "GemmTileWork",
-    "ReduceOp",
+    "ReductionPayload",
     "ReductionTileWork",
-    "SoftmaxOp",
-    "UnaryElementwiseOp",
+    "SoftmaxPayload",
+    "UnaryElementwisePayload",
 ]

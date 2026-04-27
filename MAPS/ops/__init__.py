@@ -1,18 +1,18 @@
 """Op-specific planner IR."""
 
-from .defs.collective import AllReduceOp
-from .defs.conv import ConvLayerOp
-from .defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
-from .defs.gemm import GemmLayerOp
-from .defs.reduction import ReduceOp
-from .defs.softmax import SoftmaxOp
+from .defs.collective import AllReducePayload
+from .defs.conv import ConvPayload
+from .defs.elementwise import BinaryElementwisePayload, UnaryElementwisePayload
+from .defs.gemm import GemmPayload
+from .defs.reduction import ReductionPayload
+from .defs.softmax import SoftmaxPayload
 
 __all__ = [
-    "AllReduceOp",
-    "BinaryElementwiseOp",
-    "ConvLayerOp",
-    "GemmLayerOp",
-    "ReduceOp",
-    "SoftmaxOp",
-    "UnaryElementwiseOp",
+    "AllReducePayload",
+    "BinaryElementwisePayload",
+    "ConvPayload",
+    "GemmPayload",
+    "ReductionPayload",
+    "SoftmaxPayload",
+    "UnaryElementwisePayload",
 ]

@@ -1002,7 +1002,7 @@ def _stage_io_costs(
                 (
                     _stage_l2_read_cost(
                         node.inputs,
-                        node.payload.default_input_layouts(submesh),
+                        node.payload.input_layouts(submesh),
                         graph_inputs,
                         model,
                     )
@@ -1014,7 +1014,7 @@ def _stage_io_costs(
                 (
                     _stage_l2_write_cost(
                         node.outputs,
-                        node.payload.default_output_layouts(submesh),
+                        node.payload.output_layouts(submesh),
                         graph_outputs,
                         model,
                     )
@@ -1186,7 +1186,7 @@ def _node_input_layouts(
     """Return one node's input layouts on a concrete submesh."""
 
     if plan is None or not plan.nodes:
-        return node.payload.default_input_layouts(submesh)
+        return node.payload.input_layouts(submesh)
     return _layouts_on_submesh(plan.node_input_layouts[_plan_node_index(plan, node)], submesh)
 
 
@@ -1198,7 +1198,7 @@ def _node_output_layouts(
     """Return one node's output layouts on a concrete submesh."""
 
     if plan is None or not plan.nodes:
-        return node.payload.default_output_layouts(submesh)
+        return node.payload.output_layouts(submesh)
     return _layouts_on_submesh(plan.node_output_layouts[_plan_node_index(plan, node)], submesh)
 
 
@@ -1232,11 +1232,11 @@ def _edge_shape_mode_costs(
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=src_shape[0], height=src_shape[1])
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=0, width=dst_shape[0], height=dst_shape[1])
 
-    src_output_layout = src_node.payload.default_output_layouts(src_submesh)[
+    src_output_layout = src_node.payload.output_layouts(src_submesh)[
         _node_output_index(src_node, tensor)
     ]
-    dst_input_layouts = dst_node.payload.default_input_layouts(dst_submesh)
-    dst_output_layouts = dst_node.payload.default_output_layouts(dst_submesh)
+    dst_input_layouts = dst_node.payload.input_layouts(dst_submesh)
+    dst_output_layouts = dst_node.payload.output_layouts(dst_submesh)
     dst_input_idx = _node_input_index(dst_node, tensor)
     dst_input_layout = dst_input_layouts[dst_input_idx]
 

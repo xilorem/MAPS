@@ -3,11 +3,11 @@ from MAPS.chips import magia_mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.costs.reduction_cost import ReductionCostModel
-from MAPS.ops.defs.reduction import ReduceOp
+from MAPS.ops.defs.reduction import ReductionPayload
 
 
-def _make_reduce_sum_op() -> ReduceOp:
-    return ReduceOp(
+def _make_reduce_sum_op() -> ReductionPayload:
+    return ReductionPayload(
         op_name="ReduceSum",
         x=Tensor(name="x", rank=2, dims=(4, 8), elem_bytes=2),
         output=Tensor(name="out", rank=2, dims=(4, 1), elem_bytes=2),
@@ -21,8 +21,8 @@ def test_reduce_op_replicates_output_along_reduced_mesh_axis() -> None:
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
     op = _make_reduce_sum_op()
 
-    input_layout = op.default_input_layouts(submesh)[0]
-    output_layout = op.default_output_layouts(submesh)[0]
+    input_layout = op.input_layouts(submesh)[0]
+    output_layout = op.output_layouts(submesh)[0]
     tile0_work = op.build_tile_work(
         input_layouts=(input_layout,),
         output_layouts=(output_layout,),
@@ -54,8 +54,8 @@ def test_reduce_cost_counts_input_elements() -> None:
     mesh = magia_mesh()
     submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=1, height=1)
     op = _make_reduce_sum_op()
-    input_layout = op.default_input_layouts(submesh)[0]
-    output_layout = op.default_output_layouts(submesh)[0]
+    input_layout = op.input_layouts(submesh)[0]
+    output_layout = op.output_layouts(submesh)[0]
     tile_work = op.build_tile_work(
         input_layouts=(input_layout,),
         output_layouts=(output_layout,),

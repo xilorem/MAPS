@@ -1,11 +1,10 @@
 """Shared operation helpers."""
 
-from .base import OpPayload, TensorSliceRef, TileWork, default_sharded_layout, tensor_slice_num_elements
+from .payload import OpPayload, sharded_layout
+from .tile_work import TileWork
 
 __all__ = [
     "OpPayload",
-    "TensorSliceRef",
     "TileWork",
-    "default_sharded_layout",
-    "tensor_slice_num_elements",
+    "sharded_layout",
 ]

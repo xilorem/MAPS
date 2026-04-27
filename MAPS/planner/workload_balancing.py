@@ -33,10 +33,10 @@ def balance_workload(
 ) -> dict[int, StagePlan]:
     """Greedily assign tile counts to selected stages by internal rectangle growth.
 
-    Each selected stage searches physically placeable tile counts and all
-    logical factor pairs for that count. The returned plan keeps the chosen
-    logical compute shape and layouts; later spatial mapping still chooses
-    physical rectangles.
+    Each selected stage searches physically placeable tile counts. For one tile
+    count, the stage uses one canonical logical shape matching the planning
+    submesh shape; later spatial mapping still chooses the concrete physical
+    rectangle placement.
     """
     resolved_stage_selection = _resolve_stage_selection(graph, stage_selection)
     stage_ids = tuple(resolved_stage_selection)
@@ -138,7 +138,7 @@ def balance_workload(
         worst_stage_improvement = 0
 
         # Rebuild stage plans for the current allocation so candidate growth is
-        # compared against the best logical shape available at each tile count.
+        # compared against the current canonical logical shape at each tile count.
         current_plans = _plan_all_stages_for_tile_counts(
             resolved_stage_selection,
             mesh,
@@ -432,15 +432,6 @@ def _best_growth_tile_count_for_stage(
     return best_candidate_tile_count, best_candidate_improvement
 
 
-def _logical_shape_options(tile_count: int) -> tuple[tuple[int, int], ...]:
-    """Return logical factor pairs whose area equals the stage tile count."""
-    options = []
-    for height in range(1, tile_count + 1):
-        if tile_count % height == 0:
-            options.append((tile_count // height, height))
-    return tuple(options)
-
-
 def _physical_shape_options(tile_count: int, mesh: Mesh) -> tuple[tuple[int, int], ...]:
     """Return rectangular physical shapes with tile_count area that fit the mesh."""
     options = []
@@ -571,18 +562,18 @@ def _planning_submesh(mesh: Mesh, stage_id: int, tile_count: int) -> Submesh:
     )
 
 
-def _default_layouts_for_node(
+def _layouts_for_node(
     node: Node,
     submesh: Submesh,
     logical_shape: tuple[int, int],
 ) -> tuple[tuple, tuple]:
-    """Return the op default input and output layouts for one logical shape."""
+    """Return the op input and output layouts for one logical shape."""
     return (
-        node.payload.default_input_layouts(
+        node.payload.input_layouts(
             submesh,
             logical_shape=logical_shape,
         ),
-        node.payload.default_output_layouts(
+        node.payload.output_layouts(
             submesh,
             logical_shape=logical_shape,
         ),
@@ -608,17 +599,17 @@ def _plan_all_stages_for_tile_counts(
     return plans
 
 
-def _default_layouts_for_stage_nodes(
+def _layouts_for_stage_nodes(
     stage_nodes: tuple[Node, ...],
     submesh: Submesh,
     logical_shape: tuple[int, int],
 ) -> tuple[tuple[tuple, ...], tuple[tuple, ...]]:
-    """Return default layouts for every node inside one selected stage."""
+    """Return layouts for every node inside one selected stage."""
 
     node_input_layouts = []
     node_output_layouts = []
     for node in stage_nodes:
-        input_layouts, output_layouts = _default_layouts_for_node(
+        input_layouts, output_layouts = _layouts_for_node(
             node,
             submesh,
             logical_shape,
@@ -635,89 +626,74 @@ def _best_stage_plan_for_stage_nodes(
     tile_count: int,
     debug: bool,
 ) -> StagePlan:
-    """Choose the lowest-cost logical layout for one selected multi-node stage."""
+    """Build the stage plan for one selected multi-node stage."""
 
     submesh = _planning_submesh(mesh, stage_id, tile_count)
-    best_plan: StagePlan | None = None
-    best_workload: int | None = None
-
-    for logical_shape in _logical_shape_options(tile_count):
-        node_input_layouts, node_output_layouts = _default_layouts_for_stage_nodes(
+    logical_shape = (submesh.width, submesh.height)
+    node_input_layouts, node_output_layouts = _layouts_for_stage_nodes(
+        stage_nodes,
+        submesh,
+        logical_shape,
+    )
+    fits_l1 = True
+    peak_l1_bytes = 0
+    min_l1_capacity = None
+    for tile in submesh.tiles:
+        tile_peak_l1_bytes = 0
+        for node, input_layouts, output_layouts in zip(
             stage_nodes,
-            submesh,
-            logical_shape,
-        )
-        fits_l1 = True
-        peak_l1_bytes = 0
-        min_l1_capacity = None
-        for tile in submesh.tiles:
-            tile_peak_l1_bytes = 0
-            for node, input_layouts, output_layouts in zip(
-                stage_nodes,
-                node_input_layouts,
-                node_output_layouts,
-            ):
-                tile_work = node.payload.build_tile_work(
-                    input_layouts=input_layouts,
-                    output_layouts=output_layouts,
-                    tile=tile,
-                )
-                tile_peak_l1_bytes = max(tile_peak_l1_bytes, tile_work.l1_bytes)
-                if not tile_work.fits_l1(tile):
-                    fits_l1 = False
-                    break
-            peak_l1_bytes = max(peak_l1_bytes, tile_peak_l1_bytes)
-            min_l1_capacity = (
-                tile.memory.size
-                if min_l1_capacity is None
-                else min(min_l1_capacity, tile.memory.size)
+            node_input_layouts,
+            node_output_layouts,
+        ):
+            tile_work = node.payload.build_tile_work(
+                input_layouts=input_layouts,
+                output_layouts=output_layouts,
+                tile=tile,
             )
-            if not fits_l1:
+            tile_peak_l1_bytes = max(tile_peak_l1_bytes, tile_work.l1_bytes)
+            if not tile_work.fits_l1(tile):
+                fits_l1 = False
                 break
-        if not fits_l1:
-            _debug(
-                debug,
-                "[workload_balancing] "
-                f"stage={stage_id} tile_count={tile_count} "
-                f"logical_shape={logical_shape} skip=l1_exceeded "
-                f"peak_l1_bytes={peak_l1_bytes} min_l1_capacity={min_l1_capacity}",
-            )
-            continue
-
-        plan = StagePlan(
-            stage_id=stage_id,
-            tile_count=tile_count,
-            logical_shape=logical_shape,
-            input_layouts=node_input_layouts[0],
-            output_layouts=node_output_layouts[-1],
-            nodes=stage_nodes,
-            node_input_layouts=node_input_layouts,
-            node_output_layouts=node_output_layouts,
+        peak_l1_bytes = max(peak_l1_bytes, tile_peak_l1_bytes)
+        min_l1_capacity = (
+            tile.memory.size
+            if min_l1_capacity is None
+            else min(min_l1_capacity, tile.memory.size)
         )
-        workload = _estimate_stage_group_workload(stage_nodes, plan)
+        if not fits_l1:
+            break
+
+    if not fits_l1:
         _debug(
             debug,
             "[workload_balancing] "
             f"stage={stage_id} tile_count={tile_count} "
-            f"logical_shape={logical_shape} workload={_format_debug_cost(workload)}",
+            f"logical_shape={logical_shape} skip=l1_exceeded "
+            f"peak_l1_bytes={peak_l1_bytes} min_l1_capacity={min_l1_capacity}",
         )
-        if best_workload is None or workload < best_workload:
-            best_plan = plan
-            best_workload = workload
-
-    if best_plan is None:
         raise ValueError(
             f"stage {_stage_label(stage_nodes)} has no valid logical shape for tile_count={tile_count} "
             "using full tile-work slices"
         )
+
+    plan = StagePlan(
+        stage_id=stage_id,
+        tile_count=tile_count,
+        logical_shape=logical_shape,
+        input_layouts=node_input_layouts[0],
+        output_layouts=node_output_layouts[-1],
+        nodes=stage_nodes,
+        node_input_layouts=node_input_layouts,
+        node_output_layouts=node_output_layouts,
+    )
+    workload = _estimate_stage_group_workload(stage_nodes, plan)
     _debug(
         debug,
         "[workload_balancing] "
         f"stage={stage_id} tile_count={tile_count} "
-        f"choose_logical_shape={best_plan.logical_shape} "
-        f"workload={_format_debug_cost(best_workload)}",
+        f"logical_shape={logical_shape} workload={_format_debug_cost(workload)}",
     )
-    return best_plan
+    return plan
 
 
 def _best_stage_plan_for_tile_count(

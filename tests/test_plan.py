@@ -9,7 +9,7 @@ from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import TransitionMode
-from MAPS.ops.defs.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.planner import PlannerConstraints, validate_constraints
 import MAPS.planner.plan as plan_module
 from MAPS.planner.plan import _build_pipeline_from_graph, build_pipeline
@@ -38,8 +38,8 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
     w1 = Tensor(name="w1", rank=2, dims=(8, 6), elem_bytes=2)
     z = Tensor(name="z", rank=2, dims=(4, 6), elem_bytes=2)
 
-    gemm0 = GemmLayerOp(x=x, w=w0, y=None, output=y)
-    gemm1 = GemmLayerOp(x=y, w=w1, y=None, output=z)
+    gemm0 = GemmPayload(x=x, w=w0, y=None, output=y)
+    gemm1 = GemmPayload(x=y, w=w1, y=None, output=z)
     node0 = Node(
         name="gemm_0",
         kind=OpKind.GEMM,
@@ -73,15 +73,15 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
         stage_id=0,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm0.default_input_layouts(src_submesh, logical_shape=(2, 1)),
-        output_layouts=gemm0.default_output_layouts(src_submesh, logical_shape=(2, 1)),
+        input_layouts=gemm0.input_layouts(src_submesh, logical_shape=(2, 1)),
+        output_layouts=gemm0.output_layouts(src_submesh, logical_shape=(2, 1)),
     )
     plan1 = StagePlan(
         stage_id=1,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm1.default_input_layouts(dst_submesh, logical_shape=(2, 1)),
-        output_layouts=gemm1.default_output_layouts(dst_submesh, logical_shape=(2, 1)),
+        input_layouts=gemm1.input_layouts(dst_submesh, logical_shape=(2, 1)),
+        output_layouts=gemm1.output_layouts(dst_submesh, logical_shape=(2, 1)),
     )
 
     pipeline = _build_pipeline_from_graph(graph, mesh, {0: plan0, 1: plan1})
@@ -139,9 +139,9 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
     w2 = Tensor(name="w2", rank=2, dims=(6, 5), elem_bytes=2)
     z = Tensor(name="z", rank=2, dims=(4, 5), elem_bytes=2)
 
-    gemm0 = GemmLayerOp(x=x, w=w0, y=None, output=y0)
-    gemm1 = GemmLayerOp(x=y0, w=w1, y=None, output=y1)
-    gemm2 = GemmLayerOp(x=y1, w=w2, y=None, output=z)
+    gemm0 = GemmPayload(x=x, w=w0, y=None, output=y0)
+    gemm1 = GemmPayload(x=y0, w=w1, y=None, output=y1)
+    gemm2 = GemmPayload(x=y1, w=w2, y=None, output=z)
     node0 = Node(
         name="gemm_0",
         kind=OpKind.GEMM,
@@ -184,27 +184,27 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
         stage_id=0,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm0.default_input_layouts(stage0_submesh, logical_shape=(2, 1)),
-        output_layouts=gemm1.default_output_layouts(stage0_submesh, logical_shape=(2, 1)),
+        input_layouts=gemm0.input_layouts(stage0_submesh, logical_shape=(2, 1)),
+        output_layouts=gemm1.output_layouts(stage0_submesh, logical_shape=(2, 1)),
         nodes=(node0, node1),
         node_input_layouts=(
-            gemm0.default_input_layouts(stage0_submesh, logical_shape=(2, 1)),
-            gemm1.default_input_layouts(stage0_submesh, logical_shape=(2, 1)),
+            gemm0.input_layouts(stage0_submesh, logical_shape=(2, 1)),
+            gemm1.input_layouts(stage0_submesh, logical_shape=(2, 1)),
         ),
         node_output_layouts=(
-            gemm0.default_output_layouts(stage0_submesh, logical_shape=(2, 1)),
-            gemm1.default_output_layouts(stage0_submesh, logical_shape=(2, 1)),
+            gemm0.output_layouts(stage0_submesh, logical_shape=(2, 1)),
+            gemm1.output_layouts(stage0_submesh, logical_shape=(2, 1)),
         ),
     )
     plan1 = StagePlan(
         stage_id=1,
         tile_count=2,
         logical_shape=(2, 1),
-        input_layouts=gemm2.default_input_layouts(stage1_submesh, logical_shape=(2, 1)),
-        output_layouts=gemm2.default_output_layouts(stage1_submesh, logical_shape=(2, 1)),
+        input_layouts=gemm2.input_layouts(stage1_submesh, logical_shape=(2, 1)),
+        output_layouts=gemm2.output_layouts(stage1_submesh, logical_shape=(2, 1)),
         nodes=(node2,),
-        node_input_layouts=(gemm2.default_input_layouts(stage1_submesh, logical_shape=(2, 1)),),
-        node_output_layouts=(gemm2.default_output_layouts(stage1_submesh, logical_shape=(2, 1)),),
+        node_input_layouts=(gemm2.input_layouts(stage1_submesh, logical_shape=(2, 1)),),
+        node_output_layouts=(gemm2.output_layouts(stage1_submesh, logical_shape=(2, 1)),),
     )
 
     pipeline = _build_pipeline_from_graph(graph, mesh, {0: plan0, 1: plan1})
@@ -261,7 +261,7 @@ def test_build_pipeline_parses_balances_maps_and_builds_transitions() -> None:
         assert transition.src_layer_id == 0
         assert transition.dst_layer_id == 1
         assert transition.src_layout == pipeline.stages[0].layers[-1].outputs[0].layout
-        assert transition.dst_layout == pipeline.stages[1].layers[0].node.payload.default_input_layouts(
+        assert transition.dst_layout == pipeline.stages[1].layers[0].node.payload.input_layouts(
             pipeline.stages[1].submesh,
             logical_shape=(
                 transition.dst_layout.effective_logical_width,

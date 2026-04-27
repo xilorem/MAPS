@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from MAPS.core.graph import OpKind
 from MAPS.importers.onnx.graph_parser import parse_graph
 from MAPS.importers.onnx.utils import build_tensor_producer_table
-from MAPS.ops import SoftmaxOp
-from MAPS.ops.defs.collective import AllReduceOp
-from MAPS.ops.defs.conv import ConvLayerOp
-from MAPS.ops.defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
-from MAPS.ops.defs.gemm import GemmLayerOp
+from MAPS.ops import SoftmaxPayload
+from MAPS.ops.defs.collective import AllReducePayload
+from MAPS.ops.defs.conv import ConvPayload
+from MAPS.ops.defs.elementwise import BinaryElementwisePayload, UnaryElementwisePayload
+from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.ops.registry import get_onnx_lowerer, register_op, registered_ops
-from MAPS.ops.defs.reduction import ReduceOp
+from MAPS.ops.defs.reduction import ReductionPayload
 from MAPS.ops.spec import OpSpec
 from MAPS.transforms import decompose_graph
 
@@ -38,7 +38,7 @@ def test_parse_graph_lowers_matmul_to_graph_node() -> None:
     assert lowered_graph.name == "tiny_matmul"
     assert len(lowered_graph.nodes) == 1
     assert lowered_graph.nodes[0].kind is OpKind.GEMM
-    assert isinstance(lowered_graph.nodes[0].payload, GemmLayerOp)
+    assert isinstance(lowered_graph.nodes[0].payload, GemmPayload)
     assert lowered_graph.nodes[0].inputs[0].name == "x"
     assert lowered_graph.nodes[0].inputs[1].name == "w"
     assert lowered_graph.nodes[0].outputs[0].name == "y"
@@ -64,7 +64,7 @@ def test_parse_graph_supports_gemm_bias() -> None:
     lowered_graph = parse_graph(graph)
 
     assert len(lowered_graph.nodes) == 1
-    assert isinstance(lowered_graph.nodes[0].payload, GemmLayerOp)
+    assert isinstance(lowered_graph.nodes[0].payload, GemmPayload)
     assert lowered_graph.nodes[0].payload.y is not None
     assert lowered_graph.nodes[0].payload.y.name == "b"
 
@@ -93,7 +93,7 @@ def test_parse_graph_lowers_conv_to_graph_node() -> None:
 
     assert len(lowered_graph.nodes) == 1
     assert lowered_graph.nodes[0].kind is OpKind.CONV
-    assert isinstance(lowered_graph.nodes[0].payload, ConvLayerOp)
+    assert isinstance(lowered_graph.nodes[0].payload, ConvPayload)
     assert lowered_graph.nodes[0].payload.strides == (2, 2)
     assert lowered_graph.nodes[0].payload.pads == (1, 1, 1, 1)
     assert lowered_graph.nodes[0].payload.b is not None
@@ -115,7 +115,7 @@ def test_parse_graph_lowers_exp_to_graph_node() -> None:
 
     assert len(lowered_graph.nodes) == 1
     assert lowered_graph.nodes[0].kind is OpKind.ELEMENTWISE
-    assert isinstance(lowered_graph.nodes[0].payload, UnaryElementwiseOp)
+    assert isinstance(lowered_graph.nodes[0].payload, UnaryElementwisePayload)
     assert lowered_graph.nodes[0].payload.op_name == "Exp"
     assert lowered_graph.nodes[0].payload.x.name == "x"
     assert lowered_graph.nodes[0].payload.output.name == "y"
@@ -137,7 +137,7 @@ def test_parse_graph_lowers_binary_elementwise_to_graph_node() -> None:
 
     assert len(lowered_graph.nodes) == 1
     assert lowered_graph.nodes[0].kind is OpKind.ELEMENTWISE
-    assert isinstance(lowered_graph.nodes[0].payload, BinaryElementwiseOp)
+    assert isinstance(lowered_graph.nodes[0].payload, BinaryElementwisePayload)
     assert lowered_graph.nodes[0].payload.op_name == "Add"
 
 
@@ -157,7 +157,7 @@ def test_parse_graph_keeps_softmax_as_high_level_node() -> None:
     assert len(lowered_graph.nodes) == 1
     assert lowered_graph.nodes[0].name == "softmax_0"
     assert lowered_graph.nodes[0].kind is OpKind.CUSTOM
-    assert isinstance(lowered_graph.nodes[0].payload, SoftmaxOp)
+    assert isinstance(lowered_graph.nodes[0].payload, SoftmaxPayload)
     assert lowered_graph.nodes[0].payload.axis == 1
 
 
@@ -183,13 +183,13 @@ def test_decompose_graph_lowers_softmax_to_grouped_internal_nodes() -> None:
         "softmax_0__allreduce_sum",
         "softmax_0__div",
     )
-    assert isinstance(lowered_graph.nodes[0].payload, ReduceOp)
-    assert isinstance(lowered_graph.nodes[1].payload, AllReduceOp)
-    assert isinstance(lowered_graph.nodes[2].payload, BinaryElementwiseOp)
-    assert isinstance(lowered_graph.nodes[3].payload, UnaryElementwiseOp)
-    assert isinstance(lowered_graph.nodes[4].payload, ReduceOp)
-    assert isinstance(lowered_graph.nodes[5].payload, AllReduceOp)
-    assert isinstance(lowered_graph.nodes[6].payload, BinaryElementwiseOp)
+    assert isinstance(lowered_graph.nodes[0].payload, ReductionPayload)
+    assert isinstance(lowered_graph.nodes[1].payload, AllReducePayload)
+    assert isinstance(lowered_graph.nodes[2].payload, BinaryElementwisePayload)
+    assert isinstance(lowered_graph.nodes[3].payload, UnaryElementwisePayload)
+    assert isinstance(lowered_graph.nodes[4].payload, ReductionPayload)
+    assert isinstance(lowered_graph.nodes[5].payload, AllReducePayload)
+    assert isinstance(lowered_graph.nodes[6].payload, BinaryElementwisePayload)
     assert all(
         node.attributes["stage_group_id"] == "softmax_0::softmax"
         for node in lowered_graph.nodes
@@ -242,7 +242,7 @@ def test_decompose_graph_lowers_softmax_without_collectives_outside_default_mesh
         "softmax_0__reduce_sum",
         "softmax_0__div",
     )
-    assert all(not isinstance(node.payload, AllReduceOp) for node in lowered_graph.nodes)
+    assert all(not isinstance(node.payload, AllReducePayload) for node in lowered_graph.nodes)
 
 
 def test_op_registry_reports_supported_onnx_ops() -> None:

@@ -2,7 +2,7 @@ from MAPS.arch import L1Memory, L2Memory, Mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.defs.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.planner import balance_workload
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import (
@@ -19,7 +19,7 @@ def _gemm_node(name: str, m: int, k: int, n: int) -> Node:
     x = Tensor(name=f"{name}_x", rank=2, dims=(m, k), elem_bytes=2)
     w = Tensor(name=f"{name}_w", rank=2, dims=(k, n), elem_bytes=2)
     out = Tensor(name=f"{name}_out", rank=2, dims=(m, n), elem_bytes=2)
-    op = GemmLayerOp(x=x, w=w, y=None, output=out)
+    op = GemmPayload(x=x, w=w, y=None, output=out)
     return Node(
         name=name,
         kind=OpKind.GEMM,
@@ -33,7 +33,7 @@ def _batched_gemm_node(name: str, b: int, m: int, k: int, n: int) -> Node:
     x = Tensor(name=f"{name}_x", rank=3, dims=(b, m, k), elem_bytes=2)
     w = Tensor(name=f"{name}_w", rank=3, dims=(b, k, n), elem_bytes=2)
     out = Tensor(name=f"{name}_out", rank=3, dims=(b, m, n), elem_bytes=2)
-    op = GemmLayerOp(x=x, w=w, y=None, output=out)
+    op = GemmPayload(x=x, w=w, y=None, output=out)
     return Node(
         name=name,
         kind=OpKind.GEMM,
@@ -164,7 +164,7 @@ def test_balance_workload_can_use_selected_stage_groups() -> None:
     assert plans[1].nodes == (node2,)
 
 
-def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> None:
+def test_best_stage_plan_uses_canonical_logical_shape_for_fixed_tile_count() -> None:
     node = _gemm_node("gemm", m=4, k=16, n=7)
     mesh = _mesh_with_l1(6, 1, l1_size=32768)
 
@@ -177,7 +177,7 @@ def test_best_stage_plan_selects_best_logical_shape_for_fixed_tile_count() -> No
     )
 
     assert plan.tile_count == 6
-    assert plan.logical_shape == (3, 2)
+    assert plan.logical_shape == (6, 1)
 
 
 def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:

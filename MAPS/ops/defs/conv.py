@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
 from MAPS.arch import Tile
 from MAPS.core.graph import OpKind
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
+from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice, TensorSliceRef
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common.base import TensorSliceRef
+from MAPS.ops.common.payload import OpPayload
+from MAPS.ops.common.tile_work import TileWork
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
 
-if TYPE_CHECKING:
-    from MAPS.core.layer import LayerInput, LayerOutput
-
 
 @dataclass(frozen=True)
-class ConvTileWork:
+class ConvTileWork(TileWork):
     """Concrete Conv slices associated with one tile."""
 
     output_slice: TensorSlice
@@ -66,7 +62,7 @@ def _full_range(dim: int) -> TensorRange:
 
 
 @dataclass(frozen=True)
-class ConvLayerOp:
+class ConvPayload(OpPayload):
     """2D NCHW Conv payload modeled as im2col plus GEMM.
 
     The planner-side convention is:
@@ -100,6 +96,7 @@ class ConvLayerOp:
             raise ValueError("Conv dilations must be > 0")
         if self.group != 1:
             raise NotImplementedError("grouped Conv is not implemented")
+        self.validate_shapes()
 
     @property
     def cost_model(self) -> object:
@@ -107,7 +104,7 @@ class ConvLayerOp:
 
         return ConvCostModel()
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
@@ -120,7 +117,7 @@ class ConvLayerOp:
             return layouts
         return layouts + (self._b_layout(submesh, logical_shape),)
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
@@ -274,31 +271,6 @@ class ConvLayerOp:
             output=self.output,
         )
 
-    def validate_tensors(
-        self,
-        inputs: tuple[LayerInput, ...],
-        outputs: tuple[LayerOutput, ...],
-        tensors: tuple[Tensor, ...],
-    ) -> None:
-        if len(inputs) < 2:
-            raise ValueError("Conv stages require at least two inputs")
-        if len(outputs) == 0:
-            raise ValueError("Conv stages require at least one output")
-
-        bound_inputs = tuple(tensors[binding.tensor_id] for binding in inputs)
-        bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)
-
-        if self.x not in bound_inputs:
-            raise ValueError("Conv X tensor is not present in stage inputs")
-        if self.w not in bound_inputs:
-            raise ValueError("Conv W tensor is not present in stage inputs")
-        if self.b is not None and self.b not in bound_inputs:
-            raise ValueError("Conv bias tensor is not present in stage inputs")
-        if self.output not in bound_outputs:
-            raise ValueError("Conv output tensor is not present in stage outputs")
-
-        self.validate_shapes()
-
     def validate_shapes(self) -> None:
         if self.x.rank != 4:
             raise ValueError("Conv X tensor must be NCHW rank 4")
@@ -364,7 +336,7 @@ def lower_conv_node(
 
     return (
         OpKind.CONV,
-        ConvLayerOp(
+        ConvPayload(
             x=inputs[0],
             w=inputs[1],
             b=inputs[2] if len(inputs) == 3 else None,

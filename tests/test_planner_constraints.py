@@ -7,7 +7,7 @@ from MAPS.core.pipeline import Pipeline
 from MAPS.core.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.defs.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.planner import PlannerConstraints, validate_constraints
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
@@ -44,7 +44,7 @@ def test_validate_constraints_accepts_consistent_single_stage_pipeline() -> None
         kind=OpKind.GEMM,
         inputs=(tensors[0], tensors[1]),
         outputs=(tensors[2],),
-        payload=GemmLayerOp(x=tensors[0], w=tensors[1], y=None, output=tensors[2]),
+        payload=GemmPayload(x=tensors[0], w=tensors[1], y=None, output=tensors[2]),
     )
     stage = Stage(
         name="stage0",

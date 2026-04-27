@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
 from MAPS.arch import Tile, WorkKind
 from MAPS.core.graph import OpKind
-from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
+from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice, TensorSliceRef
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common.base import TensorSliceRef, default_sharded_layout, tensor_slice_num_elements
+from MAPS.ops.common.payload import OpPayload, sharded_layout
+from MAPS.ops.common.tile_work import TileWork
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
 
-if TYPE_CHECKING:
-    from MAPS.core.layer import LayerInput, LayerOutput
-
 
 @dataclass(frozen=True)
-class ElementwiseTileWork:
+class ElementwiseTileWork(TileWork):
     """Concrete elementwise slices associated with one tile."""
 
     work_kind: WorkKind
@@ -48,11 +44,11 @@ class ElementwiseTileWork:
         return self.l1_bytes <= tile.memory.size
 
     def operation_count(self) -> int:
-        return tensor_slice_num_elements(self.output_slice)
+        return self.output_slice.num_elements
 
 
 @dataclass(frozen=True)
-class UnaryElementwiseOp:
+class UnaryElementwisePayload(OpPayload):
     """Configured unary elementwise operation."""
 
     op_name: str
@@ -60,25 +56,28 @@ class UnaryElementwiseOp:
     output: Tensor
     work_kind: WorkKind = WorkKind.ELEMENTWISE
 
+    def __post_init__(self) -> None:
+        self.validate_shapes()
+
     @property
     def cost_model(self) -> object:
         from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
 
         return ElementwiseCostModel(work_kind=self.work_kind)
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (default_sharded_layout(self.x, submesh, logical_shape),)
+        return (sharded_layout(self.x, submesh, logical_shape),)
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (default_sharded_layout(self.output, submesh, logical_shape),)
+        return (sharded_layout(self.output, submesh, logical_shape),)
 
     def required_input_slices(self, output_slice: TensorSlice) -> tuple[TensorSlice, ...]:
         if output_slice.rank != self.x.rank:
@@ -101,24 +100,6 @@ class UnaryElementwiseOp:
             input_tile_slices=self.required_input_slices(output_slice),
         )
 
-    def validate_tensors(
-        self,
-        inputs: tuple[LayerInput, ...],
-        outputs: tuple[LayerOutput, ...],
-        tensors: tuple[Tensor, ...],
-    ) -> None:
-        if len(inputs) != 1:
-            raise ValueError(f"{self.op_name} stages require exactly one input")
-        if len(outputs) != 1:
-            raise ValueError(f"{self.op_name} stages require exactly one output")
-        bound_inputs = tuple(tensors[binding.tensor_id] for binding in inputs)
-        bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)
-        if self.x not in bound_inputs:
-            raise ValueError(f"{self.op_name} input tensor is not present in stage inputs")
-        if self.output not in bound_outputs:
-            raise ValueError(f"{self.op_name} output tensor is not present in stage outputs")
-        self.validate_shapes()
-
     def validate_shapes(self) -> None:
         if self.x.rank != self.output.rank or self.x.dims != self.output.dims:
             raise ValueError(f"{self.op_name} input and output shapes must match")
@@ -127,7 +108,7 @@ class UnaryElementwiseOp:
 
 
 @dataclass(frozen=True)
-class BinaryElementwiseOp:
+class BinaryElementwisePayload(OpPayload):
     """Configured binary elementwise operation with ONNX-style broadcasting."""
 
     op_name: str
@@ -136,28 +117,31 @@ class BinaryElementwiseOp:
     output: Tensor
     work_kind: WorkKind = WorkKind.ELEMENTWISE
 
+    def __post_init__(self) -> None:
+        self.validate_shapes()
+
     @property
     def cost_model(self) -> object:
         from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
 
         return ElementwiseCostModel(work_kind=self.work_kind)
 
-    def default_input_layouts(
+    def input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
         return (
-            default_sharded_layout(self.lhs, submesh, logical_shape),
-            default_sharded_layout(self.rhs, submesh, logical_shape),
+            sharded_layout(self.lhs, submesh, logical_shape),
+            sharded_layout(self.rhs, submesh, logical_shape),
         )
 
-    def default_output_layouts(
+    def output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (default_sharded_layout(self.output, submesh, logical_shape),)
+        return (sharded_layout(self.output, submesh, logical_shape),)
 
     def required_input_slices(self, output_slice: TensorSlice) -> tuple[TensorSlice, ...]:
         return (
@@ -180,26 +164,6 @@ class BinaryElementwiseOp:
             inputs=(self.lhs, self.rhs),
             input_tile_slices=self.required_input_slices(output_slice),
         )
-
-    def validate_tensors(
-        self,
-        inputs: tuple[LayerInput, ...],
-        outputs: tuple[LayerOutput, ...],
-        tensors: tuple[Tensor, ...],
-    ) -> None:
-        if len(inputs) != 2:
-            raise ValueError(f"{self.op_name} stages require exactly two inputs")
-        if len(outputs) != 1:
-            raise ValueError(f"{self.op_name} stages require exactly one output")
-        bound_inputs = tuple(tensors[binding.tensor_id] for binding in inputs)
-        bound_outputs = tuple(tensors[binding.tensor_id] for binding in outputs)
-        if self.lhs not in bound_inputs:
-            raise ValueError(f"{self.op_name} lhs tensor is not present in stage inputs")
-        if self.rhs not in bound_inputs:
-            raise ValueError(f"{self.op_name} rhs tensor is not present in stage inputs")
-        if self.output not in bound_outputs:
-            raise ValueError(f"{self.op_name} output tensor is not present in stage outputs")
-        self.validate_shapes()
 
     def validate_shapes(self) -> None:
         _validate_broadcastable(self.lhs, self.output, self.op_name)
@@ -264,7 +228,7 @@ def _lower_unary_elementwise_node(
         raise ValueError(f"{op_name} node '{node_name}' must have exactly 1 output")
     return (
         OpKind.ELEMENTWISE,
-        UnaryElementwiseOp(
+        UnaryElementwisePayload(
             op_name=op_name,
             x=inputs[0],
             output=outputs[0],
@@ -287,7 +251,7 @@ def _lower_binary_elementwise_node(
         raise ValueError(f"{op_name} node '{node_name}' must have exactly 1 output")
     return (
         OpKind.ELEMENTWISE,
-        BinaryElementwiseOp(
+        BinaryElementwisePayload(
             op_name=op_name,
             lhs=inputs[0],
             rhs=inputs[1],
