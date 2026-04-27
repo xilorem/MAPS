@@ -2,7 +2,7 @@ from MAPS.arch import L1Memory, L2Memory, Mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmLayerOp
 from MAPS.planner import balance_workload
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import (

@@ -7,7 +7,7 @@ from MAPS.core.pipeline import Pipeline
 from MAPS.core.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmLayerOp
 from MAPS.planner import PlannerConstraints, validate_constraints
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 

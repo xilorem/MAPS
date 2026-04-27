@@ -1,26 +1,25 @@
-"""Reduction op payloads."""
+"""Collective communication op payloads."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from MAPS.arch import Tile, WorkKind
+from MAPS.arch import Tile
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import TensorSliceRef, default_sharded_layout, tensor_slice_num_elements
+from MAPS.ops.common.base import TensorSliceRef, default_sharded_layout
 
 if TYPE_CHECKING:
     from MAPS.core.layer import LayerInput, LayerOutput
 
 
 @dataclass(frozen=True)
-class ReductionTileWork:
-    """Concrete reduction slices associated with one tile."""
+class CollectiveTileWork:
+    """Concrete collective slices associated with one tile."""
 
-    work_kind: WorkKind
     x: Tensor
     output: Tensor
     input_slice: TensorSlice
@@ -41,59 +40,65 @@ class ReductionTileWork:
     def fits_l1(self, tile: Tile) -> bool:
         return self.l1_bytes <= tile.memory.size
 
-    def operation_count(self) -> int:
-        return tensor_slice_num_elements(self.input_slice)
-
 
 @dataclass(frozen=True)
-class ReduceOp:
-    """Configured tile-local reduction operation."""
+class AllReduceOp:
+    """Configured intra-stage allreduce collective."""
 
     op_name: str
     x: Tensor
     output: Tensor
-    axis: int
-    work_kind: WorkKind
+    reduction: str
+    collective_axis: str = "x"
 
     def __post_init__(self) -> None:
-        if self.work_kind not in (WorkKind.REDUCE_SUM, WorkKind.REDUCE_MAX):
-            raise ValueError("ReduceOp work_kind must be REDUCE_SUM or REDUCE_MAX")
-        if self.axis < 0 or self.axis >= self.x.rank:
-            raise ValueError("ReduceOp axis must be in input tensor rank")
+        if self.reduction not in {"sum", "max"}:
+            raise ValueError("AllReduceOp reduction must be 'sum' or 'max'")
+        if self.collective_axis not in {"x", "y"}:
+            raise ValueError("AllReduceOp collective_axis must be 'x' or 'y'")
 
     @property
     def cost_model(self) -> object:
-        from MAPS.cost_models.reduction_cost import ReductionCostModel
+        from MAPS.ops.costs.collective_cost import AllReduceCostModel
 
-        return ReductionCostModel(work_kind=self.work_kind)
+        return AllReduceCostModel(
+            reduction=self.reduction,
+            collective_axis=self.collective_axis,
+        )
 
     def default_input_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        return (default_sharded_layout(self.x, submesh, logical_shape),)
+        return (self._collective_layout(self.x, submesh, logical_shape),)
 
     def default_output_layouts(
         self,
         submesh: Submesh,
         logical_shape: tuple[int, int] | None = None,
     ) -> tuple[TensorLayout, ...]:
-        input_layout = default_sharded_layout(self.x, submesh, logical_shape)
-        mesh_x = input_layout.mesh_x
-        mesh_y = input_layout.mesh_y
-        if mesh_x.tensor_axis == self.axis:
+        return (self._collective_layout(self.output, submesh, logical_shape),)
+
+    def _collective_layout(
+        self,
+        tensor: Tensor,
+        submesh: Submesh,
+        logical_shape: tuple[int, int] | None,
+    ) -> TensorLayout:
+        layout = default_sharded_layout(tensor, submesh, logical_shape)
+        mesh_x = layout.mesh_x
+        mesh_y = layout.mesh_y
+        if self.collective_axis == "x":
             mesh_x = LayoutAxis(mode=LayoutAxisMode.REPLICATE)
-        if mesh_y.tensor_axis == self.axis:
+        else:
             mesh_y = LayoutAxis(mode=LayoutAxisMode.REPLICATE)
-        return (
-            TensorLayout(
-                submesh=submesh,
-                mesh_x=mesh_x,
-                mesh_y=mesh_y,
-                logical_width=input_layout.logical_width,
-                logical_height=input_layout.logical_height,
-            ),
+        return TensorLayout(
+            submesh=submesh,
+            mesh_x=mesh_x,
+            mesh_y=mesh_y,
+            logical_width=layout.logical_width,
+            logical_height=layout.logical_height,
         )
 
     def build_tile_work(
@@ -101,9 +106,8 @@ class ReduceOp:
         input_layouts: tuple[TensorLayout, ...],
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
-    ) -> ReductionTileWork:
-        return ReductionTileWork(
-            work_kind=self.work_kind,
+    ) -> CollectiveTileWork:
+        return CollectiveTileWork(
             x=self.x,
             output=self.output,
             input_slice=tile_tensor_slice(self.x, input_layouts[0], tile),
@@ -129,13 +133,7 @@ class ReduceOp:
         self.validate_shapes()
 
     def validate_shapes(self) -> None:
-        if self.x.rank != self.output.rank:
-            raise ValueError(f"{self.op_name} input and output ranks must match")
+        if self.x.rank != self.output.rank or self.x.dims != self.output.dims:
+            raise ValueError(f"{self.op_name} input and output shapes must match")
         if self.x.elem_bytes != self.output.elem_bytes:
             raise ValueError(f"{self.op_name} input and output element sizes must match")
-        for axis, (input_dim, output_dim) in enumerate(zip(self.x.dims, self.output.dims)):
-            expected_output_dim = 1 if axis == self.axis else input_dim
-            if output_dim != expected_output_dim:
-                raise ValueError(
-                    f"{self.op_name} output dim {axis} must be {expected_output_dim}, got {output_dim}"
-                )

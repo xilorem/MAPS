@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from MAPS.arch import Tile
+from MAPS.core.graph import OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import TensorSliceRef
+from MAPS.ops.common.base import TensorSliceRef
+from MAPS.ops.registry import register_op
+from MAPS.ops.spec import OpSpec
 
 if TYPE_CHECKING:
     from MAPS.core.layer import LayerInput, LayerOutput
@@ -100,7 +103,7 @@ class ConvLayerOp:
 
     @property
     def cost_model(self) -> object:
-        from MAPS.cost_models.conv_cost import ConvCostModel
+        from MAPS.ops.costs.conv_cost import ConvCostModel
 
         return ConvCostModel()
 
@@ -342,3 +345,42 @@ class ConvLayerOp:
         ) // stride_w + 1
         if (output_h, output_w) != (expected_h, expected_w):
             raise ValueError("Conv output spatial dimensions do not match parameters")
+
+
+def lower_conv_node(
+    node_name: str,
+    inputs: tuple[Tensor, ...],
+    outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
+) -> tuple[OpKind, object]:
+    """Lower one ONNX Conv node into scheduler-side Conv semantics."""
+
+    if len(inputs) not in (2, 3):
+        raise ValueError(f"Conv node '{node_name}' must have 2 or 3 inputs")
+    if len(outputs) != 1:
+        raise ValueError(f"Conv node '{node_name}' must have exactly 1 output")
+    if "auto_pad" in attributes and attributes["auto_pad"] != "NOTSET":
+        raise NotImplementedError("Conv auto_pad is not implemented")
+
+    return (
+        OpKind.CONV,
+        ConvLayerOp(
+            x=inputs[0],
+            w=inputs[1],
+            b=inputs[2] if len(inputs) == 3 else None,
+            output=outputs[0],
+            strides=tuple(attributes.get("strides", (1, 1))),
+            pads=tuple(attributes.get("pads", (0, 0, 0, 0))),
+            dilations=tuple(attributes.get("dilations", (1, 1))),
+            group=int(attributes.get("group", 1)),
+        ),
+    )
+
+
+register_op(
+    OpSpec(
+        name="conv",
+        onnx_names=("Conv",),
+        lower_onnx=lower_conv_node,
+    )
+)

@@ -1,10 +1,11 @@
 """Op-specific planner IR."""
 
-from .collective import AllReduceOp
-from .conv import ConvLayerOp
-from .elementwise import BinaryElementwiseOp, UnaryElementwiseOp
-from .gemm import GemmLayerOp
-from .reduction import ReduceOp
+from .defs.collective import AllReduceOp
+from .defs.conv import ConvLayerOp
+from .defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
+from .defs.gemm import GemmLayerOp
+from .defs.reduction import ReduceOp
+from .defs.softmax import SoftmaxOp
 
 __all__ = [
     "AllReduceOp",
@@ -12,5 +13,6 @@ __all__ = [
     "ConvLayerOp",
     "GemmLayerOp",
     "ReduceOp",
+    "SoftmaxOp",
     "UnaryElementwiseOp",
 ]

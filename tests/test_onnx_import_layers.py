@@ -1,13 +1,19 @@
 """Tests for ONNX lowering into the shared graph IR."""
 
+from dataclasses import dataclass
+
 from MAPS.core.graph import OpKind
 from MAPS.importers.onnx.graph_parser import parse_graph
 from MAPS.importers.onnx.utils import build_tensor_producer_table
-from MAPS.ops.collective import AllReduceOp
-from MAPS.ops.conv import ConvLayerOp
-from MAPS.ops.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
-from MAPS.ops.gemm import GemmLayerOp
-from MAPS.ops.reduction import ReduceOp
+from MAPS.ops import SoftmaxOp
+from MAPS.ops.defs.collective import AllReduceOp
+from MAPS.ops.defs.conv import ConvLayerOp
+from MAPS.ops.defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
+from MAPS.ops.defs.gemm import GemmLayerOp
+from MAPS.ops.registry import get_onnx_lowerer, register_op, registered_ops
+from MAPS.ops.defs.reduction import ReduceOp
+from MAPS.ops.spec import OpSpec
+from MAPS.transforms import decompose_graph
 
 
 def _make_tiny_matmul_graph():
@@ -135,7 +141,7 @@ def test_parse_graph_lowers_binary_elementwise_to_graph_node() -> None:
     assert lowered_graph.nodes[0].payload.op_name == "Add"
 
 
-def test_parse_graph_lowers_softmax_to_grouped_internal_nodes() -> None:
+def test_parse_graph_keeps_softmax_as_high_level_node() -> None:
     try:
         from onnx import TensorProto, helper
     except ImportError:
@@ -147,6 +153,26 @@ def test_parse_graph_lowers_softmax_to_grouped_internal_nodes() -> None:
     graph = helper.make_graph([node], "tiny_softmax", [x], [y])
 
     lowered_graph = parse_graph(graph)
+
+    assert len(lowered_graph.nodes) == 1
+    assert lowered_graph.nodes[0].name == "softmax_0"
+    assert lowered_graph.nodes[0].kind is OpKind.CUSTOM
+    assert isinstance(lowered_graph.nodes[0].payload, SoftmaxOp)
+    assert lowered_graph.nodes[0].payload.axis == 1
+
+
+def test_decompose_graph_lowers_softmax_to_grouped_internal_nodes() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 8])
+    node = helper.make_node("Softmax", inputs=["x"], outputs=["y"], name="softmax_0", axis=-1)
+    graph = helper.make_graph([node], "tiny_softmax", [x], [y])
+
+    lowered_graph = decompose_graph(parse_graph(graph))
 
     assert tuple(node.name for node in lowered_graph.nodes) == (
         "softmax_0__reduce_max",
@@ -196,7 +222,7 @@ def test_parse_graph_lowers_softmax_to_grouped_internal_nodes() -> None:
     assert output_edges[0].tensor.name == "y"
 
 
-def test_parse_graph_lowers_softmax_without_collectives_outside_default_mesh_axes() -> None:
+def test_decompose_graph_lowers_softmax_without_collectives_outside_default_mesh_axes() -> None:
     try:
         from onnx import TensorProto, helper
     except ImportError:
@@ -207,7 +233,7 @@ def test_parse_graph_lowers_softmax_without_collectives_outside_default_mesh_axe
     node = helper.make_node("Softmax", inputs=["x"], outputs=["y"], name="softmax_0", axis=0)
     graph = helper.make_graph([node], "tiny_softmax_no_collective", [x], [y])
 
-    lowered_graph = parse_graph(graph)
+    lowered_graph = decompose_graph(parse_graph(graph))
 
     assert tuple(node.name for node in lowered_graph.nodes) == (
         "softmax_0__reduce_max",
@@ -217,6 +243,61 @@ def test_parse_graph_lowers_softmax_without_collectives_outside_default_mesh_axe
         "softmax_0__div",
     )
     assert all(not isinstance(node.payload, AllReduceOp) for node in lowered_graph.nodes)
+
+
+def test_op_registry_reports_supported_onnx_ops() -> None:
+    assert get_onnx_lowerer("MatMul") is not None
+    assert get_onnx_lowerer("Gemm") is not None
+    assert get_onnx_lowerer("Conv") is not None
+    assert get_onnx_lowerer("Exp") is not None
+    assert get_onnx_lowerer("Softmax") is not None
+    assert {spec.name for spec in registered_ops()} >= {"matmul", "gemm", "conv", "softmax"}
+
+
+@dataclass(frozen=True)
+class _FakePayload:
+    x: object
+    output: object
+
+
+def _lower_fake_identity(
+    node_name: str,
+    inputs: tuple[object, ...],
+    outputs: tuple[object, ...],
+    attributes: dict[str, object],
+) -> tuple[OpKind, object]:
+    del node_name, attributes
+    if len(inputs) != 1 or len(outputs) != 1:
+        raise ValueError("FakeIdentityTestOp expects exactly one input and one output")
+    return OpKind.CUSTOM, _FakePayload(x=inputs[0], output=outputs[0])
+
+
+def test_parse_graph_uses_registry_for_new_test_op() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    register_op(
+        OpSpec(
+            name="fake_identity_test",
+            onnx_names=("FakeIdentityTestOp",),
+            lower_onnx=_lower_fake_identity,
+            payload_type=_FakePayload,
+        )
+    )
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 8])
+    node = helper.make_node("FakeIdentityTestOp", inputs=["x"], outputs=["y"], name="fake_0")
+    graph = helper.make_graph([node], "tiny_fake_identity", [x], [y])
+
+    lowered_graph = parse_graph(graph)
+
+    assert len(lowered_graph.nodes) == 1
+    assert lowered_graph.nodes[0].name == "fake_0"
+    assert lowered_graph.nodes[0].kind is OpKind.CUSTOM
+    assert isinstance(lowered_graph.nodes[0].payload, _FakePayload)
 
 
 def test_build_tensor_producer_table_tracks_outputs() -> None:

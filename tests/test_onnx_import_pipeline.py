@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 from MAPS.core.graph import Graph
 from MAPS.importers.onnx.importer import import_onnx_graph
-from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmLayerOp
 
 
 def test_load_onnx_model_requires_existing_path() -> None:

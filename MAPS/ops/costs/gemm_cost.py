@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
-from MAPS.ops.gemm import GemmTileWork
+from MAPS.ops.defs.gemm import GemmTileWork
 
 
 @dataclass(frozen=True)

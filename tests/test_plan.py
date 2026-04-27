@@ -9,7 +9,7 @@ from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import TransitionMode
-from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmLayerOp
 from MAPS.planner import PlannerConstraints, validate_constraints
 import MAPS.planner.plan as plan_module
 from MAPS.planner.plan import _build_pipeline_from_graph, build_pipeline

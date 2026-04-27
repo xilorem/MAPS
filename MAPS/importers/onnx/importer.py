@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from MAPS.core.graph import Graph
+from MAPS.transforms import decompose_graph
 
 from .graph_parser import parse_graph
 
@@ -33,4 +34,4 @@ def import_onnx_graph(path: str | Path) -> Graph:
     """Import one ONNX model directly into the shared scheduler graph IR."""
 
     model = load_onnx_model(path)
-    return parse_graph(model.graph, graph_name=model.graph.name or Path(path).stem)
+    return decompose_graph(parse_graph(model.graph, graph_name=model.graph.name or Path(path).stem))

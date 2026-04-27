@@ -3,8 +3,8 @@ from MAPS.chips import magia_mesh
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.cost_models.elementwise_cost import ElementwiseCostModel
-from MAPS.ops.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
+from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
+from MAPS.ops.defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
 
 
 def _make_exp_op() -> UnaryElementwiseOp:

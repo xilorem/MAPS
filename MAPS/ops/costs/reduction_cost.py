@@ -1,21 +1,25 @@
-"""Reusable elementwise cost model."""
+"""Reduction cost model."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
-from MAPS.ops.elementwise import ElementwiseTileWork
+from MAPS.ops.defs.reduction import ReductionTileWork
 
 
 @dataclass(frozen=True)
-class ElementwiseCostModel:
-    """Elementwise cycle model backed by tile devices."""
+class ReductionCostModel:
+    """Tile-local reduction cycle model backed by tile devices."""
 
-    work_kind: WorkKind = WorkKind.ELEMENTWISE
+    work_kind: WorkKind
     preferred_device_kind: DeviceKind = DeviceKind.SCALAR
 
-    def cost(self, tile_work: ElementwiseTileWork, tile: Tile) -> int:
+    def __post_init__(self) -> None:
+        if self.work_kind not in (WorkKind.REDUCE_SUM, WorkKind.REDUCE_MAX):
+            raise ValueError("ReductionCostModel work_kind must be REDUCE_SUM or REDUCE_MAX")
+
+    def cost(self, tile_work: ReductionTileWork, tile: Tile) -> int:
         devices = tuple(device for device in tile.devices if device.supports(self.work_kind))
         preferred = tuple(
             device for device in devices if device.kind is self.preferred_device_kind

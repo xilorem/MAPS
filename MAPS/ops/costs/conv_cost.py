@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
 from MAPS.core.layout import TensorRange, TensorSlice
-from MAPS.ops.conv import ConvTileWork
-from MAPS.ops.gemm import GemmTileWork
+from MAPS.ops.defs.conv import ConvTileWork
+from MAPS.ops.defs.gemm import GemmTileWork
 
 
 @dataclass(frozen=True)

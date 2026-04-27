@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from MAPS.arch import Tile, WorkKind
+from MAPS.core.graph import OpKind
 from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import TensorSliceRef, default_sharded_layout, tensor_slice_num_elements
+from MAPS.ops.common.base import TensorSliceRef, default_sharded_layout, tensor_slice_num_elements
+from MAPS.ops.registry import register_op
+from MAPS.ops.spec import OpSpec
 
 if TYPE_CHECKING:
     from MAPS.core.layer import LayerInput, LayerOutput
@@ -59,7 +62,7 @@ class UnaryElementwiseOp:
 
     @property
     def cost_model(self) -> object:
-        from MAPS.cost_models.elementwise_cost import ElementwiseCostModel
+        from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
 
         return ElementwiseCostModel(work_kind=self.work_kind)
 
@@ -135,7 +138,7 @@ class BinaryElementwiseOp:
 
     @property
     def cost_model(self) -> object:
-        from MAPS.cost_models.elementwise_cost import ElementwiseCostModel
+        from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
 
         return ElementwiseCostModel(work_kind=self.work_kind)
 
@@ -229,3 +232,111 @@ def _broadcast_input_slice(
         else:
             dims.append(output_slice.dims[output_axis])
     return TensorSlice(rank=input_tensor.rank, dims=tuple(dims))
+
+
+UNARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
+    "Abs": WorkKind.ELEMENTWISE,
+    "Exp": WorkKind.EXP,
+    "Neg": WorkKind.ELEMENTWISE,
+    "Sqrt": WorkKind.ELEMENTWISE,
+}
+
+BINARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
+    "Add": WorkKind.ELEMENTWISE,
+    "Div": WorkKind.ELEMENTWISE,
+    "Mul": WorkKind.ELEMENTWISE,
+    "Pow": WorkKind.ELEMENTWISE,
+    "Sub": WorkKind.ELEMENTWISE,
+}
+
+
+def _lower_unary_elementwise_node(
+    op_name: str,
+    node_name: str,
+    inputs: tuple[Tensor, ...],
+    outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
+) -> tuple[OpKind, object]:
+    del attributes
+    if len(inputs) != 1:
+        raise ValueError(f"{op_name} node '{node_name}' must have exactly 1 input")
+    if len(outputs) != 1:
+        raise ValueError(f"{op_name} node '{node_name}' must have exactly 1 output")
+    return (
+        OpKind.ELEMENTWISE,
+        UnaryElementwiseOp(
+            op_name=op_name,
+            x=inputs[0],
+            output=outputs[0],
+            work_kind=UNARY_ELEMENTWISE_OPS[op_name],
+        ),
+    )
+
+
+def _lower_binary_elementwise_node(
+    op_name: str,
+    node_name: str,
+    inputs: tuple[Tensor, ...],
+    outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
+) -> tuple[OpKind, object]:
+    del attributes
+    if len(inputs) != 2:
+        raise ValueError(f"{op_name} node '{node_name}' must have exactly 2 inputs")
+    if len(outputs) != 1:
+        raise ValueError(f"{op_name} node '{node_name}' must have exactly 1 output")
+    return (
+        OpKind.ELEMENTWISE,
+        BinaryElementwiseOp(
+            op_name=op_name,
+            lhs=inputs[0],
+            rhs=inputs[1],
+            output=outputs[0],
+            work_kind=BINARY_ELEMENTWISE_OPS[op_name],
+        ),
+    )
+
+
+def _make_unary_lowerer(op_name: str):
+    def lowerer(
+        node_name: str,
+        inputs: tuple[Tensor, ...],
+        outputs: tuple[Tensor, ...],
+        attributes: dict[str, object],
+    ) -> tuple[OpKind, object]:
+        return _lower_unary_elementwise_node(op_name, node_name, inputs, outputs, attributes)
+
+    return lowerer
+
+
+def _make_binary_lowerer(op_name: str):
+    def lowerer(
+        node_name: str,
+        inputs: tuple[Tensor, ...],
+        outputs: tuple[Tensor, ...],
+        attributes: dict[str, object],
+    ) -> tuple[OpKind, object]:
+        return _lower_binary_elementwise_node(op_name, node_name, inputs, outputs, attributes)
+
+    return lowerer
+
+
+for _op_name, _work_kind in UNARY_ELEMENTWISE_OPS.items():
+    register_op(
+        OpSpec(
+            name=_op_name.lower(),
+            onnx_names=(_op_name,),
+            lower_onnx=_make_unary_lowerer(_op_name),
+            work_kinds=(_work_kind,),
+        )
+    )
+
+for _op_name, _work_kind in BINARY_ELEMENTWISE_OPS.items():
+    register_op(
+        OpSpec(
+            name=_op_name.lower(),
+            onnx_names=(_op_name,),
+            lower_onnx=_make_binary_lowerer(_op_name),
+            work_kinds=(_work_kind,),
+        )
+    )

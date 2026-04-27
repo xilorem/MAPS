@@ -3,8 +3,8 @@ from MAPS.chips import magia_mesh
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.cost_models.conv_cost import ConvCostModel
-from MAPS.ops.conv import ConvLayerOp
+from MAPS.ops.costs.conv_cost import ConvCostModel
+from MAPS.ops.defs.conv import ConvLayerOp
 
 
 def _make_conv_op() -> ConvLayerOp:

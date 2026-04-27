@@ -5,7 +5,7 @@ from MAPS.chips import magia_mesh
 from MAPS.core.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmLayerOp
 
 
 def _make_layout(submesh: Submesh) -> TensorLayout:

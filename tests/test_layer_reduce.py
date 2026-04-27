@@ -2,8 +2,8 @@ from MAPS.arch import WorkKind
 from MAPS.chips import magia_mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.cost_models.reduction_cost import ReductionCostModel
-from MAPS.ops.reduction import ReduceOp
+from MAPS.ops.costs.reduction_cost import ReductionCostModel
+from MAPS.ops.defs.reduction import ReduceOp
 
 
 def _make_reduce_sum_op() -> ReduceOp:

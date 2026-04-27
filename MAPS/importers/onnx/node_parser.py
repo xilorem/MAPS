@@ -6,8 +6,7 @@ from typing import TYPE_CHECKING
 
 from MAPS.core.graph import Node
 from MAPS.core.tensor import Tensor
-
-from .ops import ONNX_OP_LOWERERS
+from MAPS.ops.registry import get_onnx_lowerer
 
 if TYPE_CHECKING:
     from onnx import NodeProto
@@ -95,7 +94,7 @@ def parse_node(
     )
 
     attributes = parse_node_attributes(node)
-    lowerer = ONNX_OP_LOWERERS.get(node.op_type)
+    lowerer = get_onnx_lowerer(node.op_type)
     if lowerer is None:
         raise NotImplementedError(f"unsupported ONNX op_type: {node.op_type}")
 

@@ -2,10 +2,10 @@ from MAPS.arch import CoreDevice, Device, DeviceKind, L1Memory, SystolicDevice, 
 from MAPS.chips import magia_mesh
 from MAPS.chips.magia import MAGIA_REDMULE_DEVICE
 from MAPS.core.layout import TensorRange, TensorSlice
-from MAPS.cost_models.gemm_cost import GemmCostModel
+from MAPS.ops.costs.gemm_cost import GemmCostModel
 from MAPS.devices.generic import GENERIC_CORE_DEVICE
 from MAPS.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
-from MAPS.ops.gemm import GemmTileWork
+from MAPS.ops.defs.gemm import GemmTileWork
 
 
 def _tile_work(m_size: int = 4, n_size: int = 8, k_size: int = 16) -> GemmTileWork:

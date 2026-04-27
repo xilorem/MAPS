@@ -1,62 +1,118 @@
-"""ONNX softmax graph expansion."""
+"""Softmax high-level op plus decomposition into primitive MAPS ops."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from MAPS.arch import WorkKind
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.tensor import Tensor
-from MAPS.ops import AllReduceOp, BinaryElementwiseOp, ReduceOp, UnaryElementwiseOp
-from MAPS.arch import WorkKind
-
-from ..node_parser import (
-    node_inputs,
-    node_name,
-    node_outputs,
-    parse_node_attributes,
-    resolve_node_tensors,
-)
+from MAPS.ops.defs.collective import AllReduceOp
+from MAPS.ops.defs.elementwise import BinaryElementwiseOp, UnaryElementwiseOp
+from MAPS.ops.defs.reduction import ReduceOp
+from MAPS.ops.registry import register_op
+from MAPS.ops.spec import OpSpec
 
 
-def lower_softmax_node(node, node_idx: int, tensors: dict[str, Tensor]) -> tuple[tuple[Tensor, ...], tuple[Node, ...]]:
-    """Lower one ONNX Softmax node into grouped planner nodes."""
+@dataclass(frozen=True)
+class SoftmaxOp:
+    """High-level softmax payload that must be decomposed before planning."""
 
-    node_name_value = node_name(node, node_idx)
-    input_names = node_inputs(node)
-    output_names = node_outputs(node)
-    input_tensors, output_tensors = resolve_node_tensors(
-        node_name_value,
-        input_names,
-        output_names,
-        tensors,
-    )
-    if len(input_tensors) != 1:
-        raise ValueError(f"Softmax node '{node_name_value}' must have exactly 1 input")
-    if len(output_tensors) != 1:
-        raise ValueError(f"Softmax node '{node_name_value}' must have exactly 1 output")
+    x: Tensor
+    output: Tensor
+    axis: int
 
-    attributes = parse_node_attributes(node)
-    x = input_tensors[0]
-    output = output_tensors[0]
+    @property
+    def cost_model(self) -> object:
+        raise NotImplementedError("SoftmaxOp must be decomposed before cost estimation")
+
+    def default_input_layouts(
+        self,
+        submesh,
+        logical_shape: tuple[int, int] | None = None,
+    ) -> tuple[object, ...]:
+        del submesh, logical_shape
+        raise NotImplementedError("SoftmaxOp must be decomposed before layout selection")
+
+    def default_output_layouts(
+        self,
+        submesh,
+        logical_shape: tuple[int, int] | None = None,
+    ) -> tuple[object, ...]:
+        del submesh, logical_shape
+        raise NotImplementedError("SoftmaxOp must be decomposed before layout selection")
+
+    def build_tile_work(
+        self,
+        input_layouts,
+        output_layouts,
+        tile,
+    ) -> object:
+        del input_layouts, output_layouts, tile
+        raise NotImplementedError("SoftmaxOp must be decomposed before tile work generation")
+
+    def validate_tensors(self, inputs, outputs, tensors) -> None:
+        del tensors
+        if len(inputs) != 1:
+            raise ValueError("Softmax stages require exactly one input")
+        if len(outputs) != 1:
+            raise ValueError("Softmax stages require exactly one output")
+        self.validate_shapes()
+
+    def validate_shapes(self) -> None:
+        if self.axis < 0 or self.axis >= self.x.rank:
+            raise ValueError("Softmax axis must be within input tensor rank")
+        if self.x.rank != self.output.rank or self.x.dims != self.output.dims:
+            raise ValueError("Softmax input and output shapes must match")
+        if self.x.elem_bytes != self.output.elem_bytes:
+            raise ValueError("Softmax input and output element sizes must match")
+
+
+def lower_softmax_onnx(
+    node_name: str,
+    inputs: tuple[Tensor, ...],
+    outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
+) -> tuple[OpKind, object]:
+    """Lower one ONNX Softmax node into one high-level MAPS softmax op."""
+
+    if len(inputs) != 1:
+        raise ValueError(f"Softmax node '{node_name}' must have exactly 1 input")
+    if len(outputs) != 1:
+        raise ValueError(f"Softmax node '{node_name}' must have exactly 1 output")
+
+    x = inputs[0]
+    output = outputs[0]
     axis = int(attributes.get("axis", -1))
     if axis < 0:
         axis += x.rank
-    if axis < 0 or axis >= x.rank:
-        raise ValueError(f"Softmax node '{node_name_value}' axis {axis} is out of range")
-    if x.rank != output.rank or x.dims != output.dims:
-        raise ValueError(f"Softmax node '{node_name_value}' input and output shapes must match")
-    if x.elem_bytes != output.elem_bytes:
-        raise ValueError(f"Softmax node '{node_name_value}' input and output element sizes must match")
+    payload = SoftmaxOp(x=x, output=output, axis=axis)
+    payload.validate_shapes()
+    return OpKind.CUSTOM, payload
 
-    stage_group_id = f"{node_name_value}::softmax"
-    shared_attributes = dict(attributes)
+
+def decompose_softmax_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, ...]]:
+    """Lower one high-level softmax node into grouped primitive planner nodes."""
+
+    if not isinstance(node.payload, SoftmaxOp):
+        raise TypeError("decompose_softmax_node expects a Node with SoftmaxOp payload")
+
+    op = node.payload
+    x = op.x
+    output = op.output
+    axis = op.axis
+
+    stage_group_id = f"{node.name}::softmax"
+    shared_attributes = dict(node.attributes)
     shared_attributes["stage_group_id"] = stage_group_id
 
-    max_local = _reduced_tensor(f"{node_name_value}__max_local", x, axis)
+    max_local = _reduced_tensor(f"{node.name}__max_local", x, axis)
     collective_axis = _collective_axis_for_softmax(x, axis)
     max_value = max_local
     new_tensors: list[Tensor] = [max_local]
     nodes: list[Node] = [
         Node(
-            name=f"{node_name_value}__reduce_max",
+            name=f"{node.name}__reduce_max",
             kind=OpKind.REDUCTION,
             inputs=(x,),
             outputs=(max_local,),
@@ -72,11 +128,11 @@ def lower_softmax_node(node, node_idx: int, tensors: dict[str, Tensor]) -> tuple
     ]
 
     if collective_axis is not None:
-        max_global = _same_shape_tensor(f"{node_name_value}__max_global", max_local)
+        max_global = _same_shape_tensor(f"{node.name}__max_global", max_local)
         new_tensors.append(max_global)
         nodes.append(
             Node(
-                name=f"{node_name_value}__allreduce_max",
+                name=f"{node.name}__allreduce_max",
                 kind=OpKind.CUSTOM,
                 inputs=(max_local,),
                 outputs=(max_global,),
@@ -92,14 +148,14 @@ def lower_softmax_node(node, node_idx: int, tensors: dict[str, Tensor]) -> tuple
         )
         max_value = max_global
 
-    shifted = _same_shape_tensor(f"{node_name_value}__shifted", x)
-    exp = _same_shape_tensor(f"{node_name_value}__exp", x)
-    sum_local = _reduced_tensor(f"{node_name_value}__sum_local", x, axis)
+    shifted = _same_shape_tensor(f"{node.name}__shifted", x)
+    exp = _same_shape_tensor(f"{node.name}__exp", x)
+    sum_local = _reduced_tensor(f"{node.name}__sum_local", x, axis)
     new_tensors.extend((shifted, exp, sum_local))
     nodes.extend(
         (
             Node(
-                name=f"{node_name_value}__sub",
+                name=f"{node.name}__sub",
                 kind=OpKind.ELEMENTWISE,
                 inputs=(x, max_value),
                 outputs=(shifted,),
@@ -113,7 +169,7 @@ def lower_softmax_node(node, node_idx: int, tensors: dict[str, Tensor]) -> tuple
                 attributes={**shared_attributes, "softmax_step": "sub"},
             ),
             Node(
-                name=f"{node_name_value}__exp",
+                name=f"{node.name}__exp",
                 kind=OpKind.ELEMENTWISE,
                 inputs=(shifted,),
                 outputs=(exp,),
@@ -126,7 +182,7 @@ def lower_softmax_node(node, node_idx: int, tensors: dict[str, Tensor]) -> tuple
                 attributes={**shared_attributes, "softmax_step": "exp"},
             ),
             Node(
-                name=f"{node_name_value}__reduce_sum",
+                name=f"{node.name}__reduce_sum",
                 kind=OpKind.REDUCTION,
                 inputs=(exp,),
                 outputs=(sum_local,),
@@ -144,11 +200,11 @@ def lower_softmax_node(node, node_idx: int, tensors: dict[str, Tensor]) -> tuple
 
     sum_value = sum_local
     if collective_axis is not None:
-        sum_global = _same_shape_tensor(f"{node_name_value}__sum_global", sum_local)
+        sum_global = _same_shape_tensor(f"{node.name}__sum_global", sum_local)
         new_tensors.append(sum_global)
         nodes.append(
             Node(
-                name=f"{node_name_value}__allreduce_sum",
+                name=f"{node.name}__allreduce_sum",
                 kind=OpKind.CUSTOM,
                 inputs=(sum_local,),
                 outputs=(sum_global,),
@@ -166,7 +222,7 @@ def lower_softmax_node(node, node_idx: int, tensors: dict[str, Tensor]) -> tuple
 
     nodes.append(
         Node(
-            name=f"{node_name_value}__div",
+            name=f"{node.name}__div",
             kind=OpKind.ELEMENTWISE,
             inputs=(exp, sum_value),
             outputs=(output,),
@@ -210,3 +266,15 @@ def _collective_axis_for_softmax(tensor: Tensor, axis: int) -> str | None:
     if tensor.rank >= 2 and axis == tensor.rank - 2:
         return "y"
     return None
+
+
+register_op(
+    OpSpec(
+        name="softmax",
+        onnx_names=("Softmax",),
+        lower_onnx=lower_softmax_onnx,
+        decompose=decompose_softmax_node,
+        payload_type=SoftmaxOp,
+        work_kinds=(WorkKind.REDUCE_MAX, WorkKind.EXP, WorkKind.REDUCE_SUM, WorkKind.ELEMENTWISE),
+    )
+)

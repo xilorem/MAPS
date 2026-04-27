@@ -2,7 +2,7 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRan
 from MAPS.chips import magia_mesh
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.defs.gemm import GemmLayerOp
 
 
 def test_build_gemm_tile_work_derives_required_operand_slices() -> None:

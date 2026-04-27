@@ -3,7 +3,7 @@ from MAPS.core.graph import Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.cost_models import cost_estimator, placement_cost_estimator
-from MAPS.ops.collective import AllReduceOp
+from MAPS.ops.defs.collective import AllReduceOp
 
 
 def _make_allreduce_sum_node() -> Node:

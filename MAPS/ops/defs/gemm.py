@@ -6,11 +6,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from MAPS.arch import Tile, WorkKind
+from MAPS.core.graph import OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import TensorSliceRef, tensor_slice_num_elements
+from MAPS.ops.common.base import TensorSliceRef, tensor_slice_num_elements
+from MAPS.ops.registry import register_op
+from MAPS.ops.spec import OpSpec
 
 if TYPE_CHECKING:
     from MAPS.core.layer import LayerInput, LayerOutput
@@ -92,7 +95,7 @@ class GemmLayerOp:
 
     @property
     def cost_model(self) -> object:
-        from MAPS.cost_models.gemm_cost import GemmCostModel
+        from MAPS.ops.costs.gemm_cost import GemmCostModel
 
         return GemmCostModel()
 
@@ -233,3 +236,72 @@ class GemmLayerOp:
                 raise ValueError("Y input must match output tensor shape exactly")
             if self.y.elem_bytes != self.output.elem_bytes:
                 raise ValueError("Y input element size must match output tensor")
+
+
+def lower_gemm_node(
+    node_name: str,
+    inputs: tuple[Tensor, ...],
+    outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
+) -> tuple[OpKind, object]:
+    """Lower one ONNX Gemm node into scheduler-side GEMM semantics."""
+
+    del attributes
+    if len(inputs) not in (2, 3):
+        raise ValueError(f"Gemm node '{node_name}' must have 2 or 3 inputs")
+    if len(outputs) != 1:
+        raise ValueError(f"Gemm node '{node_name}' must have exactly 1 output")
+
+    return (
+        OpKind.GEMM,
+        GemmLayerOp(
+            x=inputs[0],
+            w=inputs[1],
+            y=inputs[2] if len(inputs) == 3 else None,
+            output=outputs[0],
+        ),
+    )
+
+
+def lower_matmul_node(
+    node_name: str,
+    inputs: tuple[Tensor, ...],
+    outputs: tuple[Tensor, ...],
+    attributes: dict[str, object],
+) -> tuple[OpKind, object]:
+    """Lower one ONNX MatMul node into scheduler-side GEMM semantics."""
+
+    del attributes
+    if len(inputs) != 2:
+        raise ValueError(f"MatMul node '{node_name}' must have exactly 2 inputs")
+    if len(outputs) != 1:
+        raise ValueError(f"MatMul node '{node_name}' must have exactly 1 output")
+
+    return (
+        OpKind.GEMM,
+        GemmLayerOp(
+            x=inputs[0],
+            w=inputs[1],
+            y=None,
+            output=outputs[0],
+        ),
+    )
+
+
+register_op(
+    OpSpec(
+        name="gemm",
+        onnx_names=("Gemm",),
+        lower_onnx=lower_gemm_node,
+        work_kinds=(WorkKind.GEMM,),
+    )
+)
+
+register_op(
+    OpSpec(
+        name="matmul",
+        onnx_names=("MatMul",),
+        lower_onnx=lower_matmul_node,
+        work_kinds=(WorkKind.GEMM,),
+    )
+)

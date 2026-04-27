@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from .tensor import Tensor
 
 if TYPE_CHECKING:
-    from MAPS.ops.base import OpPayload
+    from MAPS.ops.common import OpPayload
 
 
 class OpKind(IntEnum):

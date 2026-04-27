@@ -5,8 +5,8 @@ from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.layout import TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.base import default_sharded_layout
-from MAPS.ops.gemm import GemmLayerOp
+from MAPS.ops.common import default_sharded_layout
+from MAPS.ops.defs.gemm import GemmLayerOp
 from MAPS.planner.spatial_mapping import (
     _edge_placement_costs,
     _edge_shape_costs,
