@@ -45,6 +45,7 @@ def balance_workload(
     placement_masks_by_tile_count: dict[int, tuple[int, ...]] = {}
     placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool] = {}
     decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, int]]] = []
+    growth_horizon_by_stage: dict[int, int] = {}
 
     # Seed each stage with the smallest tile count whose tile work fits in L1,
     # then spend any remaining tiles greedily on workload reduction.
@@ -85,6 +86,7 @@ def balance_workload(
                 )
                 continue
             tile_counts[stage_id] = tile_count
+            growth_horizon_by_stage[stage_id] = 1
             _debug(
                 debug,
                 "[workload_balancing] "
@@ -180,6 +182,7 @@ def balance_workload(
                 current_tile_count,
                 mesh.num_tiles - used_tiles,
                 mesh,
+                max_added_tiles=growth_horizon_by_stage[stage_id],
             )
             _debug(
                 debug,
@@ -195,8 +198,10 @@ def balance_workload(
                 current_workload=current_workload,
                 placement_masks_by_tile_count=placement_masks_by_tile_count,
                 placement_feasibility_cache=placement_feasibility_cache,
+                max_added_tiles=growth_horizon_by_stage[stage_id],
                 debug=debug,
             )
+            growth_horizon_by_stage[stage_id] += 1
             if best_growth is not None:
                 worst_stage_id = stage_id
                 worst_stage_tile_count, worst_stage_improvement = best_growth
@@ -303,10 +308,13 @@ def _tile_count_options_after_growth(
     current_tile_count: int,
     remaining_tiles: int,
     mesh: Mesh,
+    max_added_tiles: int,
 ) -> tuple[int, ...]:
-    """Return growth candidates that fit the mesh and bounded greedy step size."""
+    """Return growth candidates that fit the mesh and the current growth horizon."""
+    if max_added_tiles <= 0:
+        raise ValueError("max_added_tiles must be > 0")
     max_tile_count = min(
-        current_tile_count * 2,
+        current_tile_count + max_added_tiles,
         current_tile_count + remaining_tiles,
     )
     options = []
@@ -326,6 +334,7 @@ def _best_growth_tile_count_for_stage(
     current_workload: int,
     placement_masks_by_tile_count: dict[int, tuple[int, ...]],
     placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool],
+    max_added_tiles: int,
     debug: bool,
 ) -> tuple[int, int] | None:
     """Return the best feasible growth tile count for one stage.
@@ -341,6 +350,7 @@ def _best_growth_tile_count_for_stage(
         current_tile_count,
         mesh.num_tiles - used_tiles,
         mesh,
+        max_added_tiles=max_added_tiles,
     )
 
     best_candidate_tile_count: int | None = None
