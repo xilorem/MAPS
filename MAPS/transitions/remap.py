@@ -1,16 +1,15 @@
 """Helpers to build direct-remap fragments from concrete tile ownership."""
 
 from MAPS.arch import Tile
-from MAPS.core.layout import TensorRange, TensorSlice
-from MAPS.core.transition import TransitionFragment
+from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice
 from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.tensor import Tensor
-from MAPS.core.layout import TensorLayout
+from MAPS.core.transition import TransitionFragment
 
 
 def _intersect_range(a: TensorRange, b: TensorRange) -> TensorRange | None:
     """Return the overlap between two 1D tensor ranges, if any."""
-    
+
     start = max(a.start, b.start)
     end = min(a.start + a.length, b.start + b.length)
     if start >= end:
@@ -68,13 +67,6 @@ def build_direct_remap_fragments(
             overlap = _intersect_slice(src_slice, dst_slice)
             if overlap is None:
                 continue
-            # NOTE: this simple overlap-based builder emits one fragment per
-            # overlapping (src_tile, dst_tile) pair. That is correct for
-            # destination-side replication, where multiple consumers truly need
-            # the same logical slice. It over-generates when the source layout
-            # contains replicas, because multiple equivalent source tiles can
-            # overlap the same destination need. We will need a replica-
-            # selection policy to choose one provider in those cases.
             fragments.append(
                 TransitionFragment(
                     src_hartid=src_tile.tile_id,

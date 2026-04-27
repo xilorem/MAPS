@@ -14,10 +14,6 @@ from MAPS.arch import (
     NoCNode,
     Tile,
 )
-from MAPS.builders.transition_builder import build_transition
-from MAPS.cost_models import placement_cost_estimator
-from MAPS.cost_models.transition_cost import estimate_transition_cost
-from MAPS.cost_models.transport_cost import TransportCostModel
 from MAPS.devices.generic import GENERIC_CORE_DEVICE
 from MAPS.core.layout import TensorSlice
 from MAPS.core.layout import TensorLayout
@@ -25,8 +21,10 @@ from MAPS.core.ownership import tile_tensor_slice
 from MAPS.core.graph import Graph, Node
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+from MAPS.planner.cost import placement_cost_estimator
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import StagePlan
+from MAPS.transitions import TransportCostModel, build_transition, estimate_transition_cost
 
 _TRANSPORT_MODELS_BY_MESH_ID: dict[int, TransportCostModel] = {}
 _DEFAULT_COMMUNICATION_NOCS_BY_SHAPE: dict[tuple[int, int], NoC] = {}

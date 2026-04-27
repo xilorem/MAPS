@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from MAPS.cost_models import cost_estimator
+from MAPS.planner.cost import cost_estimator
 from MAPS.arch import Mesh
 from MAPS.core.graph import Graph, Node
 from MAPS.core.submesh import Submesh

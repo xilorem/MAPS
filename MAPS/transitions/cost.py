@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from MAPS.arch import Mesh
 from MAPS.core.tensor import Tensor
 from MAPS.core.transition import Transition, TransitionFragment, TransitionMode
-from MAPS.cost_models.transport_cost import TransferKind, TransferLeg, TransportCostModel
+
+from .transport import TransferKind, TransferLeg, TransportCostModel
 
 
 @dataclass(frozen=True)
@@ -23,18 +24,11 @@ class TransitionCost:
     total_cost: int = 0
 
 
-def _transition_fragment_num_bytes(fragment: TransitionFragment,
-                                   tensor: Tensor) -> int:
+def _transition_fragment_num_bytes(fragment: TransitionFragment, tensor: Tensor) -> int:
     return fragment.src_slice.num_elements * tensor.elem_bytes
 
 
-def _aggregate_transition(legs: tuple[TransferLeg, ...],
-                          model: TransportCostModel) -> TransitionCost:
-    
-    """ Computes the time necessary for a remap transition. This is
-    obtained by computing the maximum between the maximum fragment transfer
-    costs of producer and consumer tiles.
-    """
+def _aggregate_transition(legs: tuple[TransferLeg, ...], model: TransportCostModel) -> TransitionCost:
     producer_loads: dict[int, int] = {}
     consumer_loads: dict[int, int] = {}
     resource_loads: dict[str, int] = {}
@@ -44,13 +38,9 @@ def _aggregate_transition(legs: tuple[TransferLeg, ...],
         cost = estimate.total_cost
 
         if leg.src_tile is not None:
-            producer_loads[leg.src_tile.tile_id] = (
-                producer_loads.get(leg.src_tile.tile_id, 0) + cost
-            )
+            producer_loads[leg.src_tile.tile_id] = producer_loads.get(leg.src_tile.tile_id, 0) + cost
         if leg.dst_tile is not None:
-            consumer_loads[leg.dst_tile.tile_id] = (
-                consumer_loads.get(leg.dst_tile.tile_id, 0) + cost
-            )
+            consumer_loads[leg.dst_tile.tile_id] = consumer_loads.get(leg.dst_tile.tile_id, 0) + cost
         for resource_id, load in estimate.resource_loads.items():
             resource_loads[resource_id] = resource_loads.get(resource_id, 0) + load
 
@@ -71,12 +61,11 @@ def _aggregate_transition(legs: tuple[TransferLeg, ...],
     )
 
 
-def _build_direct_remap_legs(transition: Transition,
-                             tensor: Tensor,
-                             mesh: Mesh) -> tuple[TransferLeg, ...]:
-    
-    """Builds the TransferLeg (fragment movements) considering the tensor
-    """
+def _build_direct_remap_legs(
+    transition: Transition,
+    tensor: Tensor,
+    mesh: Mesh,
+) -> tuple[TransferLeg, ...]:
     legs: list[TransferLeg] = []
 
     for fragment in transition.fragments:
@@ -92,16 +81,13 @@ def _build_direct_remap_legs(transition: Transition,
     return tuple(legs)
 
 
-def estimate_transition_cost(transition: Transition,
-                             tensor: Tensor,
-                             mesh: Mesh,
-                             model: TransportCostModel) -> TransitionCost:
-    """
-    Estimate the cost of one transition.
-
-    DIRECT_REMAP:
-    - one round of L1-to-L1 fragment transfers
-    """
+def estimate_transition_cost(
+    transition: Transition,
+    tensor: Tensor,
+    mesh: Mesh,
+    model: TransportCostModel,
+) -> TransitionCost:
+    """Estimate the cost of one transition."""
 
     transition.validate_for(tensor)
 

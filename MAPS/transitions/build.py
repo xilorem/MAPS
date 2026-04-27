@@ -1,10 +1,10 @@
 """Helpers to build transition objects from layout ownership."""
 
-from MAPS.core.transition import Transition, TransitionMode
 from MAPS.core.layout import TensorLayout
 from MAPS.core.tensor import Tensor
+from MAPS.core.transition import Transition, TransitionMode
 
-from MAPS.builders.remap_builder import build_direct_remap_fragments
+from .remap import build_direct_remap_fragments
 
 
 def build_transition(

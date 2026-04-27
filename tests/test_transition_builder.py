@@ -1,6 +1,6 @@
 import pytest
 
-from MAPS.builders.transition_builder import build_transition
+from MAPS.transitions import build_transition
 from MAPS.core.layout import (
     LayoutAxis,
     LayoutAxisMode,

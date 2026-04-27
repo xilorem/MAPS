@@ -1,4 +1,4 @@
-"""Generic node-based cost estimation entry points."""
+"""Generic planner-side node cost estimation entry points."""
 
 from __future__ import annotations
 
@@ -43,13 +43,7 @@ def placement_cost_estimator(
     input_layouts: tuple[TensorLayout, ...],
     output_layouts: tuple[TensorLayout, ...],
 ) -> int:
-    """Estimate one node cost for one concrete placement.
-
-    Cost models can optionally override this with ``placement_cost(...)`` when
-    their latency depends on the concrete submesh placement rather than only on
-    per-tile work. Otherwise this returns ``0`` so spatial mapping only sees
-    the placement-sensitive portion of stage execution cost.
-    """
+    """Estimate one node cost for one concrete placement."""
 
     cost_model = node.payload.cost_model
     placement_cost = getattr(cost_model, "placement_cost", None)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from MAPS.cost_models.transport_cost import TransportCostModel
+from MAPS.transitions.transport import TransportCostModel
 from MAPS.core.graph import Node
 from MAPS.core.layout import TensorLayout
 from MAPS.core.ownership import tile_tensor_slice

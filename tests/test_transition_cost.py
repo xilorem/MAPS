@@ -21,7 +21,7 @@ from MAPS.core import (
     TransitionFragment,
     TransitionMode,
 )
-from MAPS.cost_models import TransportCostModel, estimate_transition_cost
+from MAPS.transitions import TransportCostModel, estimate_transition_cost
 from tests.noc_utils import rectangular_test_tiles
 
 
