@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from MAPS.core.graph import OpKind
 from MAPS.importers.onnx.graph_parser import parse_graph
+from MAPS.importers.onnx.tensor_parser import onnx_dtype_elem_bytes
 from MAPS.importers.onnx.utils import build_tensor_producer_table
 from MAPS.ops import SoftmaxPayload
 from MAPS.ops.defs.collective import AllReducePayload
@@ -368,3 +369,7 @@ def test_parse_graph_builds_node_to_node_and_initializer_edges() -> None:
     assert any(edge.tensor.name == "w1" and edge.src is None for edge in incoming_second)
     assert any(edge.tensor.name == "y1" and edge.src == second_node for edge in output_edges)
     assert tuple(tensor.name for tensor in lowered_graph.initializers) == ("w0", "w1")
+
+
+def test_onnx_dtype_elem_bytes_maps_common_float32() -> None:
+    assert onnx_dtype_elem_bytes(1) == 4

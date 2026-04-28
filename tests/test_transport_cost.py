@@ -34,7 +34,12 @@ def _uniform_l1_only_mesh(
         width=width,
         height=height,
         l2_memory=L2Memory(size=4096, bandwidth=memory_bandwidth),
-        tiles=rectangular_test_tiles(width, height, memory=L1Memory(size=4096, bandwidth=memory_bandwidth)),
+        tiles=rectangular_test_tiles(
+            width,
+            height,
+            memory=L1Memory(size=4096, bandwidth=memory_bandwidth),
+            devices=(GENERIC_CORE_DEVICE,),
+        ),
         noc=NoC(
             nodes=tuple(
                 NoCNode(node_id=y * width + x, x=x, y=y)
@@ -386,8 +391,8 @@ def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops(
     )
     model = TransportCostModel(mesh=mesh)
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 128
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 106
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 40
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 31
 
 
 def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() -> None:
@@ -438,15 +443,17 @@ def test_l2_transfer_cost_uses_noc_endpoint_attachment_bandwidth_without_hops() 
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 98
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 92
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 10
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 17
     assert l1_to_l2_estimate.resource_loads == {
+        "tile:0:dma:idma_write": 10,
         "noc_endpoint:0:egress": 9,
         "noc_endpoint:1:ingress": 5,
         "noc_endpoint:1:egress": 1,
         "noc_endpoint:0:ingress": 1,
     }
     assert l2_to_l1_estimate.resource_loads == {
+        "tile:0:dma:idma_read": 17,
         "noc_endpoint:0:egress": 1,
         "noc_endpoint:1:ingress": 1,
         "noc_endpoint:1:egress": 16,
@@ -572,13 +579,15 @@ def test_l2_transfer_cost_uses_endpoint_attachment_channels_and_policy_without_i
         )
     )
 
-    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 105
-    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 97
+    assert model.l1_to_l2(mesh.tile(0, 0), 64) == 17
+    assert model.l2_to_l1(mesh.tile(0, 0), 64) == 22
     assert l1_to_l2_estimate.resource_loads == {
+        "tile:0:dma:idma_write": 17,
         "noc_endpoint_attachment:1:ingress:channel:0": 9,
         "noc_endpoint_attachment:1:egress:channel:1": 1,
     }
     assert l2_to_l1_estimate.resource_loads == {
+        "tile:0:dma:idma_read": 22,
         "noc_endpoint_attachment:1:ingress:channel:0": 1,
         "noc_endpoint_attachment:1:egress:channel:1": 16,
     }
@@ -673,14 +682,14 @@ def test_transport_cost_rounds_nonzero_flow_transfer_time_up_to_one_cycle() -> N
             ),
         ),
     )
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
+    model = TransportCostModel(mesh=mesh)
 
     assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 1) == 2
 
 
 def test_l1_to_l1_delta_cache_reuses_uniform_no_contention_costs() -> None:
     mesh = _uniform_l1_only_mesh(3, 2)
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
+    model = TransportCostModel(mesh=mesh)
 
     first_cost = model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 1), 64)
 
@@ -700,7 +709,6 @@ def test_l1_to_l1_delta_cache_is_disabled_when_accounting_noc_contention() -> No
     mesh = _uniform_l1_only_mesh(3, 2)
     model = TransportCostModel(
         mesh=mesh,
-        l1_to_l1_startup_cycles=0,
         account_noc_contention=True,
     )
 
@@ -717,7 +725,12 @@ def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
         width=3,
         height=2,
         l2_memory=L2Memory(size=4096, bandwidth=64),
-        tiles=rectangular_test_tiles(3, 2, memory=L1Memory(size=4096, bandwidth=64)),
+        tiles=rectangular_test_tiles(
+            3,
+            2,
+            memory=L1Memory(size=4096, bandwidth=64),
+            devices=(GENERIC_CORE_DEVICE,),
+        ),
         noc=NoC(
             nodes=tuple(
                 NoCNode(node_id=y * 3 + x, x=x, y=y)
@@ -786,7 +799,7 @@ def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
             ),
         ),
     )
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
+    model = TransportCostModel(mesh=mesh)
 
     top_cost = model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 64)
     bottom_cost = model.l1_to_l1(mesh.tile(0, 1), mesh.tile(1, 1), 64)

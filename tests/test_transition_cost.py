@@ -98,19 +98,22 @@ def _shared_link_remap_case() -> tuple[Mesh, Tensor, Transition]:
 
 def test_direct_remap_cost_ignores_shared_noc_link_load_when_disabled() -> None:
     mesh, tensor, transition = _shared_link_remap_case()
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0)
+    model = TransportCostModel(mesh=mesh)
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
     assert cost.producer_loads == {0: 9, 1: 9}
     assert cost.consumer_loads == {2: 9, 3: 9}
-    assert cost.resource_loads == {}
+    assert cost.resource_loads == {
+        "tile:2:dma:idma_read": 9,
+        "tile:3:dma:idma_read": 9,
+    }
     assert cost.total_cost == 9
 
 
 def test_direct_remap_cost_accounts_for_shared_noc_link_load_when_enabled() -> None:
     mesh, tensor, transition = _shared_link_remap_case()
-    model = TransportCostModel(mesh=mesh, l1_to_l1_startup_cycles=0, account_noc_contention=True)
+    model = TransportCostModel(mesh=mesh, account_noc_contention=True)
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
@@ -120,5 +123,7 @@ def test_direct_remap_cost_accounts_for_shared_noc_link_load_when_enabled() -> N
         "noc_link:0:channel:0": 9,
         "noc_link:1:channel:0": 18,
         "noc_link:2:channel:0": 9,
+        "tile:2:dma:idma_read": 9,
+        "tile:3:dma:idma_read": 9,
     }
     assert cost.total_cost == 18
