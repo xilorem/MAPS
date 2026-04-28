@@ -23,10 +23,10 @@ class GemmTileWork(TileWork):
     x_slice: TensorSlice
     w_slice: TensorSlice
     y_slice: TensorSlice | None
-    x: Tensor | None = None
-    w: Tensor | None = None
+    x: Tensor
+    w: Tensor
     y: Tensor | None = None
-    output: Tensor | None = None
+    output: Tensor
 
     @property
     def work_kind(self) -> WorkKind:
@@ -48,13 +48,6 @@ class GemmTileWork(TileWork):
         if self.output is None:
             return ()
         return (TensorSliceRef(tensor=self.output, tensor_slice=self.output_slice),)
-
-    @property
-    def l1_bytes(self) -> int:
-        return sum(ref.num_bytes for ref in self.input_slices + self.output_slices)
-
-    def fits_l1(self, tile: Tile) -> bool:
-        return self.l1_bytes <= tile.memory.size
 
     def operation_count(self) -> int:
         return self.output_slice.num_elements * self.x_slice.dims[-1].length

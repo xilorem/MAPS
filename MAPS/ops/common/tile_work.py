@@ -37,8 +37,8 @@ class TileWork(ABC):
     def output_slices(self) -> tuple[TensorSliceRef, ...]: ...
 
     @property
-    @abstractmethod
-    def l1_bytes(self) -> int: ...
+    def l1_bytes(self) -> int:
+        return sum(ref.num_bytes for ref in self.input_slices + self.output_slices)
 
-    @abstractmethod
-    def fits_l1(self, tile: "Tile") -> bool: ...
+    def fits_l1(self, tile: "Tile") -> bool:
+        return self.l1_bytes <= tile.memory.size

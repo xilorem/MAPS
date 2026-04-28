@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from MAPS.arch import Tile, WorkKind
+from MAPS.arch import WorkKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice, TensorSliceRef, tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -28,13 +28,6 @@ class ReductionTileWork(TileWork):
     @property
     def output_slices(self) -> tuple[TensorSliceRef, ...]:
         return (TensorSliceRef(tensor=self.output, tensor_slice=self.output_slice),)
-
-    @property
-    def l1_bytes(self) -> int:
-        return sum(ref.num_bytes for ref in self.input_slices + self.output_slices)
-
-    def fits_l1(self, tile: Tile) -> bool:
-        return self.l1_bytes <= tile.memory.size
 
     def operation_count(self) -> int:
         return self.input_slice.num_elements

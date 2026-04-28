@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from MAPS.arch import Tile
 from MAPS.core.graph import OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice, TensorSliceRef, tile_tensor_slice
 from MAPS.core.submesh import Submesh
@@ -43,13 +42,6 @@ class ConvTileWork(TileWork):
         if self.output is None:
             return ()
         return (TensorSliceRef(tensor=self.output, tensor_slice=self.output_slice),)
-
-    @property
-    def l1_bytes(self) -> int:
-        return sum(ref.num_bytes for ref in self.input_slices + self.output_slices)
-
-    def fits_l1(self, tile: Tile) -> bool:
-        return self.l1_bytes <= tile.memory.size
 
 
 def _range(start: int, length: int) -> TensorRange:
