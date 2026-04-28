@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from MAPS.arch.device import Device
+from MAPS.arch.device import DMADevice, DMAJob, Device
 from MAPS.arch.memory import L1Memory
 
 
@@ -26,3 +26,10 @@ class Tile:
             raise ValueError("tile coordinates must be >= 0")
         if not self.devices:
             raise ValueError("tile devices must not be empty")
+    
+    def dma_devices(self, job: DMAJob) -> tuple[DMADevice, ...]:
+        """Return the set of DMADevices associated with a tile for a
+        specific DMAjob"""
+
+        return tuple(device for device in self.devices 
+            if isinstance(device, DMADevice) and device.job == job)

@@ -3,6 +3,7 @@
 from .device import (
     CoreDevice,
     DMADevice,
+    DMAJob,
     Device,
     DeviceKind,
     SystolicDevice,
@@ -27,6 +28,7 @@ from .tile import Tile
 __all__ = [
     "CoreDevice",
     "DMADevice",
+    "DMAJob",
     "Device",
     "DeviceKind",
     "EndpointKind",

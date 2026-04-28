@@ -23,6 +23,11 @@ class WorkKind(Enum):
     DMA = auto()
 
 
+class DMAJob(Enum):
+    READJOB = auto()
+    WRITEJOB = auto()
+
+
 @dataclass(frozen=True)
 class Device:
     """Base class for tile-local device models."""
@@ -83,15 +88,19 @@ class CoreDevice(Device):
 class DMADevice(Device):
     """DMA device model using throughput-based timing."""
 
+    job: DMAJob = DMAJob.READJOB
+
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.kind is not DeviceKind.DMA:
             raise ValueError("DMADevice must use DeviceKind.DMA")
+        if not isinstance(self.job, DMAJob):
+            raise ValueError("Bad DMADevice job description, must be a DMAJob type")
 
     def cycles(self, work: object) -> int:
-        work_kind = work.work_kind
-        amount = work.operation_count()
-        return self._throughput_cycles(work_kind, amount)
+        raise ValueError("DMA device cannot perform compute operations")
+
+
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 import math
 
-from MAPS.arch import EndpointKind, Mesh, NoCChannel, NoCRoute, RoutingPolicy, Tile, TrafficKind
+from MAPS.arch import DMADevice, DMAJob, EndpointKind, Mesh, NoCChannel, NoCRoute, RoutingPolicy, Tile, TrafficKind
 
 
 class TransferKind(Enum):
@@ -75,9 +75,6 @@ class TransportCostModel:
     """Primitive latency model for one transfer leg."""
 
     mesh: Mesh | None = None
-    l1_to_l2_startup_cycles: int = 88
-    l2_to_l1_startup_cycles: int = 75
-    l1_to_l1_startup_cycles: int = 75
     account_noc_contention: bool = False
     read_request_bytes: int = 1
     write_request_bytes: int = 1
@@ -161,11 +158,14 @@ class TransportCostModel:
         ).total_cost
 
     def estimate(self, leg: TransferLeg) -> TransferCostEstimate:
+
+        # try using exact transfer caching
         leg_key = self._estimate_cache_key(leg)
         cached = self._estimate_cache.get(leg_key)
         if cached is not None:
             return cached
-
+        
+        # try using cached delta value for l1 to l1 transfers
         if leg.kind is TransferKind.L1_TO_L1:
             delta_key = self._l1_to_l1_delta_cache_key(leg.src_tile, leg.dst_tile, leg.bytes)
             if delta_key is not None:
@@ -182,13 +182,18 @@ class TransportCostModel:
             estimate = self._estimate_l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
         else:
             raise ValueError(f"unsupported transfer kind: {leg.kind}")
-
+        
+        # cache the computation for later reuse
         self._estimate_cache[leg_key] = estimate
+
+        # try to cache the delta of the computation
         if leg.kind is TransferKind.L1_TO_L1:
             delta_key = self._l1_to_l1_delta_cache_key(leg.src_tile, leg.dst_tile, leg.bytes)
             if delta_key is not None:
                 self._l1_to_l1_delta_estimate_cache.setdefault(delta_key, estimate)
+
         return estimate
+
 
     def cost(self, leg: TransferLeg) -> int:
         return self.estimate(leg).total_cost
@@ -197,47 +202,9 @@ class TransportCostModel:
         return self.estimate(leg).resource_loads
 
     def _estimate_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
-        return self._estimate_noc_l1_to_l2(src, bytes_)
-
-    def _estimate_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
-        return self._estimate_noc_l2_to_l1(dst, bytes_)
-
-    def _estimate_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
-        return self._estimate_noc_l1_to_l1(src, dst, bytes_)
-
-    def _noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> int:
-        return self._estimate_noc_l1_to_l1(src, dst, bytes_).total_cost
-
-    def _estimate_noc_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
-        self._require_noc()
-        src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
-        dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
-        return self._route_protocol_cost(
-            flows=(
-                _NoCFlow(
-                    src_endpoint_id=dst_endpoint.endpoint_id,
-                    dst_endpoint_id=src_endpoint.endpoint_id,
-                    bytes=self.read_request_bytes,
-                    traffic_kind=TrafficKind.READ_REQ,
-                ),
-                _NoCFlow(
-                    src_endpoint_id=src_endpoint.endpoint_id,
-                    dst_endpoint_id=dst_endpoint.endpoint_id,
-                    bytes=bytes_,
-                    traffic_kind=TrafficKind.READ_RSP,
-                    bandwidth_limit=min(src.memory.bandwidth, dst.memory.bandwidth),
-                ),
-            ),
-            startup_cycles=self.l1_to_l1_startup_cycles,
-        )
-
-    def _noc_l1_to_l2(self, src: Tile, bytes_: int) -> int:
-        return self._estimate_noc_l1_to_l2(src, bytes_).total_cost
-
-    def _estimate_noc_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
         self._require_noc_with_l2()
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
-        return min(
+        estimate = min(
             (
                 self._route_protocol_cost(
                     flows=(
@@ -261,20 +228,21 @@ class TransportCostModel:
                             traffic_kind=TrafficKind.WRITE_RSP,
                         ),
                     ),
-                    startup_cycles=self.l1_to_l2_startup_cycles,
                 )
                 for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
             ),
             key=lambda estimate: estimate.total_cost,
         )
+        return self._with_dma_resource_load(
+            estimate=estimate,
+            tile=src,
+            job=DMAJob.WRITEJOB,
+        )
 
-    def _noc_l2_to_l1(self, dst: Tile, bytes_: int) -> int:
-        return self._estimate_noc_l2_to_l1(dst, bytes_).total_cost
-
-    def _estimate_noc_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
+    def _estimate_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
         self._require_noc_with_l2()
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
-        return min(
+        estimate = min(
             (
                 self._route_protocol_cost(
                     flows=(
@@ -292,19 +260,49 @@ class TransportCostModel:
                             bandwidth_limit=min(self.mesh.l2_memory.bandwidth, dst.memory.bandwidth),
                         ),
                     ),
-                    startup_cycles=self.l2_to_l1_startup_cycles,
                 )
                 for l2_endpoint in self.mesh.noc.endpoints_of_kind(EndpointKind.L2)
             ),
             key=lambda estimate: estimate.total_cost,
         )
+        return self._with_dma_resource_load(
+            estimate=estimate,
+            tile=dst,
+            job=DMAJob.READJOB,
+        )
+
+    def _estimate_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
+        self._require_noc()
+        src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
+        dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
+        estimate = self._route_protocol_cost(
+            flows=(
+                _NoCFlow(
+                    src_endpoint_id=dst_endpoint.endpoint_id,
+                    dst_endpoint_id=src_endpoint.endpoint_id,
+                    bytes=self.read_request_bytes,
+                    traffic_kind=TrafficKind.READ_REQ,
+                ),
+                _NoCFlow(
+                    src_endpoint_id=src_endpoint.endpoint_id,
+                    dst_endpoint_id=dst_endpoint.endpoint_id,
+                    bytes=bytes_,
+                    traffic_kind=TrafficKind.READ_RSP,
+                    bandwidth_limit=min(src.memory.bandwidth, dst.memory.bandwidth),
+                ),
+            ),
+        )
+        return self._with_dma_resource_load(
+            estimate=estimate,
+            tile=dst,
+            job=DMAJob.READJOB,
+        )
 
     def _route_protocol_cost(
         self,
         flows: tuple[_NoCFlow, ...],
-        startup_cycles: int,
     ) -> TransferCostEstimate:
-        total_cost = startup_cycles
+        total_cost = 0
         resource_loads: dict[str, int] = {}
 
         for flow in flows:
@@ -442,15 +440,21 @@ class TransportCostModel:
         traffic_kind: TrafficKind,
         resource_name: str,
     ) -> NoCChannel | None:
+
+        # try to hit cached channel selection
         cached = self._attachment_channel_cache.get((endpoint_id, direction, traffic_kind))
         if cached is not None or (endpoint_id, direction, traffic_kind) in self._attachment_channel_cache:
             return cached
+
+        # fallback for no channel
         if not channels:
             self._attachment_channel_cache[(endpoint_id, direction, traffic_kind)] = None
             return None
+
         selected = self._select_channel(channels, traffic_kind, resource_name)
         self._attachment_channel_cache[(endpoint_id, direction, traffic_kind)] = selected
         return selected
+
 
     def _select_channel(
         self,
@@ -479,6 +483,11 @@ class TransportCostModel:
     @staticmethod
     def _route_resource_id(link_id: int, channel_id: int) -> str:
         return f"noc_link:{link_id}:channel:{channel_id}"
+        dma_devices = []
+        for device in self.devices:
+            if isinstance(device, DMADevice):
+                if device.job == job:
+                    dma_devices.append(device)
 
     @staticmethod
     def _endpoint_resource_id(endpoint_id: int, direction: str) -> str:
@@ -488,12 +497,36 @@ class TransportCostModel:
     def _endpoint_attachment_resource_id(endpoint_id: int, direction: str, channel_id: int) -> str:
         return f"noc_endpoint_attachment:{endpoint_id}:{direction}:channel:{channel_id}"
 
+    def _with_dma_resource_load(
+        self,
+        estimate: TransferCostEstimate,
+        tile: Tile,
+        job: DMAJob,
+    ) -> TransferCostEstimate:
+        dma_devices = tile.dma_devices(job)
+        if not dma_devices:
+            return estimate
+
+        resource_loads = dict(estimate.resource_loads)
+        resource_id = self._dma_resource_id(tile.tile_id, dma_devices[0])
+        resource_loads[resource_id] = resource_loads.get(resource_id, 0) + estimate.total_cost
+        return TransferCostEstimate(
+            total_cost=estimate.total_cost,
+            resource_loads=resource_loads,
+        )
+
+    @staticmethod
+    def _dma_resource_id(tile_id: int, device: DMADevice) -> str:
+        return f"tile:{tile_id}:dma:{device.name}"
+
     def _l1_to_l1_delta_cache_key(
         self,
         src: Tile,
         dst: Tile,
         bytes_: int,
     ) -> tuple[int, int, int, int] | None:
+        if any(isinstance(device, DMADevice) for device in src.devices + dst.devices):
+            return None
         if not self._can_use_l1_to_l1_delta_cache():
             return None
 
