@@ -25,8 +25,8 @@ class GemmTileWork(TileWork):
     y_slice: TensorSlice | None
     x: Tensor
     w: Tensor
-    y: Tensor | None = None
     output: Tensor
+    y: Tensor | None = None
 
     @property
     def work_kind(self) -> WorkKind:

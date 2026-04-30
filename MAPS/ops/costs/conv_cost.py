@@ -63,4 +63,8 @@ def _conv_tile_work_as_im2col_gemm(tile_work: ConvTileWork) -> GemmTileWork:
             ),
         ),
         y_slice=None,
+        x=tile_work.x,
+        w=tile_work.w,
+        output=tile_work.output,
+        y=None,
     )

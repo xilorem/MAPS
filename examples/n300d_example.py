@@ -1,4 +1,4 @@
-"""Run a small ONNX network through the MAGIA planning flow."""
+"""Run a small ONNX network through the Wormhole n300d planning flow."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from MAPS.hw.chips import magia_mesh
+from MAPS.hw.chips import wormhole_n300d_mesh
 from MAPS.planner import PlannerConstraints, validate_constraints
 from MAPS.planner.plan import build_pipeline
 from MAPS.utils.print_submeshes import print_submeshes
@@ -56,7 +56,7 @@ def _write_example_model(model_path: Path) -> None:
 
     graph = helper.make_graph(
         nodes,
-        "magia_example",
+        "wormhole_n300d_example",
         [image, mat_input],
         [add_out, gemm_out],
         initializer=[
@@ -74,9 +74,9 @@ def _write_example_model(model_path: Path) -> None:
 
 
 def main():
-    mesh = magia_mesh(width=16, height=16)
+    mesh = wormhole_n300d_mesh(width=16, height=16)
     with TemporaryDirectory() as tmpdir:
-        model_path = Path(tmpdir) / "magia_example.onnx"
+        model_path = Path(tmpdir) / "n300d_example.onnx"
         _write_example_model(model_path)
 
         pipeline = build_pipeline(
@@ -85,8 +85,8 @@ def main():
             print_workload_balancing=True,
             print_spatial_mapping=True,
             print_spatial_mapping_progress=True,
-            require_l2_input_access_point=False, # need to attach these 2 options to workload
-            require_l2_output_access_point=False, # balancing feasible mesh verification
+            require_l2_input_access_point=False,
+            require_l2_output_access_point=False,
             enable_lossless_spatial_mapping_pruning=True,
             enable_lossy_spatial_mapping_pruning=False,
         )
