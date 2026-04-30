@@ -1,7 +1,13 @@
 """Reusable tile-local device definitions."""
 
 from .generic import GENERIC_SCALAR_DEVICE, IDMA_READ_DEVICE, IDMA_WRITE_DEVICE, SCALAR_DEVICE
-from .tenstorrent import TENSIX_MATRIX_DEVICE, TENSIX_SCALAR_DEVICE, TENSIX_VECTOR_DEVICE
+from .tensix_tile import (
+    TENSIX_MATRIX_DEVICE,
+    TENSIX_READ_CORE,
+    TENSIX_SCALAR_DEVICE,
+    TENSIX_VECTOR_DEVICE,
+    TENSIX_WRITE_CORE,
+)
 
 __all__ = [
     "GENERIC_SCALAR_DEVICE",
@@ -9,6 +15,8 @@ __all__ = [
     "IDMA_WRITE_DEVICE",
     "SCALAR_DEVICE",
     "TENSIX_MATRIX_DEVICE",
+    "TENSIX_READ_CORE",
     "TENSIX_SCALAR_DEVICE",
     "TENSIX_VECTOR_DEVICE",
+    "TENSIX_WRITE_CORE",
 ]

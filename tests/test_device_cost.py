@@ -8,7 +8,7 @@ from MAPS.core.layout import TensorRange, TensorSlice
 from MAPS.ops.costs.gemm_cost import GemmCostModel
 from MAPS.hw.devices.generic import GENERIC_SCALAR_DEVICE
 from MAPS.hw.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
-from MAPS.hw.devices.tenstorrent import TENSIX_MATRIX_DEVICE
+from MAPS.hw.devices.tensix_tile import TENSIX_MATRIX_DEVICE
 from MAPS.ops.defs.gemm import GemmTileWork
 
 

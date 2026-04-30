@@ -1,8 +1,22 @@
-"""Tenstorrent tile-local placeholder device models."""
+"""Tensix tile-local placeholder device models."""
 
 from __future__ import annotations
 
-from MAPS.arch import DeviceKind, MatrixDevice, ScalarDevice, VectorDevice, WorkKind
+from MAPS.arch import DMADevice, DMAJob, DeviceKind, MatrixDevice, ScalarDevice, VectorDevice, WorkKind
+
+TENSIX_READ_CORE = DMADevice(
+    name="tensix_read_core",
+    kind=DeviceKind.DMA,
+    throughput={WorkKind.DMA: 1},
+    job=DMAJob.READJOB,
+)
+
+TENSIX_WRITE_CORE = DMADevice(
+    name="tensix_write_core",
+    kind=DeviceKind.DMA,
+    throughput={WorkKind.DMA: 1},
+    job=DMAJob.WRITEJOB,
+)
 
 TENSIX_SCALAR_DEVICE = ScalarDevice(
     name="tensix_scalar",
