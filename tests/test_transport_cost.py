@@ -15,7 +15,7 @@ from MAPS.arch import (
     TrafficPolicy,
 )
 from MAPS.hw.chips.magia import magia_mesh
-from MAPS.hw.devices.generic import GENERIC_CORE_DEVICE
+from MAPS.hw.devices.generic import GENERIC_SCALAR_DEVICE
 import pytest
 
 from MAPS.transitions import TransferKind, TransferLeg, TransportCostModel
@@ -38,7 +38,7 @@ def _uniform_l1_only_mesh(
             width,
             height,
             memory=L1Memory(size=4096, bandwidth=memory_bandwidth),
-            devices=(GENERIC_CORE_DEVICE,),
+            devices=(GENERIC_SCALAR_DEVICE,),
         ),
         noc=NoC(
             nodes=tuple(
@@ -92,7 +92,7 @@ def test_transport_cost_requires_mesh_for_communication() -> None:
         x=0,
         y=0,
         memory=L1Memory(size=4096, bandwidth=1),
-        devices=(GENERIC_CORE_DEVICE,),
+        devices=(GENERIC_SCALAR_DEVICE,),
     )
     model = TransportCostModel(mesh=None)
 
@@ -729,7 +729,7 @@ def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
             3,
             2,
             memory=L1Memory(size=4096, bandwidth=64),
-            devices=(GENERIC_CORE_DEVICE,),
+            devices=(GENERIC_SCALAR_DEVICE,),
         ),
         noc=NoC(
             nodes=tuple(

@@ -1,4 +1,4 @@
-from MAPS.arch import CoreDevice, DMADevice, DMAJob, DeviceKind, EndpointKind, RoutingPolicy, SystolicDevice, TrafficKind
+from MAPS.arch import DMADevice, DMAJob, DeviceKind, EndpointKind, RoutingPolicy, ScalarDevice, SystolicDevice, TrafficKind
 from MAPS.hw.chips.magia import (
     MAGIA_L1_BANDWIDTH_BYTES,
     MAGIA_L1_USABLE_BYTES,
@@ -41,7 +41,7 @@ def test_magia_tiles_have_idma_core_and_redmule_devices() -> None:
         assert isinstance(devices["idma_write"], DMADevice)
         assert devices["idma_write"].job is DMAJob.WRITEJOB
         assert devices["core"].kind is DeviceKind.SCALAR
-        assert isinstance(devices["core"], CoreDevice)
+        assert isinstance(devices["core"], ScalarDevice)
         assert devices["redmule"].kind is DeviceKind.SYSTOLIC
         assert isinstance(devices["redmule"], SystolicDevice)
 

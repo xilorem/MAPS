@@ -1,10 +1,14 @@
-from MAPS.arch import CoreDevice, Device, DeviceKind, L1Memory, SystolicDevice, Tile, WorkKind
+import pytest
+
+from MAPS.arch import Device, DeviceKind, L1Memory, MatrixDevice, ScalarDevice, SystolicDevice, Tile, VectorDevice, WorkKind
 from MAPS.hw.chips import magia_mesh
+from MAPS.hw.chips.n300d import wormhole_n300d_mesh
 from MAPS.hw.chips.magia import MAGIA_REDMULE_DEVICE
 from MAPS.core.layout import TensorRange, TensorSlice
 from MAPS.ops.costs.gemm_cost import GemmCostModel
-from MAPS.hw.devices.generic import GENERIC_CORE_DEVICE
+from MAPS.hw.devices.generic import GENERIC_SCALAR_DEVICE
 from MAPS.hw.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
+from MAPS.hw.devices.tenstorrent import TENSIX_MATRIX_DEVICE
 from MAPS.ops.defs.gemm import GemmTileWork
 
 
@@ -49,18 +53,18 @@ def test_device_base_class_is_not_directly_instantiable() -> None:
         raise AssertionError("expected Device base class construction to fail")
 
 
-def test_tile_can_use_generic_core_device() -> None:
+def test_tile_can_use_generic_scalar_device() -> None:
     tile = Tile(
         tile_id=0,
         x=0,
         y=0,
         memory=L1Memory(size=4096, bandwidth=1),
-        devices=(GENERIC_CORE_DEVICE,),
+        devices=(GENERIC_SCALAR_DEVICE,),
     )
 
     assert tile.devices[0].name == "core"
     assert tile.devices[0].kind is DeviceKind.SCALAR
-    assert isinstance(tile.devices[0], CoreDevice)
+    assert isinstance(tile.devices[0], ScalarDevice)
     assert tile.devices[0].supports(WorkKind.GEMM)
 
 
@@ -91,7 +95,7 @@ def test_gemm_cost_uses_systolic_device_when_available() -> None:
         x=0,
         y=0,
         memory=L1Memory(size=4096, bandwidth=1),
-        devices=(GENERIC_CORE_DEVICE,),
+        devices=(GENERIC_SCALAR_DEVICE,),
     )
     redmule_tile = magia_mesh().tile(0, 0)
     model = GemmCostModel()
@@ -109,3 +113,53 @@ def test_redmule_gemm_cost_accounts_for_array_shape() -> None:
 
     assert model.cost(compact_work, redmule_tile) == 46
     assert model.cost(wide_work, redmule_tile) == 92
+
+
+def test_tensix_matrix_device_uses_matrix_kind() -> None:
+    assert TENSIX_MATRIX_DEVICE.kind is DeviceKind.MATRIX
+    assert isinstance(TENSIX_MATRIX_DEVICE, MatrixDevice)
+    assert TENSIX_MATRIX_DEVICE.supports(WorkKind.GEMM)
+
+
+def test_wormhole_tile_exposes_matrix_device_for_gemm() -> None:
+    tile = wormhole_n300d_mesh().tile(0, 0)
+
+    matrix_devices = tuple(device for device in tile.devices if device.kind is DeviceKind.MATRIX)
+
+    assert len(matrix_devices) == 1
+    assert matrix_devices[0].name == "tensix_matrix"
+
+
+def test_gemm_cost_prefers_matrix_device_when_available() -> None:
+    scalar_gemm_device = ScalarDevice(
+        name="scalar_gemm",
+        kind=DeviceKind.SCALAR,
+        throughput={WorkKind.GEMM: 1},
+    )
+    matrix_tile = Tile(
+        tile_id=0,
+        x=0,
+        y=0,
+        memory=L1Memory(size=4096, bandwidth=1),
+        devices=(scalar_gemm_device, TENSIX_MATRIX_DEVICE),
+    )
+    model = GemmCostModel()
+    tile_work = _tile_work(m_size=64, n_size=64, k_size=64)
+
+    assert model.cost(tile_work, matrix_tile) == TENSIX_MATRIX_DEVICE.cycles(tile_work)
+
+
+def test_gemm_cost_accepts_multiple_preferred_device_kinds() -> None:
+    model = GemmCostModel(preferred_device_kinds=(DeviceKind.MATRIX, DeviceKind.SYSTOLIC))
+
+    assert model._preferred_device_kinds() == (DeviceKind.MATRIX, DeviceKind.SYSTOLIC)
+
+
+def test_vector_device_rejects_zero_length() -> None:
+    with pytest.raises(ValueError, match="vector_length must be > 0"):
+        VectorDevice(
+            name="vector",
+            kind=DeviceKind.VECTOR,
+            throughput={WorkKind.ELEMENTWISE: 1},
+            vector_length=0,
+        )

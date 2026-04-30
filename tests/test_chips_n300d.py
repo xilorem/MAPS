@@ -12,12 +12,12 @@ from MAPS.hw.chips.n300d import (
     N300D_NIU_LATENCY_CYCLES,
     N300D_NOC_WIDTH,
     N300D_TILE_NOC_COORDS,
-    wormhole_n300d_asic_mesh,
+    wormhole_n300d_mesh,
 )
 
 
 def test_n300d_mesh_uses_logical_compute_mesh_and_physical_noc() -> None:
-    mesh = wormhole_n300d_asic_mesh()
+    mesh = wormhole_n300d_mesh()
 
     assert mesh.shape == (N300D_MESH_WIDTH, N300D_MESH_HEIGHT)
     assert mesh.num_tiles == N300D_MESH_WIDTH * N300D_MESH_HEIGHT
@@ -37,7 +37,7 @@ def test_n300d_mesh_uses_logical_compute_mesh_and_physical_noc() -> None:
 
 
 def test_n300d_tile_and_dram_endpoints_attach_to_expected_noc_coordinates() -> None:
-    mesh = wormhole_n300d_asic_mesh()
+    mesh = wormhole_n300d_mesh()
 
     l1_endpoints = mesh.noc.endpoints_of_kind(EndpointKind.L1)
     l2_endpoints = mesh.noc.endpoints_of_kind(EndpointKind.L2)

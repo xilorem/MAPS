@@ -1,12 +1,14 @@
 """Hardware topology and tile metadata."""
 
 from .device import (
-    CoreDevice,
     DMADevice,
     DMAJob,
     Device,
     DeviceKind,
+    MatrixDevice,
+    ScalarDevice,
     SystolicDevice,
+    VectorDevice,
     WorkKind,
 )
 from .memory import L1Memory, L2Memory
@@ -26,7 +28,6 @@ from .noc import (
 from .tile import Tile
 
 __all__ = [
-    "CoreDevice",
     "DMADevice",
     "DMAJob",
     "Device",
@@ -34,6 +35,7 @@ __all__ = [
     "EndpointKind",
     "L1Memory",
     "L2Memory",
+    "MatrixDevice",
     "Mesh",
     "NoC",
     "NoCChannel",
@@ -42,9 +44,11 @@ __all__ = [
     "NoCNode",
     "NoCRoute",
     "RoutingPolicy",
+    "ScalarDevice",
     "SystolicDevice",
     "Tile",
     "TrafficKind",
     "TrafficPolicy",
+    "VectorDevice",
     "WorkKind",
 ]

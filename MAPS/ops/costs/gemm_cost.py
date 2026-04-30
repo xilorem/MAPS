@@ -12,14 +12,21 @@ from MAPS.ops.defs.gemm import GemmTileWork
 class GemmCostModel:
     """Compute-only GEMM cycle model backed by tile devices."""
 
-    preferred_device_kind: DeviceKind = DeviceKind.SYSTOLIC
+    preferred_device_kinds: DeviceKind | tuple[DeviceKind, ...] = (DeviceKind.MATRIX, DeviceKind.SYSTOLIC)
 
     def cost(self, tile_work: GemmTileWork, tile: Tile) -> int:
         devices = tuple(device for device in tile.devices if device.supports(WorkKind.GEMM))
+        preferred_kinds = self._preferred_device_kinds()
         preferred = tuple(
-            device for device in devices if device.kind is self.preferred_device_kind
+            device for device in devices if device.kind in preferred_kinds
         )
         candidates = preferred or devices
         if not candidates:
             raise ValueError(f"tile {tile.tile_id} has no device for GEMM work")
         return min(device.cycles(tile_work) for device in candidates)
+
+    def _preferred_device_kinds(self) -> tuple[DeviceKind, ...]:
+        preferred = self.preferred_device_kinds
+        if isinstance(preferred, DeviceKind):
+            return (preferred,)
+        return tuple(preferred)

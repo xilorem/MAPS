@@ -12,7 +12,7 @@ class DeviceKind(Enum):
     VECTOR = auto()
     SYSTOLIC = auto()
     DMA = auto()
-
+    MATRIX = auto()
 
 class WorkKind(Enum):
     GEMM = auto()
@@ -70,19 +70,18 @@ class Device:
 
 
 @dataclass(frozen=True)
-class CoreDevice(Device):
+class ScalarDevice(Device):
     """Scalar/core device model using throughput-based timing."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.kind is not DeviceKind.SCALAR:
-            raise ValueError("CoreDevice must use DeviceKind.SCALAR")
+            raise ValueError("ScalarDevice must use DeviceKind.SCALAR")
 
     def cycles(self, work: object) -> int:
         work_kind = work.work_kind
         amount = work.operation_count()
         return self._throughput_cycles(work_kind, amount)
-
 
 @dataclass(frozen=True)
 class DMADevice(Device):
@@ -124,3 +123,59 @@ class SystolicDevice(Device):
         fill_and_drain_cycles = self.array_height + self.array_width - 2
         compute_cycles = batch_volume * m_blocks * n_blocks * (k_size + fill_and_drain_cycles)
         return self.startup_cycles + compute_cycles
+
+
+@dataclass(frozen=True)
+class MatrixDevice(Device):
+    """Matrix-unit device model with GEMM-specific timing."""
+
+    srcA_width: int = 1
+    srcA_height: int = 1
+    srcB_width: int = 1
+    srcB_height: int = 1
+
+    math_fidelity: int = 1
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.kind is not DeviceKind.MATRIX:
+            raise ValueError("MatrixDevice must use DeviceKind.MATRIX")
+        if self.srcA_width <= 0 or self.srcA_height <= 0:
+            raise ValueError("MatrixDevice srcA dimensions must be > 0")
+        if self.srcB_width <= 0 or self.srcB_height <= 0:
+            raise ValueError("MatrixDevice srcB dimensions must be > 0")
+        if self.srcA_width != self.srcB_height:
+            raise ValueError("The reduction dimension of srcs must agree")
+        if self.math_fidelity <= 0:
+            raise ValueError("MatrixDevice math_fidelity must be > 0")
+
+    def cycles(self, work: object) -> int:
+        batch_volume, m_size, n_size, k_size = work.dimensions()
+        m_blocks = ceil(m_size / self.srcA_height)
+        n_blocks = ceil(n_size / self.srcB_width)
+        k_blocks = ceil(k_size / self.srcA_width)
+
+        return self.startup_cycles + batch_volume * m_blocks * n_blocks * k_blocks * self.math_fidelity
+
+
+@dataclass(frozen=True)
+class VectorDevice(Device):
+    """Vector device model using throughput-based timing."""
+
+    vector_length: int = 1
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.kind is not DeviceKind.VECTOR:
+            raise ValueError("VectorDevice must use DeviceKind.VECTOR")
+        if self.vector_length <= 0:
+            raise ValueError("vector_length must be > 0")
+
+    def cycles(self, work: object) -> int:
+        work_kind = work.work_kind
+        amount = work.operation_count()
+
+        vector_ops = ceil(amount / self.vector_length)
+        return self._throughput_cycles(work_kind, vector_ops)
+
+

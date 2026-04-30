@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from MAPS.arch import CoreDevice, DMADevice, DMAJob, DeviceKind, WorkKind
+from MAPS.arch import DMADevice, DMAJob, DeviceKind, ScalarDevice, WorkKind
 
 IDMA_READ_DEVICE = DMADevice(
     name="idma_read",
@@ -18,7 +18,7 @@ IDMA_WRITE_DEVICE = DMADevice(
     job=DMAJob.WRITEJOB,
 )
 
-SCALAR_CORE_DEVICE = CoreDevice(
+SCALAR_DEVICE = ScalarDevice(
     name="core",
     kind=DeviceKind.SCALAR,
     throughput={
@@ -29,7 +29,7 @@ SCALAR_CORE_DEVICE = CoreDevice(
     },
 )
 
-GENERIC_CORE_DEVICE = CoreDevice(
+GENERIC_SCALAR_DEVICE = ScalarDevice(
     name="core",
     kind=DeviceKind.SCALAR,
     throughput={

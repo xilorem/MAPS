@@ -34,6 +34,7 @@ from MAPS.hw.devices import (
     IDMA_WRITE_DEVICE,
     TENSIX_MATRIX_DEVICE,
     TENSIX_SCALAR_DEVICE,
+    TENSIX_VECTOR_DEVICE,
 )
 
 
@@ -91,12 +92,14 @@ N300D_TILE_NOC_COORDS = tuple(
 N300D_IDMA_READ_DEVICE = IDMA_READ_DEVICE
 N300D_IDMA_WRITE_DEVICE = IDMA_WRITE_DEVICE
 N300D_CORE_DEVICE = TENSIX_SCALAR_DEVICE
+N300D_VECTOR_DEVICE = TENSIX_VECTOR_DEVICE
 N300D_MATRIX_DEVICE = TENSIX_MATRIX_DEVICE
 
 N300D_TILE_DEVICES = (
     N300D_IDMA_READ_DEVICE,
     N300D_IDMA_WRITE_DEVICE,
     N300D_CORE_DEVICE,
+    N300D_VECTOR_DEVICE,
     N300D_MATRIX_DEVICE,
 )
 
@@ -212,12 +215,12 @@ def _n300d_noc(width: int = N300D_NOC_WIDTH, height: int = N300D_NOC_HEIGHT) -> 
     )
 
 
-def wormhole_n300d_asic_mesh(
+def wormhole_n300d_mesh(
     width: int = N300D_MESH_WIDTH,
     height: int = N300D_MESH_HEIGHT,
 ) -> Mesh:
     if (width, height) != (N300D_MESH_WIDTH, N300D_MESH_HEIGHT):
-        raise ValueError("wormhole_n300d_asic_mesh uses a fixed logical 8x8 compute mesh")
+        raise ValueError("wormhole_n300d_mesh uses a fixed logical 8x8 compute mesh")
 
     return Mesh(
         width=width,
@@ -237,5 +240,3 @@ def wormhole_n300d_asic_mesh(
         ),
     )
 
-
-n300d_mesh = wormhole_n300d_asic_mesh
