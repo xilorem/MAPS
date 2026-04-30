@@ -19,6 +19,7 @@ from MAPS.arch import (
 )
 from MAPS.hw.devices import IDMA_READ_DEVICE, IDMA_WRITE_DEVICE, SCALAR_DEVICE
 from MAPS.hw.devices.redmule import REDMULE_DEVICE
+from MAPS.utils.print_mesh import print_mesh
 
 MAGIA_MESH_WIDTH = 8
 MAGIA_MESH_HEIGHT = 8
@@ -182,3 +183,8 @@ def magia_mesh(
             for x in range(width)
         ),
     )
+
+
+if __name__ == "__main__":
+    print("MAGIA")
+    print_mesh(magia_mesh())
