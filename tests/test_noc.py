@@ -299,3 +299,40 @@ def test_noc_xy_routing_rejects_wrong_link_direction() -> None:
 
     with pytest.raises(ValueError, match="no XY link from node 0 to node 1"):
         noc.route_endpoints(0, 1)
+
+
+def test_noc_routes_endpoints_with_torus_xy_policy_using_wraparound() -> None:
+    noc = NoC(
+        nodes=tuple(
+            NoCNode(node_id=y * 3 + x, x=x, y=y)
+            for y in range(2)
+            for x in range(3)
+        ),
+        links=tuple(
+            NoCLink(
+                link_id=link_id,
+                src_node_id=src_node_id,
+                dst_node_id=dst_node_id,
+                channels=(NoCChannel(channel_id=0, width_bytes=4),),
+                bidirectional=True,
+            )
+            for link_id, (src_node_id, dst_node_id) in enumerate(
+                (
+                    (0, 1), (1, 2), (2, 0),
+                    (3, 4), (4, 5), (5, 3),
+                    (0, 3), (1, 4), (2, 5),
+                    (3, 0), (4, 1), (5, 2),
+                )
+            )
+        ),
+        endpoints=(
+            NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=2, tile_id=0),
+            NoCEndpoint(endpoint_id=1, kind=EndpointKind.L2, node_id=0),
+        ),
+        routing_policy=RoutingPolicy.TORUS_XY,
+    )
+
+    route = noc.route_endpoints(0, 1)
+
+    assert route.node_ids == (2, 0)
+    assert len(route.link_ids) == 1

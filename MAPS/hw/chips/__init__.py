@@ -19,6 +19,7 @@ from .n300d import (
     N300D_MESH_HEIGHT,
     N300D_MESH_WIDTH,
     n300d_mesh,
+    wormhole_n300d_asic_mesh,
 )
 
 __all__ = [
@@ -38,4 +39,5 @@ __all__ = [
     "N300D_MESH_HEIGHT",
     "N300D_MESH_WIDTH",
     "n300d_mesh",
+    "wormhole_n300d_asic_mesh",
 ]

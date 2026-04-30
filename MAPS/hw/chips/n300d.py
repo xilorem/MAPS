@@ -1,5 +1,5 @@
 
-"""Tenstorrent Wormhole n300d chip description.
+"""Tenstorrent Wormhole n300d single-ASIC chip description.
 
 This module models one Wormhole ASIC as:
 - one logical 8x8 compute mesh used by the planner
@@ -8,6 +8,8 @@ This module models one Wormhole ASIC as:
 The DRAM endpoint coordinates follow the physical Wormhole NoC grid. The
 logical 8x8 compute tiles are attached to a regular subset of NoC nodes so the
 current MAPS planner can still operate on a dense compute mesh.
+
+This is intentionally a per-ASIC model, not a full dual-ASIC n300d board model.
 """
 
 from __future__ import annotations
@@ -27,8 +29,12 @@ from MAPS.arch import (
     TrafficKind,
     TrafficPolicy,
 )
-from MAPS.hw.devices import IDMA_READ_DEVICE, IDMA_WRITE_DEVICE, SCALAR_CORE_DEVICE
-from MAPS.hw.devices.redmule import REDMULE_DEVICE
+from MAPS.hw.devices import (
+    IDMA_READ_DEVICE,
+    IDMA_WRITE_DEVICE,
+    TENSIX_MATRIX_DEVICE,
+    TENSIX_SCALAR_DEVICE,
+)
 
 
 # Single-ASIC approximation of one Wormhole die.
@@ -39,22 +45,17 @@ N300D_L1_SIZE_BYTES = 1464 * 1024
 N300D_L1_USABLE_BYTES = 1464 * 1024
 N300D_L1_STACK_BYTES = 0
 N300D_L1_RESERVED_BYTES = 0
+# MAPS uses tile memory bandwidth as the NoC-facing transfer limit. For
+# Wormhole, use the 32 B/cycle NoC-facing port width rather than the aggregate
+# internal SRAM bank bandwidth.
 N300D_L1_BANDWIDTH_BYTES = 32
 N300D_L2_SIZE_BYTES = 12 * 1024 * 1024 * 1024
 N300D_L2_BANDWIDTH_BYTES = 288
 N300D_NOC_CHANNEL_WIDTH_BYTES = 32
 N300D_NOC_HOP_LATENCY_CYCLES = 9
+N300D_NIU_LATENCY_CYCLES = 5
 N300D_NOC_WIDTH = 10
 N300D_NOC_HEIGHT = 12
-
-N300D_DRAM_ENDPOINTS_BY_CONTROLLER = {
-    "D1": ((0, 0), (0, 1), (0, 11)),
-    "D2": ((0, 5), (0, 7)),
-    "D3": ((0, 6), (5, 0), (5, 1), (5, 11)),
-    "D4": ((5, 2), (5, 9), (5, 10)),
-    "D5": ((5, 3), (5, 4), (5, 8)),
-    "D6": ((5, 5), (5, 6), (5, 7)),
-}
 
 N300D_L2_ENDPOINT_COORDS = (
     (0, 0),
@@ -89,14 +90,14 @@ N300D_TILE_NOC_COORDS = tuple(
 
 N300D_IDMA_READ_DEVICE = IDMA_READ_DEVICE
 N300D_IDMA_WRITE_DEVICE = IDMA_WRITE_DEVICE
-N300D_CORE_DEVICE = SCALAR_CORE_DEVICE
-N300D_REDMULE_DEVICE = REDMULE_DEVICE
+N300D_CORE_DEVICE = TENSIX_SCALAR_DEVICE
+N300D_MATRIX_DEVICE = TENSIX_MATRIX_DEVICE
 
 N300D_TILE_DEVICES = (
     N300D_IDMA_READ_DEVICE,
     N300D_IDMA_WRITE_DEVICE,
     N300D_CORE_DEVICE,
-    N300D_REDMULE_DEVICE,
+    N300D_MATRIX_DEVICE,
 )
 
 
@@ -105,31 +106,29 @@ def _n300d_noc_node_id(x: int, y: int, width: int) -> int:
 
 
 def _n300d_noc_channels() -> tuple[NoCChannel, ...]:
+    all_traffic = frozenset(
+        {
+            TrafficKind.READ_REQ,
+            TrafficKind.WRITE_REQ,
+            TrafficKind.READ_RSP,
+            TrafficKind.WRITE_RSP,
+            TrafficKind.WRITE_DATA,
+        }
+    )
     return (
         NoCChannel(
             channel_id=0,
             width_bytes=N300D_NOC_CHANNEL_WIDTH_BYTES,
             hop_latency_cycles=N300D_NOC_HOP_LATENCY_CYCLES,
-            tag="req",
-            supported_traffic=frozenset(
-                {
-                    TrafficKind.READ_REQ,
-                    TrafficKind.WRITE_REQ,
-                    TrafficKind.WRITE_DATA,
-                }
-            ),
+            tag="noc0",
+            supported_traffic=all_traffic,
         ),
         NoCChannel(
             channel_id=1,
             width_bytes=N300D_NOC_CHANNEL_WIDTH_BYTES,
             hop_latency_cycles=N300D_NOC_HOP_LATENCY_CYCLES,
-            tag="rsp",
-            supported_traffic=frozenset(
-                {
-                    TrafficKind.READ_RSP,
-                    TrafficKind.WRITE_RSP,
-                }
-            ),
+            tag="noc1",
+            supported_traffic=all_traffic,
         ),
     )
 
@@ -145,15 +144,23 @@ def _n300d_noc(width: int = N300D_NOC_WIDTH, height: int = N300D_NOC_HEIGHT) -> 
         for y in range(height)
         for x in range(width)
     )
-    link_pairs = tuple(
-        (_n300d_noc_node_id(x, y, width), _n300d_noc_node_id(x + 1, y, width))
+    horizontal_pairs = tuple(
+        (
+            _n300d_noc_node_id(x, y, width),
+            _n300d_noc_node_id((x + 1) % width, y, width),
+        )
         for y in range(height)
-        for x in range(width - 1)
-    ) + tuple(
-        (_n300d_noc_node_id(x, y, width), _n300d_noc_node_id(x, y + 1, width))
-        for y in range(height - 1)
         for x in range(width)
     )
+    vertical_pairs = tuple(
+        (
+            _n300d_noc_node_id(x, y, width),
+            _n300d_noc_node_id(x, (y + 1) % height, width),
+        )
+        for y in range(height)
+        for x in range(width)
+    )
+    link_pairs = horizontal_pairs + vertical_pairs
     links = tuple(
         NoCLink(
             link_id=link_id,
@@ -170,6 +177,8 @@ def _n300d_noc(width: int = N300D_NOC_WIDTH, height: int = N300D_NOC_HEIGHT) -> 
             kind=EndpointKind.L1,
             node_id=_n300d_noc_node_id(x, y, width),
             tile_id=tile_id,
+            ingress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
+            egress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
         )
         for tile_id, (x, y) in enumerate(N300D_TILE_NOC_COORDS)
     )
@@ -179,6 +188,8 @@ def _n300d_noc(width: int = N300D_NOC_WIDTH, height: int = N300D_NOC_HEIGHT) -> 
             kind=EndpointKind.L2,
             node_id=_n300d_noc_node_id(x, y, width),
             name=f"l2_{endpoint_index}",
+            ingress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
+            egress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
             ingress_channels=attachment_channels,
             egress_channels=attachment_channels,
         )
@@ -190,23 +201,23 @@ def _n300d_noc(width: int = N300D_NOC_WIDTH, height: int = N300D_NOC_HEIGHT) -> 
         endpoints=l1_endpoints + l2_endpoints,
         traffic_policy=TrafficPolicy(
             {
-                TrafficKind.READ_REQ: (0,),
-                TrafficKind.WRITE_REQ: (0,),
-                TrafficKind.READ_RSP: (1,),
-                TrafficKind.WRITE_RSP: (1,),
-                TrafficKind.WRITE_DATA: (0,),
+                TrafficKind.READ_REQ: (0, 1),
+                TrafficKind.WRITE_REQ: (0, 1),
+                TrafficKind.READ_RSP: (0, 1),
+                TrafficKind.WRITE_RSP: (0, 1),
+                TrafficKind.WRITE_DATA: (0, 1),
             }
         ),
-        routing_policy=RoutingPolicy.XY,
+        routing_policy=RoutingPolicy.TORUS_XY,
     )
 
 
-def n300d_mesh(
+def wormhole_n300d_asic_mesh(
     width: int = N300D_MESH_WIDTH,
     height: int = N300D_MESH_HEIGHT,
 ) -> Mesh:
     if (width, height) != (N300D_MESH_WIDTH, N300D_MESH_HEIGHT):
-        raise ValueError("n300d_mesh uses a fixed logical 8x8 compute mesh")
+        raise ValueError("wormhole_n300d_asic_mesh uses a fixed logical 8x8 compute mesh")
 
     return Mesh(
         width=width,
@@ -225,3 +236,6 @@ def n300d_mesh(
             for x in range(width)
         ),
     )
+
+
+n300d_mesh = wormhole_n300d_asic_mesh

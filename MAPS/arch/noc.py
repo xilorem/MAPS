@@ -30,6 +30,7 @@ class RoutingPolicy(Enum):
     """Deterministic node-to-node routing policies."""
 
     XY = auto()
+    TORUS_XY = auto()
 
 
 @dataclass(frozen=True)
@@ -406,6 +407,16 @@ class NoC:
             )
             self._routes_by_endpoint_pair[(src_endpoint_id, dst_endpoint_id)] = route
             return route
+        if self.routing_policy is RoutingPolicy.TORUS_XY:
+            node_ids, link_ids = self._route_nodes_torus_xy(src_endpoint.node_id, dst_endpoint.node_id)
+            route = NoCRoute(
+                src_endpoint_id=src_endpoint_id,
+                dst_endpoint_id=dst_endpoint_id,
+                node_ids=node_ids,
+                link_ids=link_ids,
+            )
+            self._routes_by_endpoint_pair[(src_endpoint_id, dst_endpoint_id)] = route
+            return route
         raise ValueError(f"unsupported routing policy: {self.routing_policy}")
 
     def _route_nodes_xy(self, src_node_id: int, dst_node_id: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
@@ -443,6 +454,45 @@ class NoC:
         node_ids.append(next_node.node_id)
         link_ids.append(link.link_id)
         return next_node
+
+    def _route_nodes_torus_xy(self, src_node_id: int, dst_node_id: int) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        current = self.node_by_id(src_node_id)
+        dst = self.node_by_id(dst_node_id)
+
+        node_ids = [current.node_id]
+        link_ids: list[int] = []
+        width = self._torus_width
+        height = self._torus_height
+
+        while current.x != dst.x:
+            next_x = self._torus_step(current.x, dst.x, width)
+            current = self._append_xy_step(current, next_x, current.y, node_ids, link_ids)
+
+        while current.y != dst.y:
+            next_y = self._torus_step(current.y, dst.y, height)
+            current = self._append_xy_step(current, current.x, next_y, node_ids, link_ids)
+
+        return tuple(node_ids), tuple(link_ids)
+
+    @cached_property
+    def _torus_width(self) -> int:
+        if not self.nodes:
+            raise ValueError("torus routing requires at least one node")
+        return max(node.x for node in self.nodes) + 1
+
+    @cached_property
+    def _torus_height(self) -> int:
+        if not self.nodes:
+            raise ValueError("torus routing requires at least one node")
+        return max(node.y for node in self.nodes) + 1
+
+    @staticmethod
+    def _torus_step(current: int, dst: int, size: int) -> int:
+        forward = (dst - current) % size
+        backward = (current - dst) % size
+        if forward <= backward:
+            return (current + 1) % size
+        return (current - 1) % size
 
     def _link_between_nodes(self, src_node_id: int, dst_node_id: int) -> NoCLink | None:
         return self._links_between_nodes.get((src_node_id, dst_node_id))
