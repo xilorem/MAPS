@@ -36,4 +36,6 @@ Thumbs.db
 dev/
 STATUS.md
 AGENTS.md
+.codex
+.agents/
 tests/onnx_models/

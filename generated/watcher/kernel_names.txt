@@ -1,0 +1,4 @@
+0: blank
+1: tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/reader_single_core_mm.cpp
+2: tt_metal/programming_examples/matmul/matmul_single_core/kernels/dataflow/writer_single_core_mm.cpp
+3: tt_metal/programming_examples/matmul/matmul_single_core/kernels/compute/mm.cpp

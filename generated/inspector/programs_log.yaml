@@ -1,0 +1,12 @@
+- program_created:
+    id: 0
+    timestamp_ns: 1777888321295309906
+- program_created:
+    id: 1
+    timestamp_ns: 1777888321297647614
+- program_destroyed:
+    id: 1
+    timestamp_ns: 1777888321297661549
+- program_compile_started:
+    id: 0
+    timestamp_ns: 1777888321297704662
