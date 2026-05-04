@@ -1,7 +1,7 @@
 
 """Tenstorrent Wormhole n300d single-ASIC chip description.
 
-This module models one Wormhole ASIC as:
+This module models one fixed Wormhole ASIC as:
 - one logical 8x8 compute mesh used by the planner
 - one larger physical 10x12 NoC used by transport costs
 
@@ -78,63 +78,35 @@ def _n300d_noc_node_id(x: int, y: int, width: int) -> int:
     return y * width + x
 
 
-def _scale_template_coord(value: int, template_size: int, target_size: int) -> int:
-    if template_size <= 1:
-        return 0
-    return round(value * (target_size - 1) / (template_size - 1))
-
-
-def _n300d_noc_dims(mesh_width: int, mesh_height: int) -> tuple[int, int]:
-    return mesh_width + N300D_NOC_WIDTH_PADDING, mesh_height + N300D_NOC_HEIGHT_PADDING
-
-
-def _n300d_reserved_rows(mesh_height: int) -> tuple[int, ...]:
-    _, noc_height = _n300d_noc_dims(N300D_MESH_WIDTH, mesh_height)
-    start = noc_height // 2
+def _n300d_reserved_rows() -> tuple[int, ...]:
+    start = N300D_NOC_HEIGHT // 2
     return tuple(range(start, start + N300D_RESERVED_NOC_ROW_COUNT))
 
 
-def _select_contiguous_block(available: tuple[int, ...], count: int) -> tuple[int, ...]:
-    if count <= 0:
-        return ()
-    if count > len(available):
-        raise ValueError("not enough NoC positions for requested compute mesh size")
-    start = (len(available) - count) // 2
-    return available[start:start + count]
-
-
-def _n300d_middle_l2_x(mesh_width: int) -> int:
-    left_compute_width = (mesh_width + 1) // 2
+def _n300d_middle_l2_x() -> int:
+    left_compute_width = (N300D_MESH_WIDTH + 1) // 2
     return 1 + left_compute_width
 
 
-def _n300d_tile_noc_coords(
-    mesh_width: int,
-    mesh_height: int,
-) -> tuple[tuple[int, int], ...]:
-    noc_width, noc_height = _n300d_noc_dims(mesh_width, mesh_height)
-    middle_l2_x = _n300d_middle_l2_x(mesh_width)
+def _n300d_tile_noc_coords() -> tuple[tuple[int, int], ...]:
+    middle_l2_x = _n300d_middle_l2_x()
     left_positions = tuple(range(1, middle_l2_x))
-    right_positions = tuple(range(middle_l2_x + 1, noc_width))
+    right_positions = tuple(range(middle_l2_x + 1, N300D_NOC_WIDTH))
     x_positions = left_positions + right_positions
-    reserved_rows = set(_n300d_reserved_rows(mesh_height))
-    y_positions = tuple(y for y in range(2, noc_height) if y not in reserved_rows)
+    reserved_rows = set(_n300d_reserved_rows())
+    y_positions = tuple(y for y in range(2, N300D_NOC_HEIGHT) if y not in reserved_rows)
     return tuple((x, y) for y in y_positions for x in x_positions)
 
 
-def _n300d_l2_endpoint_coords(mesh_width: int, mesh_height: int) -> tuple[tuple[int, int], ...]:
-    _, noc_height = _n300d_noc_dims(mesh_width, mesh_height)
-    middle_l2_x = _n300d_middle_l2_x(mesh_width)
-    left_rows = tuple(dict.fromkeys(
-        _scale_template_coord(y, _N300D_TEMPLATE_NOC_HEIGHT, noc_height)
-        for y in _N300D_TEMPLATE_LEFT_L2_ROWS
-    ))
-    middle_rows = tuple(range(noc_height))
+def _n300d_l2_endpoint_coords() -> tuple[tuple[int, int], ...]:
+    middle_l2_x = _n300d_middle_l2_x()
+    left_rows = _N300D_TEMPLATE_LEFT_L2_ROWS
+    middle_rows = tuple(range(N300D_NOC_HEIGHT))
     return tuple((0, y) for y in left_rows) + tuple((middle_l2_x, y) for y in middle_rows)
 
 
-N300D_L2_ENDPOINT_COORDS = _n300d_l2_endpoint_coords(N300D_MESH_WIDTH, N300D_MESH_HEIGHT)
-N300D_TILE_NOC_COORDS = _n300d_tile_noc_coords(N300D_MESH_WIDTH, N300D_MESH_HEIGHT)
+N300D_L2_ENDPOINT_COORDS = _n300d_l2_endpoint_coords()
+N300D_TILE_NOC_COORDS = _n300d_tile_noc_coords()
 
 
 def _n300d_noc_channels() -> tuple[NoCChannel, ...]:
@@ -165,55 +137,71 @@ def _n300d_noc_channels() -> tuple[NoCChannel, ...]:
     )
 
 
-def _n300d_noc(
-    mesh_width: int,
-    mesh_height: int,
-) -> NoC:
-    width, height = _n300d_noc_dims(mesh_width, mesh_height)
+def _n300d_noc() -> NoC:
     attachment_channels = _n300d_noc_channels()
-    tile_noc_coords = _n300d_tile_noc_coords(mesh_width, mesh_height)
-    l2_endpoint_coords = _n300d_l2_endpoint_coords(mesh_width, mesh_height)
+    tile_noc_coords = _n300d_tile_noc_coords()
+    l2_endpoint_coords = _n300d_l2_endpoint_coords()
     nodes = tuple(
         NoCNode(
-            node_id=_n300d_noc_node_id(x, y, width),
+            node_id=_n300d_noc_node_id(x, y, N300D_NOC_WIDTH),
             x=x,
             y=y,
         )
-        for y in range(height)
-        for x in range(width)
+        for y in range(N300D_NOC_HEIGHT)
+        for x in range(N300D_NOC_WIDTH)
     )
-    horizontal_pairs = tuple(
+    right_pairs = tuple(
         (
-            _n300d_noc_node_id(x, y, width),
-            _n300d_noc_node_id((x + 1) % width, y, width),
+            _n300d_noc_node_id(x, y, N300D_NOC_WIDTH),
+            _n300d_noc_node_id((x + 1) % N300D_NOC_WIDTH, y, N300D_NOC_WIDTH),
+            0,
         )
-        for y in range(height)
-        for x in range(width)
+        for y in range(N300D_NOC_HEIGHT)
+        for x in range(N300D_NOC_WIDTH)
     )
-    vertical_pairs = tuple(
+    left_pairs = tuple(
         (
-            _n300d_noc_node_id(x, y, width),
-            _n300d_noc_node_id(x, (y + 1) % height, width),
+            _n300d_noc_node_id(x, y, N300D_NOC_WIDTH),
+            _n300d_noc_node_id((x - 1) % N300D_NOC_WIDTH, y, N300D_NOC_WIDTH),
+            1,
         )
-        for y in range(height)
-        for x in range(width)
+        for y in range(N300D_NOC_HEIGHT)
+        for x in range(N300D_NOC_WIDTH)
     )
-    link_pairs = horizontal_pairs + vertical_pairs
+    up_pairs = tuple(
+        (
+            _n300d_noc_node_id(x, y, N300D_NOC_WIDTH),
+            _n300d_noc_node_id(x, (y + 1) % N300D_NOC_HEIGHT, N300D_NOC_WIDTH),
+            0,
+        )
+        for y in range(N300D_NOC_HEIGHT)
+        for x in range(N300D_NOC_WIDTH)
+    )
+    down_pairs = tuple(
+        (
+            _n300d_noc_node_id(x, y, N300D_NOC_WIDTH),
+            _n300d_noc_node_id(x, (y - 1) % N300D_NOC_HEIGHT, N300D_NOC_WIDTH),
+            1,
+        )
+        for y in range(N300D_NOC_HEIGHT)
+        for x in range(N300D_NOC_WIDTH)
+    )
+    link_specs = right_pairs + left_pairs + up_pairs + down_pairs
+    channels = _n300d_noc_channels()
     links = tuple(
         NoCLink(
             link_id=link_id,
             src_node_id=src_node_id,
             dst_node_id=dst_node_id,
-            channels=_n300d_noc_channels(),
-            bidirectional=True,
+            channels=(channels[channel_id],),
         )
-        for link_id, (src_node_id, dst_node_id) in enumerate(link_pairs)
+        for link_id, (src_node_id, dst_node_id, channel_id) in enumerate(link_specs)
     )
     l1_endpoints = tuple(
         NoCEndpoint(
             endpoint_id=tile_id,
             kind=EndpointKind.L1,
-            node_id=_n300d_noc_node_id(x, y, width),
+            node_id=_n300d_noc_node_id(x, y, N300D_NOC_WIDTH),
             tile_id=tile_id,
             ingress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
             egress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
@@ -224,7 +212,7 @@ def _n300d_noc(
         NoCEndpoint(
             endpoint_id=len(tile_noc_coords) + endpoint_index,
             kind=EndpointKind.L2,
-            node_id=_n300d_noc_node_id(x, y, width),
+            node_id=_n300d_noc_node_id(x, y, N300D_NOC_WIDTH),
             name=f"l2_{endpoint_index}",
             ingress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
             egress_latency_cycles=N300D_NIU_LATENCY_CYCLES,
@@ -250,25 +238,22 @@ def _n300d_noc(
     )
 
 
-def wormhole_n300d_mesh(
-    width: int = N300D_MESH_WIDTH,
-    height: int = N300D_MESH_HEIGHT,
-) -> Mesh:
+def wormhole_n300d_mesh() -> Mesh:
     return Mesh(
-        width=width,
-        height=height,
+        width=N300D_MESH_WIDTH,
+        height=N300D_MESH_HEIGHT,
         l2_memory=L2Memory(size=N300D_L2_SIZE_BYTES, bandwidth=N300D_L2_BANDWIDTH_BYTES),
-        noc=_n300d_noc(width, height),
+        noc=_n300d_noc(),
         tiles=tuple(
             Tile(
-                tile_id=y * width + x,
+                tile_id=y * N300D_MESH_WIDTH + x,
                 x=x,
                 y=y,
                 memory=L1Memory(size=N300D_L1_USABLE_BYTES, bandwidth=N300D_L1_BANDWIDTH_BYTES),
                 devices=N300D_TILE_DEVICES,
             )
-            for y in range(height)
-            for x in range(width)
+            for y in range(N300D_MESH_HEIGHT)
+            for x in range(N300D_MESH_WIDTH)
         ),
     )
 

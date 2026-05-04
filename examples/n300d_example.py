@@ -74,7 +74,7 @@ def _write_example_model(model_path: Path) -> None:
 
 
 def main():
-    mesh = wormhole_n300d_mesh(width=16, height=16)
+    mesh = wormhole_n300d_mesh()
     with TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "n300d_example.onnx"
         _write_example_model(model_path)

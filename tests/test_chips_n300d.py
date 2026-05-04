@@ -3,8 +3,6 @@ from MAPS.hw.chips.n300d import (
     N300D_L1_BANDWIDTH_BYTES,
     N300D_L1_USABLE_BYTES,
     N300D_L2_BANDWIDTH_BYTES,
-    N300D_NOC_HEIGHT_PADDING,
-    N300D_NOC_WIDTH_PADDING,
     N300D_L2_ENDPOINT_COORDS,
     N300D_MESH_HEIGHT,
     N300D_MESH_WIDTH,
@@ -15,8 +13,6 @@ from MAPS.hw.chips.n300d import (
     N300D_NOC_WIDTH,
     N300D_TILE_NOC_COORDS,
     _n300d_reserved_rows,
-    _n300d_l2_endpoint_coords,
-    _n300d_tile_noc_coords,
     wormhole_n300d_mesh,
 )
 
@@ -50,19 +46,15 @@ def test_n300d_tile_and_dram_endpoints_attach_to_expected_noc_coordinates() -> N
     assert tuple(mesh.noc.node_by_id(endpoint.node_id).coords for endpoint in l1_endpoints) == N300D_TILE_NOC_COORDS
     assert tuple(mesh.noc.node_by_id(endpoint.node_id).coords for endpoint in l2_endpoints) == N300D_L2_ENDPOINT_COORDS
 
-    assert all(link.bidirectional for link in mesh.noc.links)
-    assert len(mesh.noc.links) == 2 * N300D_NOC_WIDTH * N300D_NOC_HEIGHT
-    assert all(tuple(channel.tag for channel in link.channels) == ("noc0", "noc1") for link in mesh.noc.links)
+    assert not any(link.bidirectional for link in mesh.noc.links)
+    assert len(mesh.noc.links) == 4 * N300D_NOC_WIDTH * N300D_NOC_HEIGHT
+    assert all(len(link.channels) == 1 for link in mesh.noc.links)
     assert all(link.channels[0].width_bytes == N300D_NOC_CHANNEL_WIDTH_BYTES for link in mesh.noc.links)
-    assert all(link.channels[1].width_bytes == N300D_NOC_CHANNEL_WIDTH_BYTES for link in mesh.noc.links)
-    assert all(
-        all(channel.hop_latency_cycles == N300D_NOC_HOP_LATENCY_CYCLES for channel in link.channels)
-        for link in mesh.noc.links
-    )
+    assert all(link.channels[0].hop_latency_cycles == N300D_NOC_HOP_LATENCY_CYCLES for link in mesh.noc.links)
     assert all(endpoint.ingress_latency_cycles == N300D_NIU_LATENCY_CYCLES for endpoint in l1_endpoints + l2_endpoints)
     assert all(endpoint.egress_latency_cycles == N300D_NIU_LATENCY_CYCLES for endpoint in l1_endpoints + l2_endpoints)
 
-    reserved_rows = set(_n300d_reserved_rows(N300D_MESH_HEIGHT))
+    reserved_rows = set(_n300d_reserved_rows())
     compute_rows = {
         mesh.noc.node_by_id(endpoint.node_id).y
         for endpoint in l1_endpoints
@@ -70,18 +62,23 @@ def test_n300d_tile_and_dram_endpoints_attach_to_expected_noc_coordinates() -> N
     assert reserved_rows.isdisjoint(compute_rows)
 
 
-def test_n300d_mesh_scales_noc_with_custom_compute_shape() -> None:
-    mesh = wormhole_n300d_mesh(width=9, height=9)
+def test_n300d_noc_uses_noc0_for_right_up_and_noc1_for_left_down() -> None:
+    mesh = wormhole_n300d_mesh()
 
-    assert mesh.shape == (9, 9)
-    assert mesh.num_tiles == 81
-    assert len(mesh.noc.nodes) == (9 + N300D_NOC_WIDTH_PADDING) * (9 + N300D_NOC_HEIGHT_PADDING)
-    assert len(mesh.noc.endpoints_of_kind(EndpointKind.L1)) == 81
-    assert tuple(
-        mesh.noc.node_by_id(endpoint.node_id).coords
-        for endpoint in mesh.noc.endpoints_of_kind(EndpointKind.L1)
-    ) == _n300d_tile_noc_coords(9, 9)
-    assert tuple(
-        mesh.noc.node_by_id(endpoint.node_id).coords
-        for endpoint in mesh.noc.endpoints_of_kind(EndpointKind.L2)
-    ) == _n300d_l2_endpoint_coords(9, 9)
+    for link in mesh.noc.links:
+        src = mesh.noc.node_by_id(link.src_node_id)
+        dst = mesh.noc.node_by_id(link.dst_node_id)
+        dx = (dst.x - src.x) % N300D_NOC_WIDTH
+        dy = (dst.y - src.y) % N300D_NOC_HEIGHT
+        tag = link.channels[0].tag
+
+        if dx == 1 and dy == 0:
+            assert tag == "noc0"
+        elif dx == N300D_NOC_WIDTH - 1 and dy == 0:
+            assert tag == "noc1"
+        elif dx == 0 and dy == 1:
+            assert tag == "noc0"
+        elif dx == 0 and dy == N300D_NOC_HEIGHT - 1:
+            assert tag == "noc1"
+        else:
+            raise AssertionError(f"unexpected directed link from {src.coords} to {dst.coords}")
