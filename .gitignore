@@ -38,4 +38,5 @@ STATUS.md
 AGENTS.md
 .codex
 .agents/
+generated/
 tests/onnx_models/
