@@ -9,6 +9,7 @@ from MAPS.core.layout import TensorSlice
 from MAPS.core.graph import Graph, Node
 from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
 from MAPS.pipeline.pipeline import Pipeline
+from MAPS.pipeline.json_export import write_pipeline_json
 from MAPS.pipeline.stage import Stage
 from MAPS.importers.onnx.importer import import_onnx_graph
 from MAPS.planner.select_stage import select_stages
@@ -28,6 +29,7 @@ def build_pipeline(
     enable_lossy_spatial_mapping_pruning: bool = False,
     require_l2_input_access_point: bool = False,
     require_l2_output_access_point: bool = False,
+    output_json_path: str | Path | None = None,
 ) -> Pipeline:
     """Build a pipeline plan from one ONNX model."""
 
@@ -51,7 +53,10 @@ def build_pipeline(
         require_l2_output_access_point=require_l2_output_access_point,
     )
     placed_plans = place_stage_plans(stage_plans, mapping)
-    return _build_pipeline_from_graph(graph, mesh, placed_plans)
+    pipeline = _build_pipeline_from_graph(graph, mesh, placed_plans)
+    if output_json_path is not None:
+        write_pipeline_json(pipeline, output_json_path)
+    return pipeline
 
 
 def _build_pipeline_from_graph(

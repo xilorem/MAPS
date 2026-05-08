@@ -89,6 +89,7 @@ def main():
             require_l2_output_access_point=False,
             enable_lossless_spatial_mapping_pruning=True,
             enable_lossy_spatial_mapping_pruning=False,
+            output_json_path=PROJECT_ROOT / "generated" / "n300d_example.pipeline.json",
         )
         report = validate_constraints(pipeline, PlannerConstraints())
 

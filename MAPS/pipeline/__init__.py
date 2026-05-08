@@ -9,6 +9,7 @@ from .layer import (
     LocalInput,
     TransitionInput,
 )
+from .json_export import write_pipeline_json
 from .pipeline import Pipeline
 from .stage import Stage
 
@@ -22,4 +23,5 @@ __all__ = [
     "Pipeline",
     "Stage",
     "TransitionInput",
+    "write_pipeline_json",
 ]

@@ -89,6 +89,7 @@ def main():
             require_l2_output_access_point=False, # balancing feasible mesh verification
             enable_lossless_spatial_mapping_pruning=True,
             enable_lossy_spatial_mapping_pruning=False,
+            output_json_path=PROJECT_ROOT / "generated" / "magia_example.pipeline.json",
         )
         report = validate_constraints(pipeline, PlannerConstraints())
 
