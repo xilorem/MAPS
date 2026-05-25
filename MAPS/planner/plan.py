@@ -9,7 +9,7 @@ from MAPS.core.layout import TensorSlice
 from MAPS.core.graph import Graph, Node
 from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
 from MAPS.pipeline.pipeline import Pipeline
-from MAPS.pipeline.json_export import write_pipeline_json
+from MAPS.utils.pipeline_json import write_pipeline_json
 from MAPS.pipeline.stage import Stage
 from MAPS.importers.onnx.importer import import_onnx_graph
 from MAPS.planner.select_stage import select_stages

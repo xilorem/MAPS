@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from MAPS.hw.chips import magia_mesh
 from MAPS.planner import PlannerConstraints, validate_constraints
 from MAPS.planner.plan import build_pipeline
+from MAPS.utils.pipeline_json import write_pipeline_json
 from MAPS.utils.print_submeshes import print_submeshes
 
 
@@ -75,6 +76,7 @@ def _write_example_model(model_path: Path) -> None:
 
 def main():
     mesh = magia_mesh(width=16, height=16)
+    output_path = PROJECT_ROOT / "generated" / "magia_example.pipeline.json"
     with TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "magia_example.onnx"
         _write_example_model(model_path)
@@ -89,7 +91,6 @@ def main():
             require_l2_output_access_point=False, # balancing feasible mesh verification
             enable_lossless_spatial_mapping_pruning=True,
             enable_lossy_spatial_mapping_pruning=False,
-            output_json_path=PROJECT_ROOT / "generated" / "magia_example.pipeline.json",
         )
         report = validate_constraints(pipeline, PlannerConstraints())
 
@@ -103,6 +104,7 @@ def main():
         print("Constraint violations:")
         for violation in report.violations:
             print(f"  {violation.kind}: {violation.message}")
+    print(f"Pipeline JSON: {write_pipeline_json(pipeline, output_path)}")
 
 
 if __name__ == "__main__":
