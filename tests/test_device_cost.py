@@ -5,6 +5,7 @@ from MAPS.hw.chips import magia_mesh
 from MAPS.hw.chips.n300d import wormhole_n300d_mesh
 from MAPS.hw.chips.magia import MAGIA_REDMULE_DEVICE
 from MAPS.core.layout import TensorRange, TensorSlice
+from MAPS.core.tensor import Tensor
 from MAPS.ops.costs.gemm_cost import GemmCostModel
 from MAPS.hw.devices.generic import GENERIC_SCALAR_DEVICE
 from MAPS.hw.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
@@ -13,6 +14,9 @@ from MAPS.ops.defs.gemm import GemmTileWork
 
 
 def _tile_work(m_size: int = 4, n_size: int = 8, k_size: int = 16) -> GemmTileWork:
+    x = Tensor(name="x", rank=2, dims=(m_size, k_size), elem_bytes=4)
+    w = Tensor(name="w", rank=2, dims=(k_size, n_size), elem_bytes=4)
+    output = Tensor(name="output", rank=2, dims=(m_size, n_size), elem_bytes=4)
     output_slice = TensorSlice(
         rank=2,
         dims=(
@@ -37,6 +41,9 @@ def _tile_work(m_size: int = 4, n_size: int = 8, k_size: int = 16) -> GemmTileWo
             ),
         ),
         y_slice=None,
+        x=x,
+        w=w,
+        output=output,
     )
 
 
