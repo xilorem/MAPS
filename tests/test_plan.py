@@ -383,6 +383,60 @@ def test_build_pipeline_lowers_softmax_into_one_grouped_stage() -> None:
     assert report.is_valid, report.violations
 
 
+def test_build_pipeline_exports_conv_as_one_grouped_gemm_dataflow(tmp_path: Path) -> None:
+    try:
+        import onnx
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    model_path = tmp_path / "conv.onnx"
+    json_path = tmp_path / "conv.pipeline.json"
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 4, 4])
+    w = helper.make_tensor_value_info("w", TensorProto.FLOAT, [4, 1, 3, 3])
+    b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [4])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 4, 4, 4])
+    node = helper.make_node(
+        "Conv",
+        inputs=["x", "w", "b"],
+        outputs=["y"],
+        name="conv_0",
+        pads=[1, 1, 1, 1],
+    )
+    graph = helper.make_graph([node], "tiny_conv", [x, w, b], [y])
+    onnx.save(helper.make_model(graph), model_path)
+
+    pipeline = build_pipeline(
+        model_path,
+        _mesh_with_l1(2, 1, l1_size=4096),
+        output_json_path=json_path,
+    )
+
+    assert len(pipeline.stages) == 1
+    assert tuple(layer.node.name for layer in pipeline.stages[0].layers) == (
+        "conv_0__im2col",
+        "conv_0__weight_pack",
+        "conv_0__gemm",
+        "conv_0__bias_add",
+        "conv_0__output_reformat",
+    )
+    assert len(pipeline.transitions) == 0
+    assert {init.name for init in pipeline.initializations} == {"init_x", "init_w", "init_b"}
+    assert pipeline.finalizations[0].name == "output_y"
+    assert isinstance(pipeline.stages[0].layers[2].inputs[0].source, LocalInput)
+    assert isinstance(pipeline.stages[0].layers[4].inputs[0].source, LocalInput)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    layers = payload["stages"][0]["layers"]
+    assert int(OpKind.CONV) not in {layer["node"]["kind"] for layer in layers}
+    assert {layer["node"]["payload"].get("op_name") for layer in layers} >= {
+        "Im2Col",
+        "WeightPack",
+        "Add",
+        "OutputReformat",
+    }
+
+
 def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch) -> None:
     try:
         import onnx

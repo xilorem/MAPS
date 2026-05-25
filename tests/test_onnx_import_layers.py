@@ -9,6 +9,13 @@ from MAPS.importers.onnx.utils import build_tensor_producer_table
 from MAPS.ops import SoftmaxPayload
 from MAPS.ops.defs.collective import AllReducePayload
 from MAPS.ops.defs.conv import ConvPayload
+from MAPS.ops.defs.conv_transforms import (
+    ChannelShardedBiasAddPayload,
+    ChannelShardedGemmPayload,
+    Im2ColPayload,
+    OutputReformatPayload,
+    WeightPackPayload,
+)
 from MAPS.ops.defs.elementwise import BinaryElementwisePayload, UnaryElementwisePayload
 from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.ops.registry import get_onnx_lowerer, register_op, registered_ops
@@ -99,6 +106,60 @@ def test_parse_graph_lowers_conv_to_graph_node() -> None:
     assert lowered_graph.nodes[0].payload.pads == (1, 1, 1, 1)
     assert lowered_graph.nodes[0].payload.b is not None
     assert lowered_graph.nodes[0].attributes["strides"] == (2, 2)
+
+
+def test_decompose_graph_lowers_conv_to_grouped_gemm_dataflow() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 3, 8, 8])
+    w = helper.make_tensor_value_info("w", TensorProto.FLOAT, [8, 3, 3, 3])
+    b = helper.make_tensor_value_info("b", TensorProto.FLOAT, [8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 8, 4, 4])
+    node = helper.make_node(
+        "Conv",
+        inputs=["x", "w", "b"],
+        outputs=["y"],
+        name="conv_0",
+        strides=[2, 2],
+        pads=[1, 1, 1, 1],
+    )
+    graph = helper.make_graph([node], "tiny_conv", [x, w, b], [y])
+
+    lowered_graph = decompose_graph(parse_graph(graph))
+
+    assert tuple(node.name for node in lowered_graph.nodes) == (
+        "conv_0__im2col",
+        "conv_0__weight_pack",
+        "conv_0__gemm",
+        "conv_0__bias_add",
+        "conv_0__output_reformat",
+    )
+    assert tuple(node.kind for node in lowered_graph.nodes) == (
+        OpKind.TRANSFORM,
+        OpKind.TRANSFORM,
+        OpKind.GEMM,
+        OpKind.ELEMENTWISE,
+        OpKind.TRANSFORM,
+    )
+    assert isinstance(lowered_graph.nodes[0].payload, Im2ColPayload)
+    assert isinstance(lowered_graph.nodes[1].payload, WeightPackPayload)
+    assert isinstance(lowered_graph.nodes[2].payload, ChannelShardedGemmPayload)
+    assert isinstance(lowered_graph.nodes[3].payload, ChannelShardedBiasAddPayload)
+    assert isinstance(lowered_graph.nodes[4].payload, OutputReformatPayload)
+    assert all(
+        node.attributes["stage_group_id"] == "conv_0::conv_gemm"
+        for node in lowered_graph.nodes
+    )
+    shapes = {tensor.name: tensor.dims for tensor in lowered_graph.tensors}
+    assert shapes["conv_0__patches"] == (16, 27)
+    assert shapes["conv_0__packed_w"] == (27, 8)
+    assert shapes["conv_0__matmul"] == (16, 8)
+    assert shapes["conv_0__biased"] == (16, 8)
+    assert tuple(tensor.name for tensor in lowered_graph.outputs) == ("y",)
+    assert all(node.kind is not OpKind.CONV for node in lowered_graph.nodes)
 
 
 def test_parse_graph_lowers_exp_to_graph_node() -> None:

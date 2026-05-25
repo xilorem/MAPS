@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from MAPS.core.graph import OpKind
+from MAPS.core.graph import Node, OpKind
 from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice, TensorSliceRef, tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -11,6 +11,13 @@ from MAPS.ops.common.payload import OpPayload
 from MAPS.ops.common.tile_work import TileWork
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
+from MAPS.ops.defs.conv_transforms import (
+    ChannelShardedBiasAddPayload,
+    ChannelShardedGemmPayload,
+    Im2ColPayload,
+    OutputReformatPayload,
+    WeightPackPayload,
+)
 
 
 @dataclass(frozen=True)
@@ -325,10 +332,127 @@ def lower_conv_node(
     )
 
 
+def decompose_conv_node(node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, ...]]:
+    """Lower one NCHW Conv into explicit transforms, GEMM, and optional bias."""
+
+    if not isinstance(node.payload, ConvPayload):
+        raise TypeError("decompose_conv_node expects a Node with ConvPayload payload")
+
+    op = node.payload
+    n, _, _, _ = op.x.dims
+    oc, c, kh, kw = op.w.dims
+    _, _, oh, ow = op.output.dims
+    matrix_shape = (n * oh * ow, oc)
+    patch_shape = (n * oh * ow, c * kh * kw)
+    packed_weight_shape = (c * kh * kw, oc)
+
+    patches = Tensor(
+        name=f"{node.name}__patches",
+        rank=2,
+        dims=patch_shape,
+        elem_bytes=op.output.elem_bytes,
+    )
+    packed_weights = Tensor(
+        name=f"{node.name}__packed_w",
+        rank=2,
+        dims=packed_weight_shape,
+        elem_bytes=op.output.elem_bytes,
+    )
+    matmul_output = Tensor(
+        name=f"{node.name}__matmul",
+        rank=2,
+        dims=matrix_shape,
+        elem_bytes=op.output.elem_bytes,
+    )
+
+    group_attributes = dict(node.attributes)
+    group_attributes["stage_group_id"] = f"{node.name}::conv_gemm"
+
+    nodes = [
+        Node(
+            name=f"{node.name}__im2col",
+            kind=OpKind.TRANSFORM,
+            inputs=(op.x,),
+            outputs=(patches,),
+            payload=Im2ColPayload(
+                x=op.x,
+                output=patches,
+                kernel_shape=(kh, kw),
+                strides=op.strides,
+                pads=op.pads,
+                dilations=op.dilations,
+            ),
+            attributes={**group_attributes, "conv_step": "im2col"},
+        ),
+        Node(
+            name=f"{node.name}__weight_pack",
+            kind=OpKind.TRANSFORM,
+            inputs=(op.w,),
+            outputs=(packed_weights,),
+            payload=WeightPackPayload(w=op.w, output=packed_weights),
+            attributes={**group_attributes, "conv_step": "weight_pack"},
+        ),
+        Node(
+            name=f"{node.name}__gemm",
+            kind=OpKind.GEMM,
+            inputs=(patches, packed_weights),
+            outputs=(matmul_output,),
+            payload=ChannelShardedGemmPayload(
+                x=patches,
+                w=packed_weights,
+                y=None,
+                output=matmul_output,
+            ),
+            attributes={**group_attributes, "conv_step": "gemm"},
+        ),
+    ]
+    new_tensors = [patches, packed_weights, matmul_output]
+    reshape_input = matmul_output
+
+    if op.b is not None:
+        biased_output = Tensor(
+            name=f"{node.name}__biased",
+            rank=2,
+            dims=matrix_shape,
+            elem_bytes=op.output.elem_bytes,
+        )
+        new_tensors.append(biased_output)
+        nodes.append(
+            Node(
+                name=f"{node.name}__bias_add",
+                kind=OpKind.ELEMENTWISE,
+                inputs=(matmul_output, op.b),
+                outputs=(biased_output,),
+                payload=ChannelShardedBiasAddPayload(
+                    op_name="Add",
+                    lhs=matmul_output,
+                    rhs=op.b,
+                    output=biased_output,
+                ),
+                attributes={**group_attributes, "conv_step": "bias_add"},
+            )
+        )
+        reshape_input = biased_output
+
+    nodes.append(
+        Node(
+            name=f"{node.name}__output_reformat",
+            kind=OpKind.TRANSFORM,
+            inputs=(reshape_input,),
+            outputs=(op.output,),
+            payload=OutputReformatPayload(x=reshape_input, output=op.output),
+            attributes={**group_attributes, "conv_step": "output_reformat"},
+        )
+    )
+    return tuple(new_tensors), tuple(nodes)
+
+
 register_op(
     OpSpec(
         name="conv",
         onnx_names=("Conv",),
         lower_onnx=lower_conv_node,
+        decompose=decompose_conv_node,
+        payload_type=ConvPayload,
     )
 )

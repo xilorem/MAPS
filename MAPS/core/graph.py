@@ -17,6 +17,7 @@ class OpKind(IntEnum):
     ELEMENTWISE = 1
     REDUCTION = 2
     CONV = 3
+    TRANSFORM = 4
     CUSTOM = 255
 
 

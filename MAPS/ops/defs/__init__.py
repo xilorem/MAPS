@@ -2,6 +2,14 @@
 
 from .collective import AllReducePayload, CollectiveTileWork
 from .conv import ConvPayload, ConvTileWork
+from .conv_transforms import (
+    ChannelShardedBiasAddPayload,
+    ChannelShardedGemmPayload,
+    Im2ColPayload,
+    OutputReformatPayload,
+    TransformTileWork,
+    WeightPackPayload,
+)
 from .elementwise import BinaryElementwisePayload, ElementwiseTileWork, UnaryElementwisePayload
 from .gemm import GemmPayload, GemmTileWork
 from .reduction import ReductionPayload, ReductionTileWork
@@ -13,11 +21,17 @@ __all__ = [
     "CollectiveTileWork",
     "ConvPayload",
     "ConvTileWork",
+    "ChannelShardedBiasAddPayload",
+    "ChannelShardedGemmPayload",
     "ElementwiseTileWork",
     "GemmPayload",
     "GemmTileWork",
+    "Im2ColPayload",
+    "OutputReformatPayload",
     "ReductionPayload",
     "ReductionTileWork",
     "SoftmaxPayload",
+    "TransformTileWork",
     "UnaryElementwisePayload",
+    "WeightPackPayload",
 ]
