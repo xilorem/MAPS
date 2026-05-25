@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from MAPS.arch import Mesh, Tile
 from MAPS.core.layout import TensorSlice
 from MAPS.core.graph import Graph, Node
 from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
+from MAPS.pipeline.initialization import Initialization, InitializationFragment
 from MAPS.pipeline.pipeline import Pipeline
 from MAPS.utils.pipeline_json import write_pipeline_json
 from MAPS.pipeline.stage import Stage
@@ -134,14 +136,69 @@ def _build_pipeline_from_graph(
         )
         for stage_id in stage_selection
     )
+    initializations = _build_initializations(
+        graph=graph,
+        stage_selection=stage_selection,
+        stage_plans=stage_plans,
+        producer_by_tensor=producer_by_tensor,
+        tensor_id_by_tensor=tensor_id_by_tensor,
+    )
 
     return Pipeline(
         name=graph.name,
         mesh=mesh,
-        tensors=graph.tensors,
+        tensors=tuple(
+            replace(tensor, is_initializer=tensor in graph.initializers)
+            for tensor in graph.tensors
+        ),
         stages=stages,
         transitions=tuple(transitions),
+        initializations=initializations,
     )
+
+
+def _build_initializations(
+    graph: Graph,
+    stage_selection: dict[int, tuple[Node, ...]],
+    stage_plans: dict[int, StagePlan],
+    producer_by_tensor: dict[object, Node],
+    tensor_id_by_tensor: dict[object, int],
+) -> tuple[Initialization, ...]:
+    layer_id_by_node = {
+        id(node): layer_id
+        for layer_id, node in enumerate(graph.nodes)
+    }
+    initializations = []
+    for stage_id, stage_nodes in stage_selection.items():
+        plan = stage_plans[stage_id]
+        for node in stage_nodes:
+            output_layouts = _node_output_layout(plan, node)
+            for input_idx, tensor in enumerate(node.inputs):
+                if tensor in producer_by_tensor:
+                    continue
+                required_slices = _transition_required_slices(
+                    tensor=tensor,
+                    dst_node=node,
+                    dst_output_layouts=output_layouts,
+                )
+                initializations.append(
+                    Initialization(
+                        name=f"init_{tensor.name}",
+                        tensor_id=tensor_id_by_tensor[tensor],
+                        dst_layer_id=layer_id_by_node[id(node)],
+                        dst_input_idx=input_idx,
+                        fragments=tuple(
+                            InitializationFragment(
+                                src_hartid=-1,
+                                dst_hartid=tile.tile_id,
+                                src_slice=tensor_slice,
+                                dst_slice=tensor_slice,
+                            )
+                            for tile, tensor_slice in required_slices
+                        ),
+                    )
+                )
+    return tuple(initializations)
 
 
 def _build_stage(

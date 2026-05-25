@@ -19,6 +19,7 @@ class Tensor:
     rank: int
     dims: tuple[int, ...]
     elem_bytes: int
+    is_initializer: bool = False
 
     def __post_init__(self) -> None:
         if not self.name:

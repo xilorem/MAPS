@@ -91,6 +91,7 @@ def collect_scheduler_tensors(graph: "GraphProto") -> dict[str, Tensor]:
     """Collect scheduler-side logical tensors from one ONNX graph."""
 
     metadata: dict[str, dict[str, object]] = {}
+    initializer_names = {initializer.name for initializer in graph.initializer}
 
     for value in graph.input:
         name, shape, elem_bytes = parse_value_tensor(value)
@@ -122,6 +123,7 @@ def collect_scheduler_tensors(graph: "GraphProto") -> dict[str, Tensor]:
             rank=len(shape),
             dims=shape,
             elem_bytes=elem_bytes,
+            is_initializer=name in initializer_names,
         )
 
     return tensors

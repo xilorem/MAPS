@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -13,6 +14,7 @@ from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.planner import PlannerConstraints, validate_constraints
 import MAPS.planner.plan as plan_module
 from MAPS.planner.plan import _build_pipeline_from_graph, build_pipeline
+from MAPS.utils.pipeline_json import write_pipeline_json
 from MAPS.planner.workload_balancing import StagePlan
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
@@ -27,7 +29,7 @@ def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
     )
 
 
-def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -> None:
+def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp_path: Path) -> None:
     mesh = magia_mesh()
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1)
@@ -87,6 +89,18 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
     assert pipeline.name == "direct_two_gemms"
     assert len(pipeline.stages) == 2
     assert len(pipeline.transitions) == 1
+    assert tuple(initialization.name for initialization in pipeline.initializations) == (
+        "init_x",
+        "init_w0",
+        "init_w1",
+    )
+    assert tuple(tensor.is_initializer for tensor in pipeline.tensors) == (
+        False,
+        True,
+        False,
+        True,
+        False,
+    )
     assert pipeline.stages[0].layers[0].node == node0
     assert pipeline.stages[1].layers[0].node == node1
     assert isinstance(pipeline.stages[0].layers[0].inputs[0].source, ExternalInput)
@@ -119,6 +133,32 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings() -
         tile_tensor_slice(y, transition.src_layout, tile)
         for tile in transition.src_layout.submesh.tiles
     }
+    weight_initialization = pipeline.initializations[1]
+    assert weight_initialization.tensor_id == 1
+    assert weight_initialization.dst_layer_id == 0
+    assert weight_initialization.dst_input_idx == 1
+    assert {
+        (fragment.src_hartid, fragment.dst_hartid)
+        for fragment in weight_initialization.fragments
+    } == {(-1, 0), (-1, 1)}
+    assert {
+        fragment.src_slice.dims[-1]
+        for fragment in weight_initialization.fragments
+    } == {
+        tile_tensor_slice(y, transition.src_layout, tile).dims[-1]
+        for tile in transition.src_layout.submesh.tiles
+    }
+    json_path = write_pipeline_json(pipeline, tmp_path / "pipeline.json")
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert [tensor["is_initializer"] for tensor in payload["tensors"]] == [
+        False,
+        True,
+        False,
+        True,
+        False,
+    ]
+    assert "is_initializer" not in payload["stages"][0]["layers"][0]["node"]["inputs"][1]
+    assert payload["initializations"][1]["name"] == "init_w0"
 
     report = validate_constraints(pipeline, PlannerConstraints())
     assert report.is_valid, report.violations
@@ -207,6 +247,13 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
     assert isinstance(pipeline.stages[0].layers[1].inputs[0].source, LocalInput)
     assert pipeline.stages[0].layers[1].inputs[0].source.layer_idx == 0
     assert len(pipeline.transitions) == 1
+    assert tuple(initialization.name for initialization in pipeline.initializations) == (
+        "init_x",
+        "init_w0",
+        "init_w1",
+        "init_w2",
+    )
+    assert pipeline.initializations[-1].dst_layer_id == 2
     assert pipeline.transitions[0].src_layer_id == 0
     assert pipeline.transitions[0].dst_layer_id == 1
     assert isinstance(pipeline.stages[1].layers[0].inputs[0].source, TransitionInput)

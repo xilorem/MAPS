@@ -369,6 +369,8 @@ def test_parse_graph_builds_node_to_node_and_initializer_edges() -> None:
     assert any(edge.tensor.name == "w1" and edge.src is None for edge in incoming_second)
     assert any(edge.tensor.name == "y1" and edge.src == second_node for edge in output_edges)
     assert tuple(tensor.name for tensor in lowered_graph.initializers) == ("w0", "w1")
+    assert not lowered_graph.tensors[0].is_initializer
+    assert all(tensor.is_initializer for tensor in lowered_graph.initializers)
 
 
 def test_onnx_dtype_elem_bytes_maps_common_float32() -> None:

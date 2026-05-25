@@ -28,11 +28,28 @@ def _to_jsonable(value: object) -> object:
     return str(value)
 
 
+def _remove_initializer_markers(value: object) -> None:
+    if isinstance(value, dict):
+        value.pop("is_initializer", None)
+        for item in value.values():
+            _remove_initializer_markers(item)
+    elif isinstance(value, list):
+        for item in value:
+            _remove_initializer_markers(item)
+
+
 def write_pipeline_json(pipeline: Pipeline, output_path: str | Path) -> Path:
     """Write one pipeline object to JSON and return its path."""
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = _to_jsonable(asdict(pipeline))
+    initializer_flags = [
+        tensor.is_initializer
+        for tensor in pipeline.tensors
+    ]
+    _remove_initializer_markers(payload)
+    for tensor, is_initializer in zip(payload["tensors"], initializer_flags):
+        tensor["is_initializer"] = is_initializer
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
