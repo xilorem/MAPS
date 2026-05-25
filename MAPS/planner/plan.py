@@ -6,8 +6,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from MAPS.arch import Mesh, Tile
-from MAPS.core.layout import TensorSlice
+from MAPS.core.layout import TensorSlice, tile_tensor_slice
 from MAPS.core.graph import Graph, Node
+from MAPS.pipeline.finalization import Finalization, FinalizationFragment
 from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
 from MAPS.pipeline.initialization import Initialization, InitializationFragment
 from MAPS.pipeline.pipeline import Pipeline
@@ -143,6 +144,13 @@ def _build_pipeline_from_graph(
         producer_by_tensor=producer_by_tensor,
         tensor_id_by_tensor=tensor_id_by_tensor,
     )
+    finalizations = _build_finalizations(
+        graph=graph,
+        stage_plans=stage_plans,
+        node_stage_ids=node_stage_ids,
+        producer_by_tensor=producer_by_tensor,
+        tensor_id_by_tensor=tensor_id_by_tensor,
+    )
 
     return Pipeline(
         name=graph.name,
@@ -154,6 +162,7 @@ def _build_pipeline_from_graph(
         stages=stages,
         transitions=tuple(transitions),
         initializations=initializations,
+        finalizations=finalizations,
     )
 
 
@@ -199,6 +208,45 @@ def _build_initializations(
                     )
                 )
     return tuple(initializations)
+
+
+def _build_finalizations(
+    graph: Graph,
+    stage_plans: dict[int, StagePlan],
+    node_stage_ids: dict[int, int],
+    producer_by_tensor: dict[object, Node],
+    tensor_id_by_tensor: dict[object, int],
+) -> tuple[Finalization, ...]:
+    layer_id_by_node = {
+        id(node): layer_id
+        for layer_id, node in enumerate(graph.nodes)
+    }
+    finalizations = []
+    for tensor in graph.outputs:
+        src_node = producer_by_tensor[tensor]
+        src_output_idx = _node_output_index(src_node, tensor)
+        src_layout = _node_output_layout(
+            stage_plans[node_stage_ids[id(src_node)]],
+            src_node,
+        )[src_output_idx]
+        finalizations.append(
+            Finalization(
+                name=f"output_{tensor.name}",
+                tensor_id=tensor_id_by_tensor[tensor],
+                src_layer_id=layer_id_by_node[id(src_node)],
+                src_output_idx=src_output_idx,
+                fragments=tuple(
+                    FinalizationFragment(
+                        src_hartid=tile.tile_id,
+                        dst_hartid=-1,
+                        src_slice=tile_tensor_slice(tensor, src_layout, tile),
+                        dst_slice=tile_tensor_slice(tensor, src_layout, tile),
+                    )
+                    for tile in src_layout.submesh.tiles
+                ),
+            )
+        )
+    return tuple(finalizations)
 
 
 def _build_stage(

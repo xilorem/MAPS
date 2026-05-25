@@ -32,7 +32,7 @@ def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
 def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp_path: Path) -> None:
     mesh = magia_mesh()
     src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
-    dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1)
+    dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=1, height=2)
 
     x = Tensor(name="x", rank=2, dims=(4, 4), elem_bytes=2)
     w0 = Tensor(name="w0", rank=2, dims=(4, 8), elem_bytes=2)
@@ -94,6 +94,9 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
         "init_w0",
         "init_w1",
     )
+    assert tuple(finalization.name for finalization in pipeline.finalizations) == (
+        "output_z",
+    )
     assert tuple(tensor.is_initializer for tensor in pipeline.tensors) == (
         False,
         True,
@@ -118,7 +121,7 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
     assert {
         (fragment.src_hartid, fragment.dst_hartid)
         for fragment in transition.fragments
-    } == {(0, 8), (1, 8), (0, 9), (1, 9)}
+    } == {(0, 8), (1, 8), (0, 16), (1, 16)}
     assert {
         fragment.src_slice
         for fragment in transition.fragments
@@ -148,6 +151,21 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
         tile_tensor_slice(y, transition.src_layout, tile).dims[-1]
         for tile in transition.src_layout.submesh.tiles
     }
+    finalization = pipeline.finalizations[0]
+    assert finalization.tensor_id == 4
+    assert finalization.src_layer_id == 1
+    assert finalization.src_output_idx == 0
+    assert {
+        (fragment.src_hartid, fragment.dst_hartid)
+        for fragment in finalization.fragments
+    } == {(8, -1), (16, -1)}
+    assert {
+        fragment.src_slice
+        for fragment in finalization.fragments
+    } == {
+        tile_tensor_slice(z, plan1.output_layouts[0], tile)
+        for tile in plan1.output_layouts[0].submesh.tiles
+    }
     json_path = write_pipeline_json(pipeline, tmp_path / "pipeline.json")
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert [tensor["is_initializer"] for tensor in payload["tensors"]] == [
@@ -159,6 +177,7 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
     ]
     assert "is_initializer" not in payload["stages"][0]["layers"][0]["node"]["inputs"][1]
     assert payload["initializations"][1]["name"] == "init_w0"
+    assert payload["finalizations"][0]["name"] == "output_z"
 
     report = validate_constraints(pipeline, PlannerConstraints())
     assert report.is_valid, report.violations
@@ -254,6 +273,7 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
         "init_w2",
     )
     assert pipeline.initializations[-1].dst_layer_id == 2
+    assert pipeline.finalizations[0].src_layer_id == 2
     assert pipeline.transitions[0].src_layer_id == 0
     assert pipeline.transitions[0].dst_layer_id == 1
     assert isinstance(pipeline.stages[1].layers[0].inputs[0].source, TransitionInput)

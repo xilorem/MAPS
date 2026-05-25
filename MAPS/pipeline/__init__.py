@@ -1,5 +1,6 @@
 """Scheduled execution IR."""
 
+from .finalization import Finalization, FinalizationFragment
 from .initialization import Initialization, InitializationFragment
 from .layer import (
     ExternalInput,
@@ -16,6 +17,8 @@ from .stage import Stage
 
 __all__ = [
     "ExternalInput",
+    "Finalization",
+    "FinalizationFragment",
     "Initialization",
     "InitializationFragment",
     "Layer",
