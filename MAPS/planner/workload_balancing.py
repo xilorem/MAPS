@@ -38,6 +38,7 @@ def balance_workload(
     """
     resolved_stage_selection = _resolve_stage_selection(graph, stage_selection)
     stage_ids = tuple(resolved_stage_selection)
+    initializer_tensors = frozenset(graph.initializers)
     if len(stage_ids) > mesh.num_tiles:
         raise ValueError("graph has more selected stages than available tiles")
 
@@ -75,7 +76,9 @@ def balance_workload(
                     mesh,
                     stage_id,
                     tile_count,
+                    initializer_tensors=initializer_tensors,
                     debug=False,
+                    
                 )
             except ValueError as exc:
                 _debug(
@@ -302,6 +305,49 @@ def _resolve_stage_selection(
         )
 
     return resolved
+
+def _estimate_stage_l1_bytes_for_tile(
+    stage_nodes: tuple[Node, ...],
+    node_output_layouts: tuple[tuple, ...],
+    tile: Tile,
+    initializer_tensors: frozenset,
+) -> int:
+    """Estimate one tile's worth of L1 memory needed to execute one stage plan.
+    L1 should be big enough to hold all initializer slices plus the largest possible set
+    of input and output tensor slices for one node, since the tile executes one node at a time but can reuse memory between nodes.
+    """
+    initializer_memory = 0
+    max_node_dynamic_memory = 0
+    seen_initializer_slices = set()
+
+    for node, output_layouts in zip(stage_nodes, node_output_layouts):
+        tile_work = node.payload.build_tile_work(
+            output_layouts=output_layouts,
+            tile=tile,
+        )
+
+        node_dynamic_memory = 0
+
+        for ref in tile_work.input_slices:
+            tensor_bytes = ref.num_bytes
+
+            if ref.tensor in initializer_tensors or getattr(ref.tensor, "is_initializer", False):
+                key = (id(ref.tensor), ref.tensor_slice)
+                if key not in seen_initializer_slices:
+                    initializer_memory += tensor_bytes
+                    seen_initializer_slices.add(key)
+            else:
+                node_dynamic_memory += tensor_bytes
+
+        for ref in tile_work.output_slices:
+            node_dynamic_memory += ref.num_bytes
+
+        max_node_dynamic_memory = max(
+            max_node_dynamic_memory,
+            node_dynamic_memory,
+        )
+
+    return initializer_memory + max_node_dynamic_memory
 
 
 def _tile_count_options_after_growth(
@@ -596,6 +642,7 @@ def _plan_all_stages_for_tile_counts(
             mesh,
             stage_id,
             tile_counts[stage_id],
+            initializer_tensors=frozenset(),
             debug=debug,
         )
     return plans
@@ -624,6 +671,7 @@ def _best_stage_plan_for_stage_nodes(
     mesh: Mesh,
     stage_id: int,
     tile_count: int,
+    initializer_tensors: frozenset(),
     debug: bool,
 ) -> StagePlan:
     """Build the stage plan for one selected multi-node stage."""
@@ -639,27 +687,20 @@ def _best_stage_plan_for_stage_nodes(
     peak_l1_bytes = 0
     min_l1_capacity = None
     for tile in submesh.tiles:
-        tile_peak_l1_bytes = 0
-        for node, output_layouts in zip(
-            stage_nodes,
-            node_output_layouts,
-        ):
-            tile_work = node.payload.build_tile_work(
-                output_layouts=output_layouts,
-                tile=tile,
-            )
-            tile_peak_l1_bytes = max(tile_peak_l1_bytes, tile_work.l1_bytes)
-            if not tile_work.fits_l1(tile):
-                fits_l1 = False
-                break
-        peak_l1_bytes = max(peak_l1_bytes, tile_peak_l1_bytes)
-        min_l1_capacity = (
-            tile.memory.size
-            if min_l1_capacity is None
-            else min(min_l1_capacity, tile.memory.size)
+
+
+        tile_l1_bytes = _estimate_stage_l1_bytes_for_tile(
+            stage_nodes=stage_nodes,
+            node_output_layouts=node_output_layouts,
+            tile=tile,
+            initializer_tensors=initializer_tensors,
         )
-        if not fits_l1:
-            break
+
+        peak_l1_bytes = max(peak_l1_bytes, tile_l1_bytes)
+
+        if tile_l1_bytes > tile.memory.size:
+            fits_l1 = False
+        break
 
     if not fits_l1:
         _debug(
