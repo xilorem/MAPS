@@ -13,7 +13,7 @@ from MAPS.planner.select_stage import StageSelection
 
 @dataclass(frozen=True)
 class StagePlan:
-    """Compute-layout decisions chosen before physical placement."""
+    """Layout decision for one selected stage."""
 
     stage_id: int
     tile_count: int
@@ -22,93 +22,42 @@ class StagePlan:
     nodes: tuple[Node, ...] = ()
     node_output_layouts: tuple[tuple, ...] = ()
 
-
 def balance_workload(
     graph: Graph,
     mesh: Mesh,
-    debug: bool = False,
     stage_selection: StageSelection | None = None,
+    debug: bool = False,
 ) -> dict[int, StagePlan]:
-    """Greedily assign tile counts to selected stages by internal rectangle growth.
-
-    Each selected stage searches physically placeable tile counts. For one tile
-    count, the stage uses one canonical logical shape matching the planning
-    submesh shape; later spatial mapping still chooses the concrete physical
-    rectangle placement.
-    """
+    """Assign tile counts to stages, then build the corresponding stage plans."""
     resolved_stage_selection = _resolve_stage_selection(graph, stage_selection)
     stage_ids = tuple(resolved_stage_selection)
     initializer_tensors = frozenset(graph.initializers)
+    tile_counts: dict[int, int] = {}
+    # Cache all rectangle placements for a tile count so growth can reuse them.
+    placement_masks_by_tile_count: dict[int, tuple[int, ...]] = {}
+    placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool] = {}
+    # Each stage widens its search horizon over time instead of trying every
+    # larger tile count immediately.
+    growth_horizon_by_stage: dict[int, int] = {}
+
     if len(stage_ids) > mesh.num_tiles:
         raise ValueError("graph has more selected stages than available tiles")
 
-    iteration = 0
-    placement_masks_by_tile_count: dict[int, tuple[int, ...]] = {}
-    placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool] = {}
-    decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, int]]] = []
-    growth_horizon_by_stage: dict[int, int] = {}
-
-    # Seed each stage with the smallest tile count whose tile work fits in L1,
-    # then spend any remaining tiles greedily on workload reduction.
-    tile_counts: dict[int, int] = {}
     _debug(debug, "[workload_balancing] phase=initial_l1_seeding")
     for stage_id in stage_ids:
-        stage_nodes = resolved_stage_selection[stage_id]
-        _debug(
-            debug,
-            f"[workload_balancing] seed stage={stage_id} nodes={_stage_label(stage_nodes)}",
+        tile_counts[stage_id] = initial_tile_count_for_stage(
+            mesh=mesh,
+            stage_id=stage_id,
+            stage_selection=resolved_stage_selection,
+            initializer_tensors=initializer_tensors,
+            debug=debug,
         )
-        for tile_count in range(1, mesh.num_tiles + 1):
+        growth_horizon_by_stage[stage_id] = 1
 
-            # skip tile counts that cannot be represented as a rectangle
-            if not _physical_shape_options(tile_count, mesh):
-                _debug(
-                    debug,
-                    "[workload_balancing] "
-                    f"seed stage={stage_id} tile_count={tile_count} "
-                    "skip=no_physical_rectangle",
-                )
-                continue
-
-            try:
-                plan = _best_stage_plan_for_stage_nodes(
-                    stage_nodes,
-                    mesh,
-                    stage_id,
-                    tile_count,
-                    initializer_tensors=initializer_tensors,
-                    debug=False,
-                    
-                )
-            except ValueError as exc:
-                _debug(
-                    debug,
-                    "[workload_balancing] "
-                    f"seed stage={stage_id} tile_count={tile_count} "
-                    f"skip={exc}",
-                )
-                continue
-            tile_counts[stage_id] = tile_count
-            growth_horizon_by_stage[stage_id] = 1
-            _debug(
-                debug,
-                "[workload_balancing] "
-                f"seed stage={stage_id} choose tile_count={tile_count} "
-                f"logical_shape={plan.logical_shape}",
-            )
-            break
-
-        if stage_id not in tile_counts:
-            raise ValueError(
-                "stage "
-                f"{stage_id} ({_stage_label(stage_nodes)}) has no L1-feasible tile count "
-                f"on mesh {mesh.shape}"
-            )
     used_tiles = sum(tile_counts.values())
-
     if used_tiles > mesh.num_tiles:
         raise ValueError("minimum L1-feasible tile counts exceed available tiles")
-        
+
     _debug(debug, "[workload_balancing] phase=initial_placement_check")
     if not _has_feasible_submesh_placement(
         tile_counts,
@@ -118,34 +67,13 @@ def balance_workload(
     ):
         raise ValueError("minimum L1-feasible tile counts cannot be placed without overlap")
 
-    _debug(debug, f"[workload_balancing] start used_tiles={used_tiles}/{mesh.num_tiles}")
-    _debug(debug, f"[workload_balancing] initial_tile_counts={tile_counts}")
-    initial_plans = _plan_all_stages_for_tile_counts(
-        resolved_stage_selection,
-        mesh,
-        tile_counts,
-        debug=debug,
-    )
-    initial_workloads = _estimate_workloads(
-        initial_plans,
-        resolved_stage_selection,
-        debug=debug,
-    )
-    decision_timeline.append((0, None, dict(tile_counts), dict(initial_workloads)))
-
     _debug(debug, "[workload_balancing] phase=greedy_growth")
     while used_tiles < mesh.num_tiles:
-        iteration += 1
-        worst_stage_id: int | None = None
-        worst_stage_tile_count: int | None = None
-        worst_stage_improvement = 0
-
-        # Rebuild stage plans for the current allocation so candidate growth is
-        # compared against the current canonical logical shape at each tile count.
         current_plans = _plan_all_stages_for_tile_counts(
             resolved_stage_selection,
             mesh,
             tile_counts,
+            initializer_tensors=initializer_tensors,
             debug=False,
         )
         current_workloads = _estimate_workloads(
@@ -153,110 +81,257 @@ def balance_workload(
             resolved_stage_selection,
             debug=debug,
         )
-
-        _debug(debug, f"[workload_balancing] iteration={iteration} used_tiles={used_tiles}/{mesh.num_tiles}")
-        _debug(debug, f"[workload_balancing] current_workloads={_format_debug_workloads(current_workloads)}")
-
-        # Try the current bottleneck first. Fall through to lower-workload
-        # stages only when worse stages have no feasible improving growth.
         stage_order = tuple(
             sorted(
                 stage_ids,
                 key=lambda stage_id: (-current_workloads[stage_id], stage_id),
             )
         )
-        _debug(debug, f"[workload_balancing] stage_order_by_workload={stage_order}")
+
+        chosen_stage_id: int | None = None
+        chosen_tile_count: int | None = None
 
         for stage_id in stage_order:
-            stage_nodes = resolved_stage_selection[stage_id]
-            current_tile_count = tile_counts[stage_id]
-            current_workload = current_workloads[stage_id]
-
-            _debug(
-                debug,
-                "[workload_balancing] "
-                f"try_stage={stage_id} nodes={_stage_label(stage_nodes)} "
-                f"current_tile_count={current_tile_count} "
-                f"current_logical_shape={current_plans[stage_id].logical_shape} "
-                f"current_workload={_format_debug_cost(current_workload)}",
-            )
-
-            candidate_tile_count_options = _tile_count_options_after_growth(
-                current_tile_count,
-                mesh.num_tiles - used_tiles,
-                mesh,
-                max_added_tiles=growth_horizon_by_stage[stage_id],
-            )
-            _debug(
-                debug,
-                "[workload_balancing] "
-                f"stage={stage_id} candidate_tile_counts={candidate_tile_count_options}",
-            )
-            best_growth = _best_growth_tile_count_for_stage(
+            grown_tile_count = grow_tile_count_for_stage(
                 stage_id=stage_id,
                 stage_selection=resolved_stage_selection,
                 mesh=mesh,
                 tile_counts=tile_counts,
                 used_tiles=used_tiles,
-                current_workload=current_workload,
+                current_workload=current_workloads[stage_id],
                 placement_masks_by_tile_count=placement_masks_by_tile_count,
                 placement_feasibility_cache=placement_feasibility_cache,
                 max_added_tiles=growth_horizon_by_stage[stage_id],
+                initializer_tensors=initializer_tensors,
                 debug=debug,
             )
             growth_horizon_by_stage[stage_id] += 1
-            if best_growth is not None:
-                worst_stage_id = stage_id
-                worst_stage_tile_count, worst_stage_improvement = best_growth
-
-            if worst_stage_id is None:
-                _debug(debug, f"[workload_balancing] stage={stage_id} no_valid_growth")
+            if grown_tile_count is None:
                 continue
-
+            chosen_stage_id = stage_id
+            chosen_tile_count = grown_tile_count
             break
 
-        if worst_stage_id is None or worst_stage_tile_count is None:
-            _debug(debug, "[workload_balancing] no_global_improvement_available")
+        if chosen_stage_id is None or chosen_tile_count is None:
             break
 
-        # Commit one growth step, then recompute all plans/workloads next round.
-        _debug(
-            debug,
-            "[workload_balancing] "
-            f"choose worst_stage={worst_stage_id} "
-            f"new_tile_count={worst_stage_tile_count} "
-            f"improvement={_format_debug_cost(worst_stage_improvement)}",
-        )
-        used_tiles += worst_stage_tile_count - tile_counts[worst_stage_id]
-        tile_counts[worst_stage_id] = worst_stage_tile_count
-        updated_plans = _plan_all_stages_for_tile_counts(
-            resolved_stage_selection,
-            mesh,
-            tile_counts,
-            debug=False,
-        )
-        updated_workloads = _estimate_workloads(
-            updated_plans,
-            resolved_stage_selection,
-            debug=debug,
-        )
-        decision_timeline.append((iteration, worst_stage_id, dict(tile_counts), dict(updated_workloads)))
-        _debug(debug, f"[workload_balancing] updated_tile_counts={tile_counts}")
+        used_tiles += chosen_tile_count - tile_counts[chosen_stage_id]
+        tile_counts[chosen_stage_id] = chosen_tile_count
 
-    # Materialize final StagePlan objects, including the chosen logical layouts.
-    _debug(debug, "[workload_balancing] phase=finalize")
-    plans = _plan_all_stages_for_tile_counts(
+    return _plan_all_stages_for_tile_counts(
         resolved_stage_selection,
         mesh,
         tile_counts,
+        initializer_tensors=initializer_tensors,
         debug=False,
     )
-    _debug(debug, f"[workload_balancing] final_tile_counts={tile_counts}")
-    _debug(debug, f"[workload_balancing] final_logical_shapes={ {stage_id: plan.logical_shape for stage_id, plan in plans.items()} }")
-    _debug(debug, f"[workload_balancing] final_allocation={ {stage_id: plan.tile_count for stage_id, plan in plans.items()} }")
-    _debug_decision_timeline(debug, resolved_stage_selection, decision_timeline)
-    _debug_final_workloads(debug, resolved_stage_selection, plans)
-    return plans
+
+
+def initial_tile_count_for_stage(
+    mesh: Mesh,
+    stage_id: int,
+    stage_selection: StageSelection,
+    initializer_tensors: frozenset(),
+    debug: bool = False,
+) -> int:
+    """Return the smallest rectangular tile count whose stage plan fits in L1."""
+    stage_nodes = stage_selection[stage_id]
+
+    for tile_count in range(1, mesh.num_tiles + 1):
+        if not _physical_shape_options(tile_count, mesh):
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"seed stage={stage_id} tile_count={tile_count} "
+                "skip=no_physical_rectangle",
+            )
+            continue
+
+        try:
+            plan = _best_stage_plan_for_stage_nodes(
+                stage_nodes,
+                mesh,
+                stage_id,
+                tile_count,
+                initializer_tensors=initializer_tensors,
+                debug=False,
+            )
+        except ValueError as exc:
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"seed stage={stage_id} tile_count={tile_count} "
+                f"skip={exc}",
+            )
+            continue
+        _debug(
+            debug,
+            "[workload_balancing] "
+            f"seed stage={stage_id} choose tile_count={tile_count} "
+            f"logical_shape={plan.logical_shape}",
+        )
+        return tile_count
+    raise ValueError(
+        f"stage {stage_id} ({_stage_label(stage_nodes)}) "
+        f"has no L1-feasible tile count on mesh {mesh.shape}"
+    )
+def grow_tile_count_for_stage(
+    stage_id: int,
+    stage_selection: StageSelection,
+    mesh: Mesh,
+    tile_counts: dict[int, int],
+    used_tiles: int,
+    current_workload: int,
+    placement_masks_by_tile_count: dict[int, tuple[int, ...]],
+    placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool],
+    max_added_tiles: int,
+    initializer_tensors: frozenset(),
+    debug: bool = False,
+) -> int | None:
+    """Try to grow one stage while keeping the whole allocation placeable."""
+    current_tile_count = tile_counts[stage_id]
+    candidate_tile_count_options = _tile_count_options_after_growth(
+        current_tile_count,
+        mesh.num_tiles - used_tiles,
+        mesh,
+        max_added_tiles=max_added_tiles,
+    )
+
+    best_candidate_tile_count: int | None = None
+    best_candidate_improvement = 0
+    best_candidate_shape_count = -1
+
+    for candidate_tile_count in candidate_tile_count_options:
+        candidate_tile_counts = dict(tile_counts)
+        candidate_tile_counts[stage_id] = candidate_tile_count
+
+        if not _has_feasible_submesh_placement(
+            candidate_tile_counts,
+            mesh,
+            placement_masks_by_tile_count=placement_masks_by_tile_count,
+            feasibility_cache=placement_feasibility_cache,
+        ):
+            continue
+
+        candidate_plans = _plan_all_stages_for_tile_counts(
+            stage_selection,
+            mesh,
+            candidate_tile_counts,
+            initializer_tensors=initializer_tensors,
+            debug=False,
+        )
+        candidate_workloads = _estimate_workloads(
+            candidate_plans,
+            stage_selection,
+            debug=debug,
+        )
+        candidate_workload = candidate_workloads[stage_id]
+        improvement = current_workload - candidate_workload
+        if improvement <= 0:
+            continue
+
+        # More rectangle shapes means spatial placement has more flexibility
+        # later, so prefer those counts before looking at raw improvement.
+        shape_count = _physical_shape_configuration_count(candidate_tile_count, mesh)
+        if (
+            best_candidate_tile_count is None
+            or shape_count > best_candidate_shape_count
+            or (
+                shape_count == best_candidate_shape_count
+                and improvement > best_candidate_improvement
+            )
+            or (
+                shape_count == best_candidate_shape_count
+                and improvement == best_candidate_improvement
+                and candidate_tile_count < best_candidate_tile_count
+            )
+        ):
+            best_candidate_tile_count = candidate_tile_count
+            best_candidate_improvement = improvement
+            best_candidate_shape_count = shape_count
+
+    return best_candidate_tile_count
+
+
+def peak_l1_occupancy_for_stage(
+    stage_nodes: tuple[Node, ...],
+    node_output_layouts: tuple[tuple, ...],
+    submesh: Submesh,
+    initializer_tensors: frozenset(),
+) -> int:
+    """Estimate the peak L1 occupancy for one stage, given a stage plan."""
+    peak_l1_bytes = 0
+    for tile in submesh.tiles:
+        peak_l1_bytes = max(
+            peak_l1_bytes,
+            peak_l1_occupancy_for_tile(
+                stage_nodes=stage_nodes,
+                node_output_layouts=node_output_layouts,
+                tile=tile,
+                initializer_tensors=initializer_tensors,
+            ),
+        )
+    return peak_l1_bytes
+
+
+def peak_l1_occupancy_for_tile(
+    stage_nodes: tuple[Node, ...],
+    node_output_layouts: tuple[tuple, ...],
+    tile,
+    initializer_tensors: frozenset(),
+) -> int:
+    """Estimate one tile's peak L1 occupancy for one stage plan.
+
+    Initializer slices stay resident across node executions, while dynamic
+    buffers can be reused between nodes. The tile therefore needs enough L1 for
+    all unique initializer slices plus the worst one-node dynamic footprint.
+    """
+    initializer_memory = 0
+    max_node_dynamic_memory = 0
+    seen_initializer_slices = set()
+
+    for node, output_layouts in zip(stage_nodes, node_output_layouts):
+        tile_work = node.payload.build_tile_work(
+            output_layouts=output_layouts,
+            tile=tile,
+        )
+
+        initializer_bytes, node_dynamic_memory = peak_l1_occupancy_for_node(
+            tile_work.input_slices,
+            tile_work.output_slices,
+            initializer_tensors=initializer_tensors,
+            seen_initializer_slices=seen_initializer_slices,
+        )
+        initializer_memory += initializer_bytes
+        max_node_dynamic_memory = max(max_node_dynamic_memory, node_dynamic_memory)
+
+    return initializer_memory + max_node_dynamic_memory
+
+
+def peak_l1_occupancy_for_node(
+    input_slices: tuple,
+    output_slices: tuple,
+    initializer_tensors: frozenset(),
+    seen_initializer_slices: set[tuple[int, object]],
+) -> tuple[int, int]:
+    """Return newly discovered initializer bytes and one node's dynamic bytes."""
+    initializer_memory = 0
+    node_dynamic_memory = 0
+
+    for ref in input_slices:
+        tensor_bytes = ref.num_bytes
+        if ref.tensor in initializer_tensors or getattr(ref.tensor, "is_initializer", False):
+            key = (id(ref.tensor), ref.tensor_slice)
+            if key not in seen_initializer_slices:
+                seen_initializer_slices.add(key)
+                initializer_memory += tensor_bytes
+        else:
+            node_dynamic_memory += tensor_bytes
+
+    for ref in output_slices:
+        node_dynamic_memory += ref.num_bytes
+
+    return initializer_memory, node_dynamic_memory
 
 
 def _resolve_stage_selection(
@@ -306,49 +381,6 @@ def _resolve_stage_selection(
 
     return resolved
 
-def _estimate_stage_l1_bytes_for_tile(
-    stage_nodes: tuple[Node, ...],
-    node_output_layouts: tuple[tuple, ...],
-    tile: Tile,
-    initializer_tensors: frozenset,
-) -> int:
-    """Estimate one tile's worth of L1 memory needed to execute one stage plan.
-    L1 should be big enough to hold all initializer slices plus the largest possible set
-    of input and output tensor slices for one node, since the tile executes one node at a time but can reuse memory between nodes.
-    """
-    initializer_memory = 0
-    max_node_dynamic_memory = 0
-    seen_initializer_slices = set()
-
-    for node, output_layouts in zip(stage_nodes, node_output_layouts):
-        tile_work = node.payload.build_tile_work(
-            output_layouts=output_layouts,
-            tile=tile,
-        )
-
-        node_dynamic_memory = 0
-
-        for ref in tile_work.input_slices:
-            tensor_bytes = ref.num_bytes
-
-            if ref.tensor in initializer_tensors or getattr(ref.tensor, "is_initializer", False):
-                key = (id(ref.tensor), ref.tensor_slice)
-                if key not in seen_initializer_slices:
-                    initializer_memory += tensor_bytes
-                    seen_initializer_slices.add(key)
-            else:
-                node_dynamic_memory += tensor_bytes
-
-        for ref in tile_work.output_slices:
-            node_dynamic_memory += ref.num_bytes
-
-        max_node_dynamic_memory = max(
-            max_node_dynamic_memory,
-            node_dynamic_memory,
-        )
-
-    return initializer_memory + max_node_dynamic_memory
-
 
 def _tile_count_options_after_growth(
     current_tile_count: int,
@@ -369,121 +401,6 @@ def _tile_count_options_after_growth(
             continue
         options.append(tile_count)
     return tuple(options)
-
-
-def _best_growth_tile_count_for_stage(
-    stage_id: int,
-    stage_selection: StageSelection,
-    mesh: Mesh,
-    tile_counts: dict[int, int],
-    used_tiles: int,
-    current_workload: int,
-    placement_masks_by_tile_count: dict[int, tuple[int, ...]],
-    placement_feasibility_cache: dict[tuple[tuple[int, int], ...], bool],
-    max_added_tiles: int,
-    debug: bool,
-) -> tuple[int, int] | None:
-    """Return the best feasible growth tile count for one stage.
-
-    Growth candidates must still improve workload and preserve global rectangle
-    packability. Among valid candidates, prefer the tile count with the most
-    possible physical rectangle shapes; break ties by larger workload
-    improvement, then smaller tile count.
-    """
-
-    current_tile_count = tile_counts[stage_id]
-    candidate_tile_count_options = _tile_count_options_after_growth(
-        current_tile_count,
-        mesh.num_tiles - used_tiles,
-        mesh,
-        max_added_tiles=max_added_tiles,
-    )
-
-    best_candidate_tile_count: int | None = None
-    best_candidate_improvement = 0
-    best_candidate_shape_count = -1
-
-    for candidate_tile_count in candidate_tile_count_options:
-        added_tiles = candidate_tile_count - current_tile_count
-        if used_tiles + added_tiles > mesh.num_tiles:
-            _debug(
-                debug,
-                "[workload_balancing] "
-                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-                "skip=tile_budget_exceeded",
-            )
-            continue
-
-        candidate_tile_counts = dict(tile_counts)
-        candidate_tile_counts[stage_id] = candidate_tile_count
-
-        if not _has_feasible_submesh_placement(
-            candidate_tile_counts,
-            mesh,
-            placement_masks_by_tile_count=placement_masks_by_tile_count,
-            feasibility_cache=placement_feasibility_cache,
-        ):
-            _debug(
-                debug,
-                "[workload_balancing] "
-                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-                "no_feasible_global_placement",
-            )
-            continue
-
-        candidate_plans = _plan_all_stages_for_tile_counts(
-            stage_selection,
-            mesh,
-            candidate_tile_counts,
-            debug=False,
-        )
-        candidate_workloads = _estimate_workloads(
-            candidate_plans,
-            stage_selection,
-            debug=debug,
-        )
-        candidate_workload = candidate_workloads[stage_id]
-        improvement = current_workload - candidate_workload
-        if improvement <= 0:
-            _debug(
-                debug,
-                "[workload_balancing] "
-                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-                f"skip=no_workload_improvement "
-                f"candidate_workload={_format_debug_cost(candidate_workload)} "
-                f"current_workload={_format_debug_cost(current_workload)}",
-            )
-            continue
-
-        shape_count = _physical_shape_configuration_count(candidate_tile_count, mesh)
-        _debug(
-            debug,
-            "[workload_balancing] "
-            f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
-            f"accepted_improvement={_format_debug_cost(improvement)} "
-            f"candidate_workload={_format_debug_cost(candidate_workload)} "
-            f"shape_count={shape_count}",
-        )
-        if (
-            best_candidate_tile_count is None
-            or shape_count > best_candidate_shape_count
-            or (
-                shape_count == best_candidate_shape_count
-                and improvement > best_candidate_improvement
-            )
-            or (
-                shape_count == best_candidate_shape_count
-                and improvement == best_candidate_improvement
-                and candidate_tile_count < best_candidate_tile_count
-            )
-        ):
-            best_candidate_tile_count = candidate_tile_count
-            best_candidate_improvement = improvement
-            best_candidate_shape_count = shape_count
-
-    if best_candidate_tile_count is None:
-        return None
-    return best_candidate_tile_count, best_candidate_improvement
 
 
 def _physical_shape_options(tile_count: int, mesh: Mesh) -> tuple[tuple[int, int], ...]:
@@ -604,7 +521,9 @@ def _planning_submesh(mesh: Mesh, stage_id: int, tile_count: int) -> Submesh:
     """Build a representative submesh used only to derive candidate layouts."""
     physical_options = _physical_shape_options(tile_count, mesh)
     if not physical_options:
-        raise ValueError(f"no rectangular shape fits tile_count={tile_count} on mesh {mesh.shape}")
+        raise ValueError(
+            f"no rectangular shape fits tile_count={tile_count} on mesh {mesh.shape}"
+        )
     width, height = physical_options[0]
     return Submesh(
         mesh=mesh,
@@ -623,8 +542,8 @@ def _layouts_for_node(
 ) -> tuple:
     """Return the op output layouts for one logical shape."""
     return node.payload.output_layouts(
-            submesh,
-            logical_shape=logical_shape,
+        submesh,
+        logical_shape=logical_shape,
     )
 
 
@@ -632,6 +551,7 @@ def _plan_all_stages_for_tile_counts(
     stage_selection: StageSelection,
     mesh: Mesh,
     tile_counts: dict[int, int],
+    initializer_tensors: frozenset(),
     debug: bool,
 ) -> dict[int, StagePlan]:
     """Build the best layout-preserving plan for each current stage tile count."""
@@ -642,7 +562,7 @@ def _plan_all_stages_for_tile_counts(
             mesh,
             stage_id,
             tile_counts[stage_id],
-            initializer_tensors=frozenset(),
+            initializer_tensors=initializer_tensors,
             debug=debug,
         )
     return plans
@@ -674,7 +594,7 @@ def _best_stage_plan_for_stage_nodes(
     initializer_tensors: frozenset(),
     debug: bool,
 ) -> StagePlan:
-    """Build the stage plan for one selected multi-node stage."""
+    """Build the canonical stage plan for one selected stage."""
 
     submesh = _planning_submesh(mesh, stage_id, tile_count)
     logical_shape = (submesh.width, submesh.height)
@@ -683,24 +603,14 @@ def _best_stage_plan_for_stage_nodes(
         submesh,
         logical_shape,
     )
-    fits_l1 = True
-    peak_l1_bytes = 0
-    min_l1_capacity = None
-    for tile in submesh.tiles:
-
-
-        tile_l1_bytes = _estimate_stage_l1_bytes_for_tile(
-            stage_nodes=stage_nodes,
-            node_output_layouts=node_output_layouts,
-            tile=tile,
-            initializer_tensors=initializer_tensors,
-        )
-
-        peak_l1_bytes = max(peak_l1_bytes, tile_l1_bytes)
-
-        if tile_l1_bytes > tile.memory.size:
-            fits_l1 = False
-        break
+    peak_l1_bytes = peak_l1_occupancy_for_stage(
+        stage_nodes=stage_nodes,
+        node_output_layouts=node_output_layouts,
+        submesh=submesh,
+        initializer_tensors=initializer_tensors,
+    )
+    min_l1_capacity = min(tile.memory.size for tile in submesh.tiles)
+    fits_l1 = peak_l1_bytes <= min_l1_capacity
 
     if not fits_l1:
         _debug(
@@ -733,23 +643,6 @@ def _best_stage_plan_for_stage_nodes(
     return plan
 
 
-def _best_stage_plan_for_tile_count(
-    node: Node,
-    mesh: Mesh,
-    stage_id: int,
-    tile_count: int,
-    debug: bool,
-) -> StagePlan:
-    """Choose the lowest-cost logical layout that fits per-tile L1 memory."""
-    return _best_stage_plan_for_stage_nodes(
-        (node,),
-        mesh,
-        stage_id,
-        tile_count,
-        debug,
-    )
-
-
 def _estimate_workloads(
     plans: dict[int, StagePlan],
     stage_selection: StageSelection,
@@ -775,7 +668,7 @@ def _estimate_stage_group_workload(
     stage_nodes: tuple[Node, ...],
     plan: StagePlan,
 ) -> int:
-    """Estimate one selected stage workload as the sum of member node costs."""
+    """Estimate one stage workload as the sum of member node costs."""
 
     if plan.node_output_layouts:
         node_output_layouts = plan.node_output_layouts

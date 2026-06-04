@@ -6,9 +6,9 @@ from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.planner import balance_workload
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import (
-    _best_stage_plan_for_tile_count,
-    _best_growth_tile_count_for_stage,
+    _best_stage_plan_for_stage_nodes,
     _estimate_stage_workload,
+    grow_tile_count_for_stage,
     _has_feasible_submesh_placement,
     _tile_count_options_after_growth,
 )
@@ -167,11 +167,12 @@ def test_best_stage_plan_uses_canonical_logical_shape_for_fixed_tile_count() -> 
     node = _gemm_node("gemm", m=4, k=16, n=7)
     mesh = _mesh_with_l1(6, 1, l1_size=32768)
 
-    plan = _best_stage_plan_for_tile_count(
-        node=node,
+    plan = _best_stage_plan_for_stage_nodes(
+        stage_nodes=(node,),
         mesh=mesh,
         stage_id=0,
         tile_count=6,
+        initializer_tensors=frozenset(),
         debug=False,
     )
 
@@ -202,15 +203,16 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
     node = _gemm_node("gemm", m=32, k=32, n=32)
     mesh = _mesh_with_l1(4, 4, l1_size=32768)
     stage_selection = {0: (node,)}
-    current_plan = _best_stage_plan_for_tile_count(
-        node=node,
+    current_plan = _best_stage_plan_for_stage_nodes(
+        stage_nodes=(node,),
         mesh=mesh,
         stage_id=0,
         tile_count=2,
+        initializer_tensors=frozenset(),
         debug=False,
     )
 
-    best_growth = _best_growth_tile_count_for_stage(
+    best_growth = grow_tile_count_for_stage(
         stage_id=0,
         stage_selection=stage_selection,
         mesh=mesh,
@@ -220,11 +222,12 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
         placement_masks_by_tile_count={},
         placement_feasibility_cache={},
         max_added_tiles=2,
+        initializer_tensors=frozenset(),
         debug=False,
     )
 
     assert best_growth is not None
-    assert best_growth[0] == 4
+    assert best_growth == 4
 
 
 def test_tile_count_growth_horizon_expands_incrementally() -> None:
@@ -280,11 +283,12 @@ def test_best_stage_plan_rejects_tile_work_that_does_not_fit() -> None:
     mesh = _mesh_with_l1(1, 1, l1_size=64)
 
     try:
-        _best_stage_plan_for_tile_count(
-            node=node,
+        _best_stage_plan_for_stage_nodes(
+            stage_nodes=(node,),
             mesh=mesh,
             stage_id=0,
             tile_count=1,
+            initializer_tensors=frozenset(),
             debug=False,
         )
     except ValueError as exc:
@@ -298,11 +302,12 @@ def test_best_stage_plan_counts_outputs_in_l1_fit() -> None:
     mesh = _mesh_with_l1(1, 1, l1_size=80)
 
     try:
-        _best_stage_plan_for_tile_count(
-            node=node,
+        _best_stage_plan_for_stage_nodes(
+            stage_nodes=(node,),
             mesh=mesh,
             stage_id=0,
             tile_count=1,
+            initializer_tensors=frozenset(),
             debug=False,
         )
     except ValueError as exc:
