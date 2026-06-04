@@ -67,6 +67,8 @@ def balance_workload(
     ):
         raise ValueError("minimum L1-feasible tile counts cannot be placed without overlap")
 
+    _debug(debug, f"[workload_balancing] start used_tiles={used_tiles}/{mesh.num_tiles}")
+    _debug(debug, f"[workload_balancing] initial_tile_counts={tile_counts}")
     _debug(debug, "[workload_balancing] phase=greedy_growth")
     while used_tiles < mesh.num_tiles:
         current_plans = _plan_all_stages_for_tile_counts(
@@ -87,11 +89,25 @@ def balance_workload(
                 key=lambda stage_id: (-current_workloads[stage_id], stage_id),
             )
         )
+        _debug(debug, f"[workload_balancing] used_tiles={used_tiles}/{mesh.num_tiles}")
+        _debug(
+            debug,
+            f"[workload_balancing] current_workloads={_format_debug_workloads(current_workloads)}",
+        )
+        _debug(debug, f"[workload_balancing] stage_order_by_workload={stage_order}")
 
         chosen_stage_id: int | None = None
         chosen_tile_count: int | None = None
 
         for stage_id in stage_order:
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"try_stage={stage_id} nodes={_stage_label(resolved_stage_selection[stage_id])} "
+                f"current_tile_count={tile_counts[stage_id]} "
+                f"current_logical_shape={current_plans[stage_id].logical_shape} "
+                f"current_workload={_format_debug_cost(current_workloads[stage_id])}",
+            )
             grown_tile_count = grow_tile_count_for_stage(
                 stage_id=stage_id,
                 stage_selection=resolved_stage_selection,
@@ -107,24 +123,57 @@ def balance_workload(
             )
             growth_horizon_by_stage[stage_id] += 1
             if grown_tile_count is None:
+                _debug(debug, f"[workload_balancing] stage={stage_id} no_valid_growth")
                 continue
             chosen_stage_id = stage_id
             chosen_tile_count = grown_tile_count
             break
 
         if chosen_stage_id is None or chosen_tile_count is None:
+            _debug(debug, "[workload_balancing] no_global_improvement_available")
             break
 
+        chosen_workload = current_workloads[chosen_stage_id]
+        chosen_candidate_tile_counts = dict(tile_counts)
+        chosen_candidate_tile_counts[chosen_stage_id] = chosen_tile_count
+        chosen_candidate_plans = _plan_all_stages_for_tile_counts(
+            resolved_stage_selection,
+            mesh,
+            chosen_candidate_tile_counts,
+            initializer_tensors=initializer_tensors,
+            debug=False,
+        )
+        chosen_candidate_workload = _estimate_workloads(
+            chosen_candidate_plans,
+            resolved_stage_selection,
+            debug=False,
+        )[chosen_stage_id]
+        improvement = chosen_workload - chosen_candidate_workload
+        _debug(
+            debug,
+            "[workload_balancing] "
+            f"choose worst_stage={chosen_stage_id} "
+            f"new_tile_count={chosen_tile_count} "
+            f"improvement={_format_debug_cost(improvement)}",
+        )
         used_tiles += chosen_tile_count - tile_counts[chosen_stage_id]
         tile_counts[chosen_stage_id] = chosen_tile_count
+        _debug(debug, f"[workload_balancing] updated_tile_counts={tile_counts}")
 
-    return _plan_all_stages_for_tile_counts(
+    plans = _plan_all_stages_for_tile_counts(
         resolved_stage_selection,
         mesh,
         tile_counts,
         initializer_tensors=initializer_tensors,
         debug=False,
     )
+    _debug(debug, f"[workload_balancing] final_tile_counts={tile_counts}")
+    _debug(
+        debug,
+        "[workload_balancing] "
+        f"final_logical_shapes={ {stage_id: plan.logical_shape for stage_id, plan in plans.items()} }",
+    )
+    return plans
 
 
 def initial_tile_count_for_stage(
@@ -196,6 +245,11 @@ def grow_tile_count_for_stage(
         mesh,
         max_added_tiles=max_added_tiles,
     )
+    _debug(
+        debug,
+        "[workload_balancing] "
+        f"stage={stage_id} candidate_tile_counts={candidate_tile_count_options}",
+    )
 
     best_candidate_tile_count: int | None = None
     best_candidate_improvement = 0
@@ -211,6 +265,12 @@ def grow_tile_count_for_stage(
             placement_masks_by_tile_count=placement_masks_by_tile_count,
             feasibility_cache=placement_feasibility_cache,
         ):
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
+                "no_feasible_global_placement",
+            )
             continue
 
         candidate_plans = _plan_all_stages_for_tile_counts(
@@ -228,11 +288,27 @@ def grow_tile_count_for_stage(
         candidate_workload = candidate_workloads[stage_id]
         improvement = current_workload - candidate_workload
         if improvement <= 0:
+            _debug(
+                debug,
+                "[workload_balancing] "
+                f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
+                f"skip=no_workload_improvement "
+                f"candidate_workload={_format_debug_cost(candidate_workload)} "
+                f"current_workload={_format_debug_cost(current_workload)}",
+            )
             continue
 
         # More rectangle shapes means spatial placement has more flexibility
         # later, so prefer those counts before looking at raw improvement.
         shape_count = _physical_shape_configuration_count(candidate_tile_count, mesh)
+        _debug(
+            debug,
+            "[workload_balancing] "
+            f"stage={stage_id} candidate_tile_count={candidate_tile_count} "
+            f"accepted_improvement={_format_debug_cost(improvement)} "
+            f"candidate_workload={_format_debug_cost(candidate_workload)} "
+            f"shape_count={shape_count}",
+        )
         if (
             best_candidate_tile_count is None
             or shape_count > best_candidate_shape_count
@@ -704,56 +780,6 @@ def _format_debug_workloads(workloads: dict[int, int]) -> str:
         f"{stage_id}: {_format_debug_cost(workload)}"
         for stage_id, workload in workloads.items()
     ) + "}"
-
-
-def _debug_final_workloads(
-    enabled: bool,
-    stage_selection: StageSelection,
-    plans: dict[int, StagePlan],
-) -> None:
-    """Print the final per-stage workload table when debug output is enabled."""
-    if not enabled:
-        return
-
-    print("[workload_balancing] final_stage_workloads:")
-    for stage_id, stage_nodes in stage_selection.items():
-        plan = plans[stage_id]
-        workload = _estimate_stage_group_workload(stage_nodes, plan)
-        print(
-            "  "
-            f"stage={stage_id} nodes={_stage_label(stage_nodes)} "
-            f"tile_count={plan.tile_count} "
-            f"logical_shape={plan.logical_shape} "
-            f"workload={_format_debug_cost(workload)}"
-        )
-
-
-def _debug_decision_timeline(
-    enabled: bool,
-    stage_selection: StageSelection,
-    decision_timeline: list[tuple[int, int | None, dict[int, int], dict[int, int]]],
-) -> None:
-    """Print tile counts and workloads after each committed greedy decision."""
-    if not enabled:
-        return
-
-    stage_headers = " ".join(
-        f"stage{stage_id}:{_stage_label(stage_nodes)}"
-        for stage_id, stage_nodes in stage_selection.items()
-    )
-    print("[workload_balancing] decision_timeline:")
-    print(f"  stages {stage_headers}")
-    for iteration, changed_stage_id, tile_counts, workloads in decision_timeline:
-        changed = "initial" if changed_stage_id is None else f"stage={changed_stage_id}"
-        stage_state = " ".join(
-            (
-                f"stage={stage_id} "
-                f"tile_count={tile_counts[stage_id]} "
-                f"workload={_format_debug_cost(workloads[stage_id])}"
-            )
-            for stage_id in stage_selection
-        )
-        print(f"  iter={iteration} changed={changed} {stage_state}")
 
 
 def _stage_label(stage_nodes: tuple[Node, ...]) -> str:
