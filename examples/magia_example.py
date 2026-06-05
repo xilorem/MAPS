@@ -11,8 +11,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from MAPS.hw.chips import magia_mesh
-from MAPS.planner import PlannerConstraints, validate_constraints
-from MAPS.planner.plan import build_pipeline
+from MAPS.planner.constraints import PlannerConstraints, validate_constraints
+from MAPS.planner.plan_v2 import build_pipeline
 from MAPS.utils.pipeline_json import write_pipeline_json
 from MAPS.utils.print_submeshes import print_submeshes
 

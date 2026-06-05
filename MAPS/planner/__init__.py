@@ -6,7 +6,6 @@ from .constraints import (
     PlannerConstraints,
     validate_constraints,
 )
-from .plan import build_pipeline
 from .select_stage import select_stages
 from .spatial_mapping import map_spatially, place_stage_plans
 from .workload_balancing import StagePlan, balance_workload
@@ -17,7 +16,6 @@ __all__ = [
     "PlannerConstraints",
     "StagePlan",
     "balance_workload",
-    "build_pipeline",
     "map_spatially",
     "place_stage_plans",
     "select_stages",
