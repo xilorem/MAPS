@@ -2,13 +2,28 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from MAPS.arch import Mesh
 from MAPS.core.graph import Graph, Node
 from MAPS.core.layout import tile_tensor_slice
 from MAPS.planner.connected_submesh import representative_connected_submesh
 from MAPS.planner.cost import cost_estimator
 from MAPS.planner.select_stage import StageSelection
-from MAPS.planner.workload_balancing import StagePlan, _resolve_stage_selection
+
+__all__ = ["StagePlan", "balance_workload"]
+
+
+@dataclass(frozen=True)
+class StagePlan:
+    """Layout decision for one selected v2 stage."""
+
+    stage_id: int
+    tile_count: int
+    logical_shape: tuple[int, int]
+    output_layouts: tuple
+    nodes: tuple[Node, ...] = ()
+    node_output_layouts: tuple[tuple, ...] = ()
 
 
 def balance_workload(
@@ -175,6 +190,53 @@ def balance_workload(
         initializer_tensors=initializer_tensors,
     )
     return plans
+
+
+def _resolve_stage_selection(
+    graph: Graph,
+    stage_selection: StageSelection | None,
+) -> StageSelection:
+    """Validate and normalize selected stage groups."""
+    if stage_selection is None:
+        return {
+            stage_id: (node,)
+            for stage_id, node in enumerate(graph.nodes)
+        }
+
+    graph_nodes_by_identity = {
+        id(node): node
+        for node in graph.nodes
+    }
+    seen_node_ids: set[int] = set()
+    resolved: StageSelection = {}
+
+    for stage_id, stage_nodes in stage_selection.items():
+        if not stage_nodes:
+            raise ValueError(f"stage {stage_id} must contain at least one node")
+        for node in stage_nodes:
+            node_identity = id(node)
+            if node_identity not in graph_nodes_by_identity:
+                raise ValueError(
+                    f"stage {stage_id} contains node {node.name} not present in graph {graph.name}"
+                )
+            if node_identity in seen_node_ids:
+                raise ValueError(
+                    f"node {node.name} appears in more than one selected stage"
+                )
+            seen_node_ids.add(node_identity)
+        resolved[stage_id] = tuple(stage_nodes)
+
+    if len(seen_node_ids) != len(graph.nodes):
+        missing = tuple(
+            node.name
+            for node in graph.nodes
+            if id(node) not in seen_node_ids
+        )
+        raise ValueError(
+            f"selected stages do not cover all graph nodes, missing={missing}"
+        )
+
+    return resolved
 
 
 def initial_tile_count_for_stage(

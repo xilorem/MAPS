@@ -162,7 +162,7 @@ def tile_tensor_slice(tensor: Tensor, layout: TensorLayout, tile: Tile) -> Tenso
     """Return the concrete tensor slice owned by one tile."""
 
     layout.validate_for(tensor)
-    if not layout.submesh.contains_tile_id(tile.tile_id):
+    if tile.tile_id not in layout.submesh.tile_ids:
         raise ValueError(
             f"tile {tile.tile_id} is not inside submesh {layout.submesh.submesh_id}"
         )
