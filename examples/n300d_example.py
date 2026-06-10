@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from MAPS.hw.chips import wormhole_n300d_mesh
 from MAPS.planner.constraints import PlannerConstraints, validate_constraints
-from MAPS.planner.plan_v2 import build_pipeline
+from MAPS.planner.plan import build_pipeline
 from MAPS.utils.pipeline_json import write_pipeline_json
 from MAPS.utils.print_submeshes import print_submeshes
 
