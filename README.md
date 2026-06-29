@@ -42,7 +42,7 @@ Run the full test suite with:
 
 ## Run the MAGIA example
 
-MAPS includes a runnable MAGIA planning example in [examples/magia_example.py](/home/ivan/repos/MAPS/examples/magia_example.py).
+MAPS includes a runnable MAGIA planning example in ./examples/magia_example.py.
 
 Run it with:
 
