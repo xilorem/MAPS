@@ -1,0 +1,3 @@
+[submodule "maps-ir"]
+	path = maps-ir
+	url = https://github.com/xilorem/maps-ir

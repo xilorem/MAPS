@@ -26,7 +26,7 @@ tutorials/     Short development guides
 Clone the repository and install it in a local virtual environment:
 
 ```bash
-git clone <repo-url>
+git clone --recursive <repo-url>
 cd MAPS
 python -m venv .venv
 ./.venv/bin/python -m pip install -e '.[dev]'

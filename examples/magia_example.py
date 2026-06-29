@@ -19,7 +19,7 @@ DEFAULT_MODEL_PATH = PROJECT_ROOT / "examples" / "simple_three_stage.onnx"
 
 
 def main():
-    mesh = magia_mesh(width=16, height=16)
+    mesh = magia_mesh(width=8, height=8)
     output_path = PROJECT_ROOT / "generated" / "magia_example.pipeline.json"
     pipeline = build_pipeline(
         DEFAULT_MODEL_PATH,
