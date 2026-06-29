@@ -172,6 +172,7 @@ def _broadcast_input_slice(
 UNARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
     "Abs": WorkKind.ELEMENTWISE,
     "Exp": WorkKind.EXP,
+    "Log": WorkKind.ELEMENTWISE,
     "Neg": WorkKind.ELEMENTWISE,
     "Sqrt": WorkKind.ELEMENTWISE,
 }

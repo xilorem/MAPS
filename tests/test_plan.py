@@ -31,8 +31,8 @@ def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
 
 def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp_path: Path) -> None:
     mesh = magia_mesh()
-    src_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
-    dst_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=1, height=2)
+    src_submesh = Submesh(mesh=mesh, submesh_id=0, tile_ids=frozenset((0, 1)))
+    dst_submesh = Submesh(mesh=mesh, submesh_id=1, tile_ids=frozenset((8, 16)))
 
     x = Tensor(name="x", rank=2, dims=(4, 4), elem_bytes=2)
     w0 = Tensor(name="w0", rank=2, dims=(4, 8), elem_bytes=2)
@@ -185,8 +185,8 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
 
 def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes() -> None:
     mesh = magia_mesh()
-    stage0_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
-    stage1_submesh = Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1)
+    stage0_submesh = Submesh(mesh=mesh, submesh_id=0, tile_ids=frozenset((0, 1)))
+    stage1_submesh = Submesh(mesh=mesh, submesh_id=1, tile_ids=frozenset((8, 9)))
 
     x = Tensor(name="x", rank=2, dims=(4, 4), elem_bytes=2)
     w0 = Tensor(name="w0", rank=2, dims=(4, 8), elem_bytes=2)
@@ -319,13 +319,7 @@ def test_build_pipeline_parses_balances_maps_and_builds_transitions() -> None:
         assert transition.src_layer_id == 0
         assert transition.dst_layer_id == 1
         assert transition.src_layout == pipeline.stages[0].layers[-1].outputs[0].layout
-        assert transition.dst_layout == pipeline.stages[1].layers[0].node.payload.output_layouts(
-            pipeline.stages[1].submesh,
-            logical_shape=(
-                transition.dst_layout.effective_logical_width,
-                transition.dst_layout.effective_logical_height,
-            ),
-        )[0]
+        assert transition.dst_layout == pipeline.stages[1].layers[0].outputs[0].layout
         assert transition.mode is TransitionMode.DIRECT_REMAP
         assert transition.fragments
         for fragment in transition.fragments:
@@ -445,17 +439,17 @@ def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch)
         return
 
     seen = {}
+    built_pipeline = object()
 
     def fake_map_spatially(graph, mesh, stage_plans, **kwargs):
-        seen["enable_lossless_pruning"] = kwargs["enable_lossless_pruning"]
         seen["max_placements_per_stage"] = kwargs["max_placements_per_stage"]
         seen["show_progress"] = kwargs["show_progress"]
-        return {
-            0: Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1),
-            1: Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1),
-        }
+        return {}
 
     monkeypatch.setattr(plan_module, "map_spatially", fake_map_spatially)
+    monkeypatch.setattr(plan_module, "place_stage_plans", lambda stage_plans, mapping: stage_plans)
+    monkeypatch.setattr(plan_module, "_build_pipeline_from_graph", lambda graph, mesh, plans: built_pipeline)
+    monkeypatch.setattr(plan_module, "_print_pipeline_stage_cost", lambda graph, mesh, plans: None)
 
     with TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "two_matmuls.onnx"
@@ -476,9 +470,9 @@ def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch)
         model = helper.make_model(graph)
         onnx.save(model, model_path)
 
-        build_pipeline(model_path, _mesh_with_l1(2, 2, l1_size=4096))
+        pipeline = build_pipeline(model_path, _mesh_with_l1(2, 2, l1_size=4096))
 
-    assert seen["enable_lossless_pruning"] is False
+    assert pipeline is built_pipeline
     assert seen["max_placements_per_stage"] is None
     assert seen["show_progress"] is False
 
@@ -491,17 +485,17 @@ def test_build_pipeline_can_enable_spatial_mapping_pruning(monkeypatch) -> None:
         return
 
     seen = {}
+    built_pipeline = object()
 
     def fake_map_spatially(graph, mesh, stage_plans, **kwargs):
-        seen["enable_lossless_pruning"] = kwargs["enable_lossless_pruning"]
         seen["max_placements_per_stage"] = kwargs["max_placements_per_stage"]
         seen["show_progress"] = kwargs["show_progress"]
-        return {
-            0: Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1),
-            1: Submesh(mesh=mesh, submesh_id=1, x0=0, y0=1, width=2, height=1),
-        }
+        return {}
 
     monkeypatch.setattr(plan_module, "map_spatially", fake_map_spatially)
+    monkeypatch.setattr(plan_module, "place_stage_plans", lambda stage_plans, mapping: stage_plans)
+    monkeypatch.setattr(plan_module, "_build_pipeline_from_graph", lambda graph, mesh, plans: built_pipeline)
+    monkeypatch.setattr(plan_module, "_print_pipeline_stage_cost", lambda graph, mesh, plans: None)
 
     with TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "two_matmuls.onnx"
@@ -522,7 +516,7 @@ def test_build_pipeline_can_enable_spatial_mapping_pruning(monkeypatch) -> None:
         model = helper.make_model(graph)
         onnx.save(model, model_path)
 
-        build_pipeline(
+        pipeline = build_pipeline(
             model_path,
             _mesh_with_l1(2, 2, l1_size=4096),
             print_spatial_mapping_progress=True,
@@ -530,6 +524,6 @@ def test_build_pipeline_can_enable_spatial_mapping_pruning(monkeypatch) -> None:
             enable_lossy_spatial_mapping_pruning=True,
         )
 
-    assert seen["enable_lossless_pruning"] is True
+    assert pipeline is built_pipeline
     assert seen["max_placements_per_stage"] == 16
     assert seen["show_progress"] is True

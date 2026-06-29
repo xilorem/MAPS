@@ -7,10 +7,8 @@ from MAPS.planner import balance_workload
 from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import (
     _best_stage_plan_for_stage_nodes,
-    _estimate_stage_workload,
+    _estimate_selection_metrics,
     grow_tile_count_for_stage,
-    _has_feasible_submesh_placement,
-    _tile_count_options_after_growth,
 )
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
@@ -163,7 +161,7 @@ def test_balance_workload_can_use_selected_stage_groups() -> None:
     assert plans[1].nodes == (node2,)
 
 
-def test_best_stage_plan_uses_canonical_logical_shape_for_fixed_tile_count() -> None:
+def test_best_stage_plan_uses_l1_feasible_logical_shape_for_fixed_tile_count() -> None:
     node = _gemm_node("gemm", m=4, k=16, n=7)
     mesh = _mesh_with_l1(6, 1, l1_size=32768)
 
@@ -177,26 +175,7 @@ def test_best_stage_plan_uses_canonical_logical_shape_for_fixed_tile_count() -> 
     )
 
     assert plan.tile_count == 6
-    assert plan.logical_shape == (6, 1)
-
-
-def test_tile_count_growth_skips_counts_without_rectangular_placement() -> None:
-    mesh = Mesh(
-        width=2,
-        height=2,
-        l2_memory=L2Memory(size=4096, bandwidth=1),
-        noc=rectangular_test_noc(2, 2),
-        tiles=rectangular_test_tiles(2, 2),
-    )
-
-    options = _tile_count_options_after_growth(
-        current_tile_count=2,
-        remaining_tiles=2,
-        mesh=mesh,
-        max_added_tiles=2,
-    )
-
-    assert options == (4,)
+    assert plan.logical_shape[0] * plan.logical_shape[1] == 6
 
 
 def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
@@ -211,6 +190,17 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
         initializer_tensors=frozenset(),
         debug=False,
     )
+    current_metric = _estimate_selection_metrics(
+        {0: current_plan},
+        stage_selection,
+        mesh=mesh,
+        alpha=1.0,
+        beta=1.0,
+        graph_inputs=frozenset(),
+        graph_outputs=frozenset(),
+        producer_stage_id_by_tensor={},
+        initializer_tensors=frozenset(),
+    )[0]
 
     best_growth = grow_tile_count_for_stage(
         stage_id=0,
@@ -218,64 +208,13 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
         mesh=mesh,
         tile_counts={0: 2},
         used_tiles=2,
-        current_workload=_estimate_stage_workload(node, current_plan),
-        placement_masks_by_tile_count={},
-        placement_feasibility_cache={},
-        max_added_tiles=2,
+        current_metric=current_metric,
         initializer_tensors=frozenset(),
         debug=False,
     )
 
     assert best_growth is not None
-    assert best_growth == 4
-
-
-def test_tile_count_growth_horizon_expands_incrementally() -> None:
-    mesh = Mesh(
-        width=4,
-        height=2,
-        l2_memory=L2Memory(size=4096, bandwidth=1),
-        noc=rectangular_test_noc(4, 2),
-        tiles=rectangular_test_tiles(4, 2),
-    )
-
-    assert _tile_count_options_after_growth(
-        current_tile_count=1,
-        remaining_tiles=7,
-        mesh=mesh,
-        max_added_tiles=1,
-    ) == (2,)
-    assert _tile_count_options_after_growth(
-        current_tile_count=1,
-        remaining_tiles=7,
-        mesh=mesh,
-        max_added_tiles=2,
-    ) == (2, 3)
-    assert _tile_count_options_after_growth(
-        current_tile_count=1,
-        remaining_tiles=7,
-        mesh=mesh,
-        max_added_tiles=3,
-    ) == (2, 3, 4)
-
-
-def test_submesh_placement_feasibility_requires_global_rectangle_packing() -> None:
-    mesh = Mesh(
-        width=3,
-        height=3,
-        l2_memory=L2Memory(size=4096, bandwidth=1),
-        noc=rectangular_test_noc(3, 3),
-        tiles=rectangular_test_tiles(3, 3),
-    )
-
-    feasible = _has_feasible_submesh_placement(
-        {0: 4, 1: 4, 2: 1},
-        mesh,
-        placement_masks_by_tile_count={},
-        feasibility_cache={},
-    )
-
-    assert not feasible
+    assert best_growth > 2
 
 
 def test_best_stage_plan_rejects_tile_work_that_does_not_fit() -> None:

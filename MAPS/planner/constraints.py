@@ -97,6 +97,7 @@ def _estimate_stage_l1_memory_for_tile(
     """Estimate L1-resident bytes required by one stage on one tile."""
 
     l1_memory = 0
+    virtual_tile = _virtual_tile_for_stage_tile(stage, pipeline, tile)
 
     for layer in stage.layers:
         for binding in layer.outputs:
@@ -104,7 +105,7 @@ def _estimate_stage_l1_memory_for_tile(
             tensor_slice = tile_tensor_slice(
                 tensor,
                 binding.layout,
-                tile,
+                virtual_tile,
             )
             l1_memory += tensor.slice_num_bytes(tensor_slice)
 
@@ -116,7 +117,7 @@ def _estimate_stage_l1_memory_for_tile(
                 layer,
                 binding_idx,
                 pipeline,
-                tile,
+                virtual_tile,
             )
             l1_memory += tensor.slice_num_bytes(tensor_slice)
 
@@ -132,11 +133,12 @@ def _estimate_stage_l2_memory(stage: Stage, pipeline: Pipeline) -> int:
             tensor = pipeline.tensors[binding.tensor_id]
             max_binding_bytes = 0
             for tile in stage.submesh.tiles:
+                virtual_tile = _virtual_tile_for_stage_tile(stage, pipeline, tile)
                 tensor_slice = _infer_input_slice_for_tile(
                     layer,
                     binding_idx,
                     pipeline,
-                    tile,
+                    virtual_tile,
                 )
                 max_binding_bytes = max(
                     max_binding_bytes,
@@ -144,6 +146,15 @@ def _estimate_stage_l2_memory(stage: Stage, pipeline: Pipeline) -> int:
                 )
             l2_memory += max_binding_bytes
     return l2_memory
+
+
+def _virtual_tile_for_stage_tile(stage: Stage, pipeline: Pipeline, tile):
+    """Translate a physical stage tile to the virtual tile used by layouts."""
+
+    physical_to_virtual = stage.physical_to_virtual
+    if not physical_to_virtual:
+        return tile
+    return pipeline.mesh.tile_by_id(physical_to_virtual[tile.tile_id])
 
 
 def _validate_transition_input(

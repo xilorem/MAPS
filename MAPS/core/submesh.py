@@ -33,7 +33,7 @@ def _is_connected_tile_set(mesh: Mesh, tile_ids: frozenset[int]) -> bool:
     return len(seen) == len(tile_ids)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class Submesh:
     """One connected placed submesh inside a mesh.
 
@@ -43,6 +43,30 @@ class Submesh:
     mesh: Mesh
     submesh_id: int
     tile_ids: frozenset[int] | set[int]
+
+    def __init__(
+        self,
+        mesh: Mesh,
+        submesh_id: int,
+        tile_ids: frozenset[int] | set[int] | None = None,
+        x0: int | None = None,
+        y0: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> None:
+        if tile_ids is None:
+            if x0 is None or y0 is None or width is None or height is None:
+                raise TypeError("Submesh requires tile_ids or x0, y0, width, and height")
+            tile_ids = frozenset(
+                mesh.tile_id(x, y)
+                for y in range(y0, y0 + height)
+                for x in range(x0, x0 + width)
+            )
+
+        object.__setattr__(self, "mesh", mesh)
+        object.__setattr__(self, "submesh_id", submesh_id)
+        object.__setattr__(self, "tile_ids", tile_ids)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         if self.submesh_id < 0:
@@ -121,3 +145,17 @@ class Submesh:
     def intersects_tile_ids(self, tile_ids: set[int]) -> bool:
         """Return whether this submesh overlaps any global mesh tile id in the set."""
         return bool(self.tile_ids & tile_ids)
+
+    def global_to_local(self, tile_id: int) -> tuple[int, int]:
+        """Return the local bounding-box coordinate for a global tile id."""
+        if tile_id not in self.tile_ids:
+            raise ValueError(f"tile_id {tile_id} is not inside submesh {self.submesh_id}")
+        tile = self.mesh.tile_by_id(tile_id)
+        return tile.x - self.x0, tile.y - self.y0
+
+    def local_to_global(self, local_x: int, local_y: int) -> int:
+        """Return the global tile id for a local bounding-box coordinate."""
+        tile_id = self.mesh.tile_id(self.x0 + local_x, self.y0 + local_y)
+        if tile_id not in self.tile_ids:
+            raise ValueError(f"local coordinate {(local_x, local_y)} is not inside submesh {self.submesh_id}")
+        return tile_id

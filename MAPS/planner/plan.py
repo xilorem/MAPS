@@ -1,30 +1,41 @@
-"""High-level planner assembly entry point."""
+"""High-level planner assembly entry point for connected-submesh planning."""
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from MAPS.arch import Mesh, Tile
-from MAPS.core.layout import TensorSlice, tile_tensor_slice
 from MAPS.core.graph import Graph, Node
-from MAPS.pipeline.finalization import Finalization, FinalizationFragment
-from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
-from MAPS.pipeline.initialization import Initialization, InitializationFragment
-from MAPS.pipeline.pipeline import Pipeline
-from MAPS.utils.pipeline_json import write_pipeline_json
-from MAPS.pipeline.stage import Stage
+from MAPS.core.layout import TensorSlice, tile_tensor_slice
 from MAPS.importers.onnx.importer import import_onnx_graph
-from MAPS.planner.select_stage import select_stages
-from MAPS.transitions import build_transition
-from MAPS.transitions.model import Transition
-from MAPS.planner.spatial_mapping import map_spatially, place_stage_plans
-from MAPS.planner.workload_balancing import StagePlan, balance_workload
-from MAPS.planner.workload_balancing_v2 import (
+from MAPS.pipeline.finalization import Finalization, FinalizationFragment
+from MAPS.pipeline.initialization import Initialization, InitializationFragment
+from MAPS.pipeline.layer import Layer, LayerInput, LayerOutput
+from MAPS.pipeline.pipeline import Pipeline
+from MAPS.pipeline.stage import Stage
+from MAPS.planner.workload_balancing import (
+    StagePlan,
     _producer_stage_id_by_tensor,
     _worst_tile_compute_workload_for_stage,
-    _worst_tile_l2_transfer_workload_for_stage,
+    balance_workload,
 )
+from MAPS.planner.select_stage import select_stages
+from MAPS.planner.spatial_mapping import evaluate_stage_plans_io, map_spatially, place_stage_plans
+from MAPS.transitions import build_transition
+from MAPS.transitions.model import Transition, TransitionFragment
+from MAPS.utils.pipeline_json import write_pipeline_json
+
+
+@dataclass(frozen=True)
+class _PipelineBuildContext:
+    graph: Graph
+    stage_selection: dict[int, tuple[Node, ...]]
+    node_stage_ids: dict[int, int]
+    node_stage_layer_ids: dict[int, int]
+    node_graph_layer_ids: dict[int, int]
+    tensor_id_by_tensor: dict[object, int]
+    producer_by_tensor: dict[object, Node]
 
 
 def build_pipeline(
@@ -39,8 +50,6 @@ def build_pipeline(
     require_l2_output_access_point: bool = False,
     output_json_path: str | Path | None = None,
 ) -> Pipeline:
-    """Build a pipeline plan from one ONNX model."""
-
     graph = import_onnx_graph(model_path)
     stage_selection = select_stages(graph)
     stage_plans = balance_workload(
@@ -53,7 +62,6 @@ def build_pipeline(
         graph,
         mesh,
         stage_plans,
-        enable_lossless_pruning=enable_lossless_spatial_mapping_pruning,
         max_placements_per_stage=16 if enable_lossy_spatial_mapping_pruning else None,
         show_progress=print_spatial_mapping_progress,
         print_costs=print_spatial_mapping,
@@ -73,91 +81,61 @@ def _build_pipeline_from_graph(
     mesh: Mesh,
     stage_plans: dict[int, StagePlan],
 ) -> Pipeline:
-    stage_selection = _resolve_stage_selection(graph, stage_plans)
-    node_stage_ids = {
-        id(node): stage_id
-        for stage_id, stage_nodes in stage_selection.items()
-        for node in stage_nodes
-    }
-    node_layer_ids = {
-        id(node): layer_idx
-        for stage_nodes in stage_selection.values()
-        for layer_idx, node in enumerate(stage_nodes)
-    }
-    tensor_id_by_tensor = {tensor: tensor_id for tensor_id, tensor in enumerate(graph.tensors)}
-    producer_by_tensor = {
-        tensor: node
-        for node in graph.nodes
-        for tensor in node.outputs
-    }
+    context = _build_pipeline_context(graph, stage_plans)
 
     transitions: list[Transition] = []
     transition_id_by_stage_layer_input: dict[tuple[int, int, int], int] = {}
-
-    for dst_stage_id, stage_nodes in stage_selection.items():
+    for dst_stage_id, stage_nodes in context.stage_selection.items():
         dst_plan = stage_plans[dst_stage_id]
         for dst_layer_idx, dst_node in enumerate(stage_nodes):
             for dst_input_idx, tensor in enumerate(dst_node.inputs):
-                src_node = producer_by_tensor.get(tensor)
+                src_node = context.producer_by_tensor.get(tensor)
                 if src_node is None:
                     continue
-
-                src_stage_id = node_stage_ids[id(src_node)]
+                src_stage_id = context.node_stage_ids[id(src_node)]
                 if src_stage_id == dst_stage_id:
                     continue
-
                 src_plan = stage_plans[src_stage_id]
                 src_output_idx = _node_output_index(src_node, tensor)
                 transition_id = len(transitions)
                 dst_output_layouts = _node_output_layout(dst_plan, dst_node)
-                transitions.append(
-                    build_transition(
-                        name=f"transition_{src_node.name}_to_{dst_node.name}_{tensor.name}",
+                transition = build_transition(
+                    name=f"transition_{src_node.name}_to_{dst_node.name}_{tensor.name}",
+                    tensor=tensor,
+                    tensor_id=context.tensor_id_by_tensor[tensor],
+                    src_layer_id=src_stage_id,
+                    src_output_idx=src_output_idx,
+                    dst_layer_id=dst_stage_id,
+                    dst_input_idx=dst_input_idx,
+                    src_layout=_node_output_layout(src_plan, src_node)[src_output_idx],
+                    dst_layout=dst_output_layouts[0],
+                    dst_required_slices=_transition_required_slices(
                         tensor=tensor,
-                        tensor_id=tensor_id_by_tensor[tensor],
-                        src_layer_id=src_stage_id,
-                        src_output_idx=src_output_idx,
-                        dst_layer_id=dst_stage_id,
-                        dst_input_idx=dst_input_idx,
-                        src_layout=_node_output_layout(src_plan, src_node)[src_output_idx],
-                        dst_layout=dst_output_layouts[0],
-                        dst_required_slices=_transition_required_slices(
-                            tensor=tensor,
-                            dst_node=dst_node,
-                            dst_output_layouts=dst_output_layouts,
-                        ),
-                    )
+                        dst_node=dst_node,
+                        dst_output_layouts=dst_output_layouts,
+                    ),
                 )
+                transitions.append(_transition_on_physical_hartids(transition, src_plan, dst_plan))
                 transition_id_by_stage_layer_input[(dst_stage_id, dst_layer_idx, dst_input_idx)] = transition_id
 
     stages = tuple(
         _build_stage(
             stage_id=stage_id,
             plan=stage_plans[stage_id],
-            stage_nodes=stage_selection[stage_id],
-            producer_by_tensor=producer_by_tensor,
-            node_stage_ids=node_stage_ids,
-            node_layer_ids=node_layer_ids,
-            tensor_id_by_tensor=tensor_id_by_tensor,
+            stage_nodes=context.stage_selection[stage_id],
+            context=context,
             transition_id_by_stage_layer_input=transition_id_by_stage_layer_input,
         )
-        for stage_id in stage_selection
+        for stage_id in context.stage_selection
     )
     initializations = _build_initializations(
-        graph=graph,
-        stage_selection=stage_selection,
+        context=context,
         stage_plans=stage_plans,
-        producer_by_tensor=producer_by_tensor,
-        tensor_id_by_tensor=tensor_id_by_tensor,
     )
     finalizations = _build_finalizations(
-        graph=graph,
+        context=context,
         stage_plans=stage_plans,
-        node_stage_ids=node_stage_ids,
-        producer_by_tensor=producer_by_tensor,
-        tensor_id_by_tensor=tensor_id_by_tensor,
     )
-
     return Pipeline(
         name=graph.name,
         mesh=mesh,
@@ -172,24 +150,41 @@ def _build_pipeline_from_graph(
     )
 
 
-def _build_initializations(
+def _build_pipeline_context(
     graph: Graph,
-    stage_selection: dict[int, tuple[Node, ...]],
     stage_plans: dict[int, StagePlan],
-    producer_by_tensor: dict[object, Node],
-    tensor_id_by_tensor: dict[object, int],
+) -> _PipelineBuildContext:
+    stage_selection = _resolve_stage_selection(graph, stage_plans)
+    return _PipelineBuildContext(
+        graph=graph,
+        stage_selection=stage_selection,
+        node_stage_ids={
+            id(node): stage_id
+            for stage_id, stage_nodes in stage_selection.items()
+            for node in stage_nodes
+        },
+        node_stage_layer_ids={
+            id(node): layer_idx
+            for stage_nodes in stage_selection.values()
+            for layer_idx, node in enumerate(stage_nodes)
+        },
+        node_graph_layer_ids={id(node): layer_id for layer_id, node in enumerate(graph.nodes)},
+        tensor_id_by_tensor={tensor: tensor_id for tensor_id, tensor in enumerate(graph.tensors)},
+        producer_by_tensor={tensor: node for node in graph.nodes for tensor in node.outputs},
+    )
+
+
+def _build_initializations(
+    context: _PipelineBuildContext,
+    stage_plans: dict[int, StagePlan],
 ) -> tuple[Initialization, ...]:
-    layer_id_by_node = {
-        id(node): layer_id
-        for layer_id, node in enumerate(graph.nodes)
-    }
     initializations = []
-    for stage_id, stage_nodes in stage_selection.items():
+    for stage_id, stage_nodes in context.stage_selection.items():
         plan = stage_plans[stage_id]
         for node in stage_nodes:
             output_layouts = _node_output_layout(plan, node)
             for input_idx, tensor in enumerate(node.inputs):
-                if tensor in producer_by_tensor:
+                if tensor in context.producer_by_tensor:
                     continue
                 required_slices = _transition_required_slices(
                     tensor=tensor,
@@ -199,13 +194,13 @@ def _build_initializations(
                 initializations.append(
                     Initialization(
                         name=f"init_{tensor.name}",
-                        tensor_id=tensor_id_by_tensor[tensor],
-                        dst_layer_id=layer_id_by_node[id(node)],
+                        tensor_id=context.tensor_id_by_tensor[tensor],
+                        dst_layer_id=context.node_graph_layer_ids[id(node)],
                         dst_input_idx=input_idx,
                         fragments=tuple(
                             InitializationFragment(
                                 src_hartid=-1,
-                                dst_hartid=tile.tile_id,
+                                dst_hartid=_physical_hartid(plan, tile.tile_id),
                                 src_slice=tensor_slice,
                                 dst_slice=tensor_slice,
                             )
@@ -217,33 +212,29 @@ def _build_initializations(
 
 
 def _build_finalizations(
-    graph: Graph,
+    context: _PipelineBuildContext,
     stage_plans: dict[int, StagePlan],
-    node_stage_ids: dict[int, int],
-    producer_by_tensor: dict[object, Node],
-    tensor_id_by_tensor: dict[object, int],
 ) -> tuple[Finalization, ...]:
-    layer_id_by_node = {
-        id(node): layer_id
-        for layer_id, node in enumerate(graph.nodes)
-    }
     finalizations = []
-    for tensor in graph.outputs:
-        src_node = producer_by_tensor[tensor]
+    for tensor in context.graph.outputs:
+        src_node = context.producer_by_tensor[tensor]
         src_output_idx = _node_output_index(src_node, tensor)
         src_layout = _node_output_layout(
-            stage_plans[node_stage_ids[id(src_node)]],
+            stage_plans[context.node_stage_ids[id(src_node)]],
             src_node,
         )[src_output_idx]
         finalizations.append(
             Finalization(
                 name=f"output_{tensor.name}",
-                tensor_id=tensor_id_by_tensor[tensor],
-                src_layer_id=layer_id_by_node[id(src_node)],
+                tensor_id=context.tensor_id_by_tensor[tensor],
+                src_layer_id=context.node_graph_layer_ids[id(src_node)],
                 src_output_idx=src_output_idx,
                 fragments=tuple(
                     FinalizationFragment(
-                        src_hartid=tile.tile_id,
+                        src_hartid=_physical_hartid(
+                            stage_plans[context.node_stage_ids[id(src_node)]],
+                            tile.tile_id,
+                        ),
                         dst_hartid=-1,
                         src_slice=tile_tensor_slice(tensor, src_layout, tile),
                         dst_slice=tile_tensor_slice(tensor, src_layout, tile),
@@ -259,90 +250,94 @@ def _build_stage(
     stage_id: int,
     plan: StagePlan,
     stage_nodes: tuple[Node, ...],
-    producer_by_tensor: dict[object, Node],
-    node_stage_ids: dict[int, int],
-    node_layer_ids: dict[int, int],
-    tensor_id_by_tensor: dict[object, int],
+    context: _PipelineBuildContext,
     transition_id_by_stage_layer_input: dict[tuple[int, int, int], int],
 ) -> Stage:
-    layers = []
-    for layer_idx, node in enumerate(stage_nodes):
-        inputs = tuple(
-            LayerInput(
-                tensor_id=tensor_id_by_tensor[tensor],
-                source=_input_source(
-                    tensor_id=tensor_id_by_tensor[tensor],
-                    producer=producer_by_tensor.get(tensor),
-                    stage_id=stage_id,
-                    layer_idx=layer_idx,
-                    node_stage_ids=node_stage_ids,
-                    node_layer_ids=node_layer_ids,
-                    transition_id=transition_id_by_stage_layer_input.get((stage_id, layer_idx, input_idx)),
-                ),
-            )
-            for input_idx, tensor in enumerate(node.inputs)
-        )
-        outputs = tuple(
-            LayerOutput(
-                tensor_id=tensor_id_by_tensor[tensor],
-                layout=_node_output_layout(plan, node)[output_idx],
-            )
-            for output_idx, tensor in enumerate(node.outputs)
-        )
-        layers.append(Layer(node=node, inputs=inputs, outputs=outputs))
-
     return Stage(
         name=_stage_name(stage_nodes),
         submesh=_stage_submesh(plan),
-        layers=tuple(layers),
+        virtual_to_physical=plan.virtual_to_physical,
+        layers=tuple(
+            _build_layer(
+                stage_id=stage_id,
+                layer_id=context.node_stage_layer_ids[id(node)],
+                node=node,
+                plan=plan,
+                context=context,
+                transition_id_by_stage_layer_input=transition_id_by_stage_layer_input,
+            )
+            for node in stage_nodes
+        ),
     )
 
 
-def _input_source(
-    tensor_id: int,
-    producer: Node | None,
+def _build_layer(
     stage_id: int,
-    layer_idx: int,
-    node_stage_ids: dict[int, int],
-    node_layer_ids: dict[int, int],
-    transition_id: int | None,
-):
-    if producer is not None and node_stage_ids[id(producer)] == stage_id:
+    layer_id: int,
+    node: Node,
+    plan: StagePlan,
+    context: _PipelineBuildContext,
+    transition_id_by_stage_layer_input: dict[tuple[int, int, int], int],
+) -> Layer:
+    inputs = tuple(
+        _build_layer_input(
+            stage_id=stage_id,
+            layer_id=layer_id,
+            input_idx=input_idx,
+            tensor=tensor,
+            producer=context.producer_by_tensor.get(tensor),
+            context=context,
+            transition_id_by_stage_layer_input=transition_id_by_stage_layer_input,
+        )
+        for input_idx, tensor in enumerate(node.inputs)
+    )
+    outputs = tuple(
+        LayerOutput(
+            tensor_id=context.tensor_id_by_tensor[tensor],
+            layout=output_layout,
+        )
+        for tensor, output_layout in zip(node.outputs, _node_output_layout(plan, node))
+    )
+    return Layer(node=node, inputs=inputs, outputs=outputs)
+
+
+def _build_layer_input(
+    stage_id: int,
+    layer_id: int,
+    input_idx: int,
+    tensor: object,
+    producer: Node | None,
+    context: _PipelineBuildContext,
+    transition_id_by_stage_layer_input: dict[tuple[int, int, int], int],
+) -> LayerInput:
+    tensor_id = context.tensor_id_by_tensor[tensor]
+    if producer is None:
+        return LayerInput.external(tensor_id=tensor_id, base_addr=tensor_id + 1)
+    if context.node_stage_ids[id(producer)] == stage_id:
         return LayerInput.local(
             tensor_id=tensor_id,
-            layer_idx=node_layer_ids[id(producer)],
-        ).source
-    if transition_id is None:
-        return LayerInput.external(tensor_id=tensor_id, base_addr=tensor_id + 1).source
-    return LayerInput.transition(tensor_id=tensor_id, transition_id=transition_id).source
+            layer_idx=context.node_stage_layer_ids[id(producer)],
+        )
+    transition_id = transition_id_by_stage_layer_input[(stage_id, layer_id, input_idx)]
+    return LayerInput.transition(tensor_id=tensor_id, transition_id=transition_id)
 
 
 def _resolve_stage_selection(
     graph: Graph,
     stage_plans: dict[int, StagePlan],
 ) -> dict[int, tuple[Node, ...]]:
-    """Return selected stages using plan metadata when available."""
-
     if all(plan.nodes for plan in stage_plans.values()):
-        return {
-            stage_id: plan.nodes
-            for stage_id, plan in stage_plans.items()
-        }
-    return {
-        stage_id: (node,)
-        for stage_id, node in enumerate(graph.nodes)
-    }
+        return {stage_id: plan.nodes for stage_id, plan in stage_plans.items()}
+    return {stage_id: (node,) for stage_id, node in enumerate(graph.nodes)}
 
 
 def _stage_name(stage_nodes: tuple[Node, ...]) -> str:
-    """Return a compact generated stage name."""
-
     return "+".join(node.name for node in stage_nodes)
 
 
 def _stage_submesh(plan: StagePlan):
-    """Return the concrete submesh attached to one stage plan."""
-
+    if plan.physical_submesh is not None:
+        return plan.physical_submesh
     if plan.node_output_layouts:
         for layouts in plan.node_output_layouts:
             if layouts:
@@ -352,17 +347,23 @@ def _stage_submesh(plan: StagePlan):
     raise ValueError(f"stage {plan.stage_id} has no layouts bound to a submesh")
 
 
-def _node_output_layout(plan: StagePlan, node: Node):
-    """Return one node's output layouts from a stage plan."""
+def _stage_virtual_submesh(plan: StagePlan):
+    if plan.node_output_layouts:
+        for layouts in plan.node_output_layouts:
+            if layouts:
+                return layouts[0].submesh
+    if plan.output_layouts:
+        return plan.output_layouts[0].submesh
+    raise ValueError(f"stage {plan.stage_id} has no virtual layouts")
 
+
+def _node_output_layout(plan: StagePlan, node: Node):
     if plan.node_output_layouts:
         return plan.node_output_layouts[_plan_node_index(plan, node)]
     return plan.output_layouts
 
 
 def _plan_node_index(plan: StagePlan, node: Node) -> int:
-    """Return one node's index inside a grouped stage plan."""
-
     for node_idx, candidate in enumerate(plan.nodes):
         if candidate is node:
             return node_idx
@@ -377,10 +378,7 @@ def _transition_required_slices(
     required_slices = []
     submesh = dst_output_layouts[0].submesh
     for tile in submesh.tiles:
-        tile_work = dst_node.payload.build_tile_work(
-            output_layouts=dst_output_layouts,
-            tile=tile,
-        )
+        tile_work = dst_node.payload.build_tile_work(output_layouts=dst_output_layouts, tile=tile)
         for ref in tile_work.input_slices:
             if ref.tensor is tensor:
                 required_slices.append((tile, ref.tensor_slice))
@@ -388,23 +386,45 @@ def _transition_required_slices(
     return tuple(required_slices)
 
 
+def _transition_on_physical_hartids(
+    transition: Transition,
+    src_plan: StagePlan,
+    dst_plan: StagePlan,
+) -> Transition:
+    """Translate virtual transition fragment hart ids to physical tile ids."""
+
+    return replace(
+        transition,
+        fragments=tuple(
+            TransitionFragment(
+                src_hartid=_physical_hartid(src_plan, fragment.src_hartid),
+                dst_hartid=_physical_hartid(dst_plan, fragment.dst_hartid),
+                src_slice=fragment.src_slice,
+                dst_slice=fragment.dst_slice,
+            )
+            for fragment in transition.fragments
+        ),
+    )
+
+
+def _physical_hartid(plan: StagePlan, virtual_tile_id: int) -> int:
+    """Return physical hart id for a virtual tile, falling back to identity."""
+
+    if not plan.virtual_to_physical:
+        return virtual_tile_id
+    return plan.virtual_to_physical[virtual_tile_id]
+
+
 def _print_pipeline_stage_cost(
     graph: Graph,
     mesh: Mesh,
     stage_plans: dict[int, StagePlan],
 ) -> None:
-    """Print the pipeline stage cost from worst per-stage compute and IO terms."""
     stage_selection = _resolve_stage_selection(graph, stage_plans)
-    producer_stage_id_by_tensor = _producer_stage_id_by_tensor(stage_selection)
-    graph_inputs = frozenset(graph.inputs)
-    graph_outputs = frozenset(graph.outputs)
-    initializer_tensors = frozenset(graph.initializers)
-
     worst_stage_compute = 0
-    worst_stage_io = 0
     for stage_id, stage_nodes in stage_selection.items():
         plan = stage_plans[stage_id]
-        submesh = _stage_submesh(plan)
+        submesh = _stage_virtual_submesh(plan)
         worst_stage_compute = max(
             worst_stage_compute,
             _worst_tile_compute_workload_for_stage(
@@ -413,21 +433,15 @@ def _print_pipeline_stage_cost(
                 submesh=submesh,
             ),
         )
-        worst_stage_io = max(
-            worst_stage_io,
-            _worst_tile_l2_transfer_workload_for_stage(
-                stage_id=stage_id,
-                stage_nodes=stage_nodes,
-                node_output_layouts=plan.node_output_layouts,
-                submesh=submesh,
-                mesh=mesh,
-                graph_inputs=graph_inputs,
-                graph_outputs=graph_outputs,
-                producer_stage_id_by_tensor=producer_stage_id_by_tensor,
-                initializer_tensors=initializer_tensors,
-            ),
-        )
-
+    io_evaluation = evaluate_stage_plans_io(
+        graph=graph,
+        mesh=mesh,
+        stage_plans=stage_plans,
+    )
+    worst_stage_io = max(
+        (breakdown.total for breakdown in io_evaluation.stage_breakdowns.values()),
+        default=0,
+    )
     print(
         "[planner] pipeline_stage_cost="
         f"{worst_stage_compute + worst_stage_io} "
@@ -439,4 +453,4 @@ def _node_output_index(node: Node, tensor: object) -> int:
     for output_idx, candidate in enumerate(node.outputs):
         if candidate == tensor:
             return output_idx
-    raise ValueError(f"tensor is not an output of node {node.name}")
+    raise ValueError(f"tensor {getattr(tensor, 'name', tensor)} is not an output of node {node.name}")

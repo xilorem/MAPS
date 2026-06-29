@@ -1,25 +1,9 @@
-from dataclasses import dataclass
-
-from MAPS.arch import EndpointKind, L2Memory, Mesh, NoC, NoCChannel, NoCEndpoint, NoCLink, NoCNode
+from MAPS.arch import L2Memory, Mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
-from MAPS.core.layout import TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common import OpPayload, TileWork, sharded_layout
 from MAPS.ops.defs.gemm import GemmPayload
-from MAPS.planner.spatial_mapping import (
-    _edge_placement_costs,
-    _edge_shape_costs,
-    _layout_on_submesh,
-    _prune_placement_options_losslessly,
-    _shape_options,
-    _stage_internal_costs_for_placements,
-    _stage_io_costs,
-    _stage_io_costs_for_placements,
-    map_spatially,
-    place_stage_plans,
-    print_spatial_mapping_details,
-)
+from MAPS.planner.spatial_mapping import build_virtual_traffic, map_spatially
 from MAPS.planner.workload_balancing import StagePlan
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
@@ -34,585 +18,103 @@ def _test_mesh(width: int, height: int) -> Mesh:
     )
 
 
-def test_sharded_layout_accepts_explicit_mesh_axes() -> None:
-    mesh = _test_mesh(2, 2)
-    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=2)
-    tensor = Tensor(name="t", rank=4, dims=(2, 3, 5, 7), elem_bytes=2)
-
-    layout = sharded_layout(
-        tensor,
-        submesh,
-        logical_shape=(2, 2),
-        mesh_x_axis=1,
-        mesh_y_axis=3,
-    )
-
-    assert layout.mesh_x.mode.name == "SHARD"
-    assert layout.mesh_x.tensor_axis == 1
-    assert layout.mesh_y.mode.name == "SHARD"
-    assert layout.mesh_y.tensor_axis == 3
-    assert layout.logical_width == 2
-    assert layout.logical_height == 2
-
-
-@dataclass(frozen=True)
-class _PlacementSensitiveTileWork(TileWork):
-    @property
-    def input_slices(self) -> tuple:
-        return ()
-
-    @property
-    def output_slices(self) -> tuple:
-        return ()
-
-    @property
-    def l1_bytes(self) -> int:
-        return 0
-
-    def fits_l1(self, tile) -> bool:
-        del tile
-        return True
-
-
-@dataclass(frozen=True)
-class _PlacementSensitiveCostModel:
-    def cost(self, tile_work: _PlacementSensitiveTileWork, tile) -> int:
-        del tile_work, tile
-        return 0
-
-    def placement_cost(
-        self,
-        *,
-        node: Node,
-        output_layouts: tuple[TensorLayout, ...],
-    ) -> int:
-        del node
-        return output_layouts[0].submesh.x0
-
-
-@dataclass(frozen=True)
-class _PlacementSensitiveOp(OpPayload):
-    output: Tensor
-
-    @property
-    def cost_model(self) -> object:
-        return _PlacementSensitiveCostModel()
-
-    def output_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        return (sharded_layout(self.output, submesh, logical_shape),)
-
-    def build_tile_work(
-        self,
-        output_layouts: tuple[TensorLayout, ...],
-        tile,
-    ) -> _PlacementSensitiveTileWork:
-        del output_layouts, tile
-        return _PlacementSensitiveTileWork()
-
-def _gemm_node(name: str, m: int, k: int, n: int) -> Node:
-    x = Tensor(name=f"{name}_x", rank=2, dims=(m, k), elem_bytes=2)
-    w = Tensor(name=f"{name}_w", rank=2, dims=(k, n), elem_bytes=2)
-    out = Tensor(name=f"{name}_out", rank=2, dims=(m, n), elem_bytes=2)
-    op = GemmPayload(x=x, w=w, y=None, output=out)
+def _gemm_node(name: str, x: Tensor | None = None) -> Node:
+    input_tensor = x if x is not None else Tensor(name=f"{name}_x", rank=2, dims=(8, 8), elem_bytes=2)
+    weight_tensor = Tensor(name=f"{name}_w", rank=2, dims=(8, 8), elem_bytes=2)
+    output_tensor = Tensor(name=f"{name}_out", rank=2, dims=(8, 8), elem_bytes=2)
+    op = GemmPayload(x=input_tensor, w=weight_tensor, y=None, output=output_tensor)
     return Node(
         name=name,
         kind=OpKind.GEMM,
-        inputs=(x, w),
-        outputs=(out,),
+        inputs=(input_tensor, weight_tensor),
+        outputs=(output_tensor,),
         payload=op,
     )
 
 
-def _assert_valid_mapping(
-    mapping: dict[int, object],
-    tile_counts: dict[int, int],
-) -> None:
-    assert set(mapping) == set(tile_counts)
-    all_tiles = []
-    for stage_id, tile_count in tile_counts.items():
-        assert mapping[stage_id].num_tiles == tile_count
-        all_tiles.extend(tile.tile_id for tile in mapping[stage_id].tiles)
-    assert len(all_tiles) == len(set(all_tiles))
-
-def test_shape_options_for_area_two_on_2x2_mesh() -> None:
-    mesh = _test_mesh(2, 2)
-
-    shapes = _shape_options(2, mesh)
-
-    assert set(shapes) == {(2, 1), (1, 2)}
-
-
-def test_shape_options_raise_when_tile_count_cannot_fit_mesh() -> None:
-    mesh = _test_mesh(2, 2)
-
-    try:
-        _shape_options(3, mesh)
-    except ValueError as exc:
-        assert "no rectangular shape fits" in str(exc)
-    else:
-        raise AssertionError("expected _shape_options to raise for infeasible tile count")
-
-
-def test_lossless_pruning_removes_placements_without_global_support() -> None:
-    mesh = _test_mesh(4, 2)
-    placement_options = {
-        0: (
-            Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1),
-            Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=2, height=1),
-        ),
-        1: (
-            Submesh(mesh=mesh, submesh_id=1, x0=0, y0=0, width=2, height=1),
-        ),
-        2: (
-            Submesh(mesh=mesh, submesh_id=2, x0=2, y0=0, width=2, height=1),
-        ),
-    }
-
-    pruned = _prune_placement_options_losslessly(placement_options)
-
-    assert pruned[0] == (
-        Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=2, height=1),
-    )
-    assert pruned[1] == placement_options[1]
-    assert pruned[2] == placement_options[2]
-
-
-def test_layout_on_submesh_preserves_logical_shape() -> None:
-    mesh = _test_mesh(6, 2)
-    planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
-    placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
-    node = _gemm_node("node", 8, 8, 8)
-    layout = node.payload.output_layouts(
-        planning_submesh,
-        logical_shape=(3, 2),
-    )[0]
-    plan = StagePlan(
-        stage_id=0,
-        tile_count=6,
-        logical_shape=(3, 2),
-        output_layouts=(layout,),
-    )
-
-    placed_layout = _layout_on_submesh(plan.output_layouts[0], placed_submesh)
-
-    assert placed_layout.submesh == placed_submesh
-    assert placed_layout.logical_width == 3
-    assert placed_layout.logical_height == 2
-
-
-def test_place_stage_plans_reattaches_layouts_to_mapping() -> None:
-    mesh = _test_mesh(6, 2)
-    planning_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=6, height=1)
-    placed_submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=1, width=6, height=1)
-    node = _gemm_node("node", 8, 8, 8)
-    output_layouts = node.payload.output_layouts(
-        planning_submesh,
-        logical_shape=(3, 2),
-    )
-    plan = StagePlan(
-        stage_id=0,
-        tile_count=6,
-        logical_shape=(3, 2),
+def _single_node_stage_plan(mesh: Mesh, stage_id: int, node: Node, tile_ids: set[int]) -> StagePlan:
+    virtual_submesh = Submesh(mesh=mesh, submesh_id=stage_id, tile_ids=frozenset(tile_ids))
+    output_layouts = node.payload.output_layouts(virtual_submesh, logical_shape=(len(tile_ids), 1))
+    return StagePlan(
+        stage_id=stage_id,
+        tile_count=len(tile_ids),
+        logical_shape=(len(tile_ids), 1),
         output_layouts=output_layouts,
+        nodes=(node,),
+        node_output_layouts=(output_layouts,),
     )
 
-    placed_plans = place_stage_plans({0: plan}, {0: placed_submesh})
 
-    assert placed_plans[0].output_layouts[0].submesh == placed_submesh
-    assert placed_plans[0].output_layouts[0].logical_width == 3
-    assert placed_plans[0].output_layouts[0].logical_height == 2
+def _share_boundary(mesh: Mesh, left: set[int], right: set[int]) -> bool:
+    for tile_id in left:
+        x, y = mesh.coords(tile_id)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx = x + dx
+            ny = y + dy
+            if mesh.contains_coord(nx, ny) and mesh.tile_id(nx, ny) in right:
+                return True
+    return False
 
 
-def test_map_spatially_returns_non_overlapping_submeshes_on_4x4_mesh() -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    producer = _gemm_node("producer", 8, 8, 8)
-    consumer_input = producer.outputs[0]
-    consumer_w = Tensor(name="consumer_w", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer_out = Tensor(name="consumer_out", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer_op = GemmPayload(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
-    consumer = Node(
-        name="consumer",
-        kind=OpKind.GEMM,
-        inputs=(consumer_input, consumer_w),
-        outputs=(consumer_out,),
-        payload=consumer_op,
-    )
+def test_build_virtual_traffic_tracks_inter_stage_bytes() -> None:
+    mesh = _test_mesh(4, 2)
+    producer = _gemm_node("producer")
+    consumer = _gemm_node("consumer", x=producer.outputs[0])
     graph = Graph(
         name="g",
         nodes=(producer, consumer),
-        edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
+        edges=(Edge(tensor=producer.outputs[0], src=producer, dst=consumer),),
     )
-    mesh = _test_mesh(4, 4)
+    stage_plans = {
+        0: _single_node_stage_plan(mesh, 0, producer, {0, 1}),
+        1: _single_node_stage_plan(mesh, 1, consumer, {0, 1}),
+    }
+
+    traffic = build_virtual_traffic(
+        graph=graph,
+        mesh=mesh,
+        stage_plans=stage_plans,
+        node_stage_ids={id(producer): 0, id(consumer): 1},
+    )
+
+    assert traffic.stage_comm[(0, 1)] > 0
+    assert sum(traffic.input_weights[1].values()) > 0
+    assert sum(traffic.output_weights[0].values()) > 0
+
+
+def test_map_spatially_returns_connected_adjacent_mapping() -> None:
+    mesh = _test_mesh(4, 2)
+    producer = _gemm_node("producer")
+    consumer = _gemm_node("consumer", x=producer.outputs[0])
+    graph = Graph(
+        name="g",
+        nodes=(producer, consumer),
+        edges=(Edge(tensor=producer.outputs[0], src=producer, dst=consumer),),
+    )
+    stage_plans = {
+        0: _single_node_stage_plan(mesh, 0, producer, {0, 1}),
+        1: _single_node_stage_plan(mesh, 1, consumer, {0, 1}),
+    }
 
     mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts={0: 4, 1: 4},
+        graph=graph,
+        mesh=mesh,
+        stage_plans=stage_plans,
         print_mapping=False,
+        show_progress=False,
     )
 
     assert set(mapping) == {0, 1}
-    assert mapping[0].num_tiles == 4
-    assert mapping[1].num_tiles == 4
-    tiles0 = {tile.tile_id for tile in mapping[0].tiles}
-    tiles1 = {tile.tile_id for tile in mapping[1].tiles}
-    assert not (tiles0 & tiles1)
+    all_tile_ids = set()
+    for stage_id, placement in mapping.items():
+        assert placement.physical_submesh.num_tiles == stage_plans[stage_id].tile_count
+        assert len(placement.virtual_to_physical) == stage_plans[stage_id].tile_count
+        assert len(set(placement.virtual_to_physical.values())) == stage_plans[stage_id].tile_count
+        all_tile_ids |= set(placement.physical_submesh.tile_ids)
 
-
-def test_map_spatially_prunes_placement_candidates() -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    producer = _gemm_node("producer", 8, 8, 8)
-    consumer_input = producer.outputs[0]
-    consumer_w = Tensor(name="consumer_w", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer_out = Tensor(name="consumer_out", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer = Node(
-        name="consumer",
-        kind=OpKind.GEMM,
-        inputs=(consumer_input, consumer_w),
-        outputs=(consumer_out,),
-        payload=GemmPayload(x=consumer_input, w=consumer_w, y=None, output=consumer_out),
-    )
-    graph = Graph(
-        name="g",
-        nodes=(producer, consumer),
-        edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
-    )
-    mesh = _test_mesh(4, 4)
-    tile_counts = {0: 4, 1: 4}
-
-    mapping = map_spatially(
-        graph,
+    assert len(all_tile_ids) == 4
+    assert _share_boundary(
         mesh,
-        tile_counts=tile_counts,
-        max_placements_per_stage=4,
-        print_mapping=False,
+        set(mapping[0].physical_submesh.tile_ids),
+        set(mapping[1].physical_submesh.tile_ids),
     )
-
-    _assert_valid_mapping(mapping, tile_counts)
-
-
-def test_map_spatially_uses_stage_internal_placement_costs() -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    y = Tensor(name="y", rank=1, dims=(8,), elem_bytes=1)
-    node = Node(
-        name="placement_sensitive",
-        kind=OpKind.CUSTOM,
-        outputs=(y,),
-        payload=_PlacementSensitiveOp(output=y),
-    )
-    graph = Graph(
-        name="placement_sensitive_stage",
-        tensors=(y,),
-        nodes=(node,),
-    )
-    mesh = _test_mesh(3, 2)
-
-    mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts={0: 1},
-        objective="sum",
-        print_mapping=False,
-    )
-
-    assert mapping[0].x0 == 0
-
-
-def test_stage_internal_costs_ignore_ops_without_placement_cost() -> None:
-    node = _gemm_node("gemm", 8, 8, 8)
-    graph = Graph(name="g", nodes=(node,))
-    mesh = _test_mesh(2, 1)
-    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
-
-    costs = _stage_internal_costs_for_placements(
-        graph,
-        placement_options={0: (submesh,)},
-    )
-
-    assert costs == {0: {0: 0}}
-
-
-def test_map_spatially_can_require_l2_access_point_for_output_stage() -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    node = _gemm_node("node", 8, 8, 8)
-    graph = Graph(
-        name="g",
-        tensors=(*node.inputs, *node.outputs),
-        nodes=(node,),
-        edges=(
-            Edge(tensor=node.inputs[0], src=None, dst=node),
-            Edge(tensor=node.inputs[1], src=None, dst=node),
-            Edge(tensor=node.outputs[0], src=node, dst=None),
-        ),
-        inputs=node.inputs,
-        outputs=node.outputs,
-        initializers=node.inputs,
-    )
-    mesh = Mesh(
-        2,
-        1,
-        noc=NoC(
-            nodes=(
-                NoCNode(node_id=0, x=0, y=0),
-                NoCNode(node_id=1, x=1, y=0),
-            ),
-            links=(
-                NoCLink(
-                    link_id=0,
-                    src_node_id=0,
-                    dst_node_id=1,
-                    channels=(NoCChannel(channel_id=0, width_bytes=4),),
-                    bidirectional=True,
-                ),
-            ),
-            endpoints=(
-                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
-                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
-                NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
-            ),
-        ),
-        tiles=rectangular_test_tiles(2, 1),
-        l2_memory=L2Memory(size=4096, bandwidth=1),
-    )
-
-    mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts={0: 1},
-        require_l2_output_access_point=True,
-        print_mapping=False,
-    )
-
-    assert mapping[0].contains_tile_id(mesh.tile_id(1, 0))
-
-
-def test_map_spatially_can_require_l2_access_point_from_noc_endpoint() -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    node = _gemm_node("node", 8, 8, 8)
-    graph = Graph(
-        name="g",
-        tensors=(*node.inputs, *node.outputs),
-        nodes=(node,),
-        edges=(
-            Edge(tensor=node.inputs[0], src=None, dst=node),
-            Edge(tensor=node.inputs[1], src=None, dst=node),
-            Edge(tensor=node.outputs[0], src=node, dst=None),
-        ),
-        inputs=node.inputs,
-        outputs=node.outputs,
-        initializers=(node.inputs[1],),
-    )
-    mesh = Mesh(
-        2,
-        1,
-        noc=NoC(
-            nodes=(
-                NoCNode(node_id=0, x=0, y=0),
-                NoCNode(node_id=1, x=1, y=0),
-            ),
-            links=(
-                NoCLink(
-                    link_id=0,
-                    src_node_id=0,
-                    dst_node_id=1,
-                    channels=(NoCChannel(channel_id=0, width_bytes=4),),
-                    bidirectional=True,
-                ),
-            ),
-            endpoints=(
-                NoCEndpoint(endpoint_id=0, kind=EndpointKind.L1, node_id=0, tile_id=0),
-                NoCEndpoint(endpoint_id=1, kind=EndpointKind.L1, node_id=1, tile_id=1),
-                NoCEndpoint(endpoint_id=2, kind=EndpointKind.L2, node_id=1, name="l2"),
-            ),
-        ),
-        tiles=rectangular_test_tiles(2, 1),
-        l2_memory=L2Memory(size=4096, bandwidth=1),
-    )
-
-    mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts={0: 1},
-        require_l2_input_access_point=True,
-        print_mapping=False,
-    )
-
-    assert mapping[0].contains_tile_id(mesh.tile_id(1, 0))
-
-
-def test_map_spatially_solves_four_node_graph_on_6x6_mesh(capsys) -> None:
-    try:
-        import pulp  # noqa: F401
-    except ImportError:
-        return
-
-    node0 = _gemm_node("node0", 8, 8, 8)
-    node1_input = node0.outputs[0]
-    node1_w = Tensor(name="node1_w", rank=2, dims=(8, 8), elem_bytes=2)
-    node1_out = Tensor(name="node1_out", rank=2, dims=(8, 8), elem_bytes=2)
-    node1 = Node(
-        name="node1",
-        kind=OpKind.GEMM,
-        inputs=(node1_input, node1_w),
-        outputs=(node1_out,),
-        payload=GemmPayload(x=node1_input, w=node1_w, y=None, output=node1_out),
-    )
-
-    node2_input = node1.outputs[0]
-    node2_w = Tensor(name="node2_w", rank=2, dims=(8, 8), elem_bytes=2)
-    node2_out = Tensor(name="node2_out", rank=2, dims=(8, 8), elem_bytes=2)
-    node2 = Node(
-        name="node2",
-        kind=OpKind.GEMM,
-        inputs=(node2_input, node2_w),
-        outputs=(node2_out,),
-        payload=GemmPayload(x=node2_input, w=node2_w, y=None, output=node2_out),
-    )
-
-    node3_input = node2.outputs[0]
-    node3_w = Tensor(name="node3_w", rank=2, dims=(8, 8), elem_bytes=2)
-    node3_out = Tensor(name="node3_out", rank=2, dims=(8, 8), elem_bytes=2)
-    node3 = Node(
-        name="node3",
-        kind=OpKind.GEMM,
-        inputs=(node3_input, node3_w),
-        outputs=(node3_out,),
-        payload=GemmPayload(x=node3_input, w=node3_w, y=None, output=node3_out),
-    )
-
-    graph = Graph(
-        name="g",
-        nodes=(node0, node1, node2, node3),
-        edges=(
-            Edge(tensor=node1_input, src=node0, dst=node1),
-            Edge(tensor=node2_input, src=node1, dst=node2),
-            Edge(tensor=node3_input, src=node2, dst=node3),
-        ),
-    )
-    mesh = _test_mesh(6, 6)
-    tile_counts = {0: 3, 1: 4, 2: 5, 3: 6}
-
-    mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts=tile_counts,
-        objective="max",
-        print_mapping=False,
-    )
-    with capsys.disabled():
-        print_spatial_mapping_details(graph, mesh, mapping, label="max")
-
-    _assert_valid_mapping(mapping, tile_counts)
-
-    sum_mapping = map_spatially(
-        graph,
-        mesh,
-        tile_counts=tile_counts,
-        objective="sum",
-        print_mapping=False,
-    )
-    with capsys.disabled():
-        print_spatial_mapping_details(graph, mesh, sum_mapping, label="sum")
-
-    _assert_valid_mapping(sum_mapping, tile_counts)
-
-
-def test_edge_shape_costs_include_l2_data_movement() -> None:
-    producer = _gemm_node("producer", 8, 8, 8)
-    consumer_input = producer.outputs[0]
-    consumer_w = Tensor(name="consumer_w", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer_out = Tensor(name="consumer_out", rank=2, dims=(8, 8), elem_bytes=2)
-    consumer_op = GemmPayload(x=consumer_input, w=consumer_w, y=None, output=consumer_out)
-    consumer = Node(
-        name="consumer",
-        kind=OpKind.GEMM,
-        inputs=(consumer_input, consumer_w),
-        outputs=(consumer_out,),
-        payload=consumer_op,
-    )
-    graph = Graph(
-        name="g",
-        nodes=(producer, consumer),
-        edges=(Edge(tensor=consumer_input, src=producer, dst=consumer),),
-    )
-
-    costs = _edge_shape_costs(
-        graph,
-        shape_options={0: ((2, 1),), 1: ((2, 1),)},
-    )
-
-    edge_cost = costs[(0, 0, 1, 0, 0)]
-    assert edge_cost["l2"] > 0
-    assert edge_cost["l2"] >= edge_cost["l1"]
-
-
-def test_stage_io_costs_skip_initializer_reads() -> None:
-    x = Tensor(name="x", rank=2, dims=(8, 8), elem_bytes=2)
-    w = Tensor(name="w", rank=2, dims=(8, 16), elem_bytes=2)
-    out = Tensor(name="out", rank=2, dims=(8, 16), elem_bytes=2)
-    node = Node(
-        name="matmul_0",
-        kind=OpKind.GEMM,
-        inputs=(x, w),
-        outputs=(out,),
-        payload=GemmPayload(x=x, w=w, y=None, output=out),
-    )
-    graph = Graph(
-        name="g",
-        tensors=(x, w, out),
-        nodes=(node,),
-        edges=(
-            Edge(tensor=x, src=None, dst=node),
-            Edge(tensor=w, src=None, dst=node),
-            Edge(tensor=out, src=node, dst=None),
-        ),
-        inputs=(x, w),
-        outputs=(out,),
-        initializers=(w,),
-    )
-    mesh = _test_mesh(2, 1)
-    submesh = Submesh(mesh=mesh, submesh_id=0, x0=0, y0=0, width=2, height=1)
-
-    costs = _stage_io_costs_for_placements(
-        graph,
-        placement_options={0: (submesh,)},
-    )
-    costs_with_repeated_weight_read = _stage_io_costs_for_placements(
-        Graph(
-            name="g",
-            tensors=(x, w, out),
-            nodes=(node,),
-            edges=graph.edges,
-            inputs=(x, w),
-            outputs=(out,),
-            initializers=(),
-        ),
-        placement_options={0: (submesh,)},
-    )
-
-    assert costs[0][0]["read"] < costs_with_repeated_weight_read[0][0]["read"]
-    assert costs[0][0]["write"] == costs_with_repeated_weight_read[0][0]["write"]

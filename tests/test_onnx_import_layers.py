@@ -183,6 +183,27 @@ def test_parse_graph_lowers_exp_to_graph_node() -> None:
     assert lowered_graph.nodes[0].payload.output.name == "y"
 
 
+def test_parse_graph_lowers_log_to_graph_node() -> None:
+    try:
+        from onnx import TensorProto, helper
+    except ImportError:
+        return
+
+    x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [4, 8])
+    y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [4, 8])
+    node = helper.make_node("Log", inputs=["x"], outputs=["y"], name="log_0")
+    graph = helper.make_graph([node], "tiny_log", [x], [y])
+
+    lowered_graph = parse_graph(graph)
+
+    assert len(lowered_graph.nodes) == 1
+    assert lowered_graph.nodes[0].kind is OpKind.ELEMENTWISE
+    assert isinstance(lowered_graph.nodes[0].payload, UnaryElementwisePayload)
+    assert lowered_graph.nodes[0].payload.op_name == "Log"
+    assert lowered_graph.nodes[0].payload.x.name == "x"
+    assert lowered_graph.nodes[0].payload.output.name == "y"
+
+
 def test_parse_graph_lowers_binary_elementwise_to_graph_node() -> None:
     try:
         from onnx import TensorProto, helper
@@ -312,6 +333,7 @@ def test_op_registry_reports_supported_onnx_ops() -> None:
     assert get_onnx_lowerer("Gemm") is not None
     assert get_onnx_lowerer("Conv") is not None
     assert get_onnx_lowerer("Exp") is not None
+    assert get_onnx_lowerer("Log") is not None
     assert get_onnx_lowerer("Softmax") is not None
     assert {spec.name for spec in registered_ops()} >= {"matmul", "gemm", "conv", "softmax"}
 

@@ -1,4 +1,4 @@
-"""Connected non-rectangular submesh helpers for planner v2."""
+"""Connected non-rectangular submesh helpers for planner placement."""
 
 from __future__ import annotations
 

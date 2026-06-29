@@ -11,8 +11,11 @@ MAPS/
   hw/          Concrete device and chip descriptions
   importers/   ONNX import path
   ops/         Operation payloads, tile work, and cost models
+  pipeline/    Scheduled pipeline IR, layers, stages, and JSON export
   planner/     Workload balancing, spatial mapping, constraints, and pipeline build
+  transforms/  Graph decomposition and graph utility transforms
   transitions/ Inter-stage transition building and transport costing
+  utils/       Pipeline JSON and mesh/submesh printing helpers
 examples/      Runnable examples
 tests/         Unit and integration tests
 tutorials/     Short development guides
