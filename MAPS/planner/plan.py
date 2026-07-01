@@ -399,8 +399,8 @@ def _transition_on_physical_hartids(
             TransitionFragment(
                 src_hartid=_physical_hartid(src_plan, fragment.src_hartid),
                 dst_hartid=_physical_hartid(dst_plan, fragment.dst_hartid),
-                src_slice=fragment.src_slice,
-                dst_slice=fragment.dst_slice,
+                src_subslice=fragment.src_subslice,
+                dst_subslice=fragment.dst_subslice,
             )
             for fragment in transition.fragments
         ),

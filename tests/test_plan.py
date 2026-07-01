@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 from MAPS.arch import L1Memory, L2Memory, Mesh
 from MAPS.hw.chips import magia_mesh
 from MAPS.core.graph import Edge, Graph, Node, OpKind
-from MAPS.core.layout import tile_tensor_slice
+from MAPS.core.layout import TensorRange, TensorSlice, tile_tensor_slice
 from MAPS.pipeline.layer import ExternalInput, LocalInput, TransitionInput
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
@@ -123,18 +123,36 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
         for fragment in transition.fragments
     } == {(0, 8), (1, 8), (0, 16), (1, 16)}
     assert {
-        fragment.src_slice
+        fragment.src_subslice.parent
         for fragment in transition.fragments
     } == {
         tile_tensor_slice(y, transition.src_layout, tile)
         for tile in transition.src_layout.submesh.tiles
     }
     assert {
-        fragment.dst_slice
+        fragment.dst_subslice.dims
         for fragment in transition.fragments
     } == {
-        tile_tensor_slice(y, transition.src_layout, tile)
-        for tile in transition.src_layout.submesh.tiles
+        (
+            TensorRange(start=0, length=4),
+            TensorRange(start=0, length=4),
+        ),
+        (
+            TensorRange(start=0, length=4),
+            TensorRange(start=4, length=4),
+        ),
+    }
+    assert {
+        fragment.dst_subslice.parent
+        for fragment in transition.fragments
+    } == {
+        TensorSlice(
+            rank=2,
+            dims=(
+                TensorRange(start=0, length=4),
+                TensorRange(start=0, length=8),
+            ),
+        )
     }
     weight_initialization = pipeline.initializations[1]
     assert weight_initialization.tensor_id == 1
@@ -323,9 +341,9 @@ def test_build_pipeline_parses_balances_maps_and_builds_transitions() -> None:
         assert transition.mode is TransitionMode.DIRECT_REMAP
         assert transition.fragments
         for fragment in transition.fragments:
-            assert fragment.src_slice.rank == pipeline.tensors[transition.tensor_id].rank
-            assert fragment.dst_slice.rank == pipeline.tensors[transition.tensor_id].rank
-            for src_dim, dst_dim in zip(fragment.src_slice.dims, fragment.dst_slice.dims):
+            assert fragment.src_subslice.rank == pipeline.tensors[transition.tensor_id].rank
+            assert fragment.dst_subslice.rank == pipeline.tensors[transition.tensor_id].rank
+            for src_dim, dst_dim in zip(fragment.src_subslice.dims, fragment.dst_subslice.dims):
                 assert src_dim.length > 0
                 assert dst_dim.length > 0
         assert isinstance(pipeline.stages[1].layers[0].inputs[0].source, TransitionInput)

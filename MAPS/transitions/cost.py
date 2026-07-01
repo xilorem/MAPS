@@ -25,7 +25,7 @@ class TransitionCost:
 
 
 def _transition_fragment_num_bytes(fragment: TransitionFragment, tensor: Tensor) -> int:
-    return fragment.src_slice.num_elements * tensor.elem_bytes
+    return fragment.src_subslice.num_elements * tensor.elem_bytes
 
 
 def _aggregate_transition(legs: tuple[TransferLeg, ...], model: TransportCostModel) -> TransitionCost:

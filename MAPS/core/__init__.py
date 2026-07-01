@@ -9,6 +9,7 @@ from .layout import (
     TensorRange,
     TensorSlice,
     TensorSliceRef,
+    TensorSubSlice,
 )
 from .submesh import Submesh
 from .tensor import TENSOR_MAX_DIMS, Tensor
@@ -29,5 +30,6 @@ __all__ = [
     "TensorRange",
     "TensorSlice",
     "TensorSliceRef",
+    "TensorSubSlice",
     "tile_tensor_slice",
 ]

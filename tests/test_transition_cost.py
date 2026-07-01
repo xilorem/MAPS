@@ -9,7 +9,7 @@ from MAPS.arch import (
     NoCLink,
     NoCNode,
 )
-from MAPS.core import LayoutAxis, LayoutAxisMode, Submesh, Tensor, TensorLayout, TensorRange, TensorSlice
+from MAPS.core import LayoutAxis, LayoutAxisMode, Submesh, Tensor, TensorLayout, TensorRange, TensorSlice, TensorSubSlice
 from MAPS.transitions.model import Transition, TransitionFragment, TransitionMode
 from MAPS.transitions import TransportCostModel, estimate_transition_cost
 from tests.noc_utils import rectangular_test_tiles
@@ -68,6 +68,8 @@ def _shared_link_remap_case() -> tuple[Mesh, Tensor, Transition]:
         logical_width=4,
         logical_height=1,
     )
+    first_slice = TensorSlice(rank=1, dims=(TensorRange(start=0, length=8),))
+    second_slice = TensorSlice(rank=1, dims=(TensorRange(start=8, length=8),))
     transition = Transition(
         name="remap",
         tensor_id=0,
@@ -82,14 +84,14 @@ def _shared_link_remap_case() -> tuple[Mesh, Tensor, Transition]:
             TransitionFragment(
                 src_hartid=0,
                 dst_hartid=2,
-                src_slice=TensorSlice(rank=1, dims=(TensorRange(start=0, length=8),)),
-                dst_slice=TensorSlice(rank=1, dims=(TensorRange(start=0, length=8),)),
+                src_subslice=TensorSubSlice(parent=first_slice, dims=(TensorRange(start=0, length=8),)),
+                dst_subslice=TensorSubSlice(parent=first_slice, dims=(TensorRange(start=0, length=8),)),
             ),
             TransitionFragment(
                 src_hartid=1,
                 dst_hartid=3,
-                src_slice=TensorSlice(rank=1, dims=(TensorRange(start=8, length=8),)),
-                dst_slice=TensorSlice(rank=1, dims=(TensorRange(start=8, length=8),)),
+                src_subslice=TensorSubSlice(parent=second_slice, dims=(TensorRange(start=0, length=8),)),
+                dst_subslice=TensorSubSlice(parent=second_slice, dims=(TensorRange(start=0, length=8),)),
             ),
         ),
     )

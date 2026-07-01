@@ -235,7 +235,7 @@ def build_virtual_traffic(
                 )
                 matrix = edge_matrices.setdefault((src_stage_id, dst_stage_id), {})
                 for fragment in fragments:
-                    bytes_ = tensor.slice_num_bytes(fragment.src_slice)
+                    bytes_ = fragment.src_subslice.num_elements * tensor.elem_bytes
                     key = (fragment.src_hartid, fragment.dst_hartid)
                     matrix[key] = matrix.get(key, 0) + bytes_
                     stage_comm[(src_stage_id, dst_stage_id)] = stage_comm.get((src_stage_id, dst_stage_id), 0) + bytes_
@@ -763,7 +763,7 @@ def _evaluate_mapping(
                 )
                 src_placement = placements[src_stage_id]
                 for fragment in fragments:
-                    bytes_ = tensor.slice_num_bytes(fragment.src_slice)
+                    bytes_ = fragment.src_subslice.num_elements * tensor.elem_bytes
                     src_tile = mesh.tile_by_id(src_placement.physical_tile_id(fragment.src_hartid))
                     dst_tile_id = dst_placement.physical_tile_id(fragment.dst_hartid)
                     dst_tile = mesh.tile_by_id(dst_tile_id)

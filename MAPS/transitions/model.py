@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
 
-from MAPS.core.layout import TensorLayout, TensorSlice
+from MAPS.core.layout import TensorLayout, TensorSubSlice
 from MAPS.core.tensor import Tensor
 
 
@@ -19,8 +19,8 @@ class TransitionFragment:
 
     src_hartid: int
     dst_hartid: int
-    src_slice: TensorSlice
-    dst_slice: TensorSlice
+    src_subslice: TensorSubSlice
+    dst_subslice: TensorSubSlice
 
     def __post_init__(self) -> None:
         if self.src_hartid < 0 or self.dst_hartid < 0:

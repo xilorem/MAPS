@@ -103,6 +103,32 @@ class TensorSlice:
 
 
 @dataclass(frozen=True)
+class TensorSubSlice:
+    """One concrete multi-dimensional subslice relative to a parent slice."""
+
+    parent: TensorSlice
+    dims: tuple[TensorRange, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.dims) != self.parent.rank:
+            raise ValueError("dims length must match parent slice rank")
+        for parent_dim, dim in zip(self.parent.dims, self.dims):
+            if dim.start + dim.length > parent_dim.length:
+                raise ValueError("subslice range must fit inside parent slice")
+
+    @property
+    def rank(self) -> int:
+        return self.parent.rank
+
+    @property
+    def num_elements(self) -> int:
+        total = 1
+        for dim in self.dims:
+            total *= dim.length
+        return total
+
+
+@dataclass(frozen=True)
 class TensorSliceRef:
     """A concrete slice tied to its logical tensor."""
 

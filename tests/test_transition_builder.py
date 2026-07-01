@@ -87,7 +87,7 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
         (9, 8),
         (9, 9),
     }
-    assert {fragment.src_slice for fragment in transition.fragments} == {
+    assert {fragment.src_subslice.parent for fragment in transition.fragments} == {
         TensorSlice(
             rank=2,
             dims=(
@@ -115,6 +115,19 @@ def test_build_transition_builds_direct_remap_fragments() -> None:
                 TensorRange(start=4, length=4),
                 TensorRange(start=4, length=4),
             ),
+        ),
+    }
+    assert {
+        fragment.dst_subslice.dims
+        for fragment in transition.fragments
+    } == {
+        (
+            TensorRange(start=0, length=4),
+            TensorRange(start=0, length=4),
+        ),
+        (
+            TensorRange(start=0, length=4),
+            TensorRange(start=4, length=4),
         ),
     }
 
@@ -159,7 +172,7 @@ def test_build_transition_builds_direct_remap_between_different_submeshes() -> N
         (8, 26),
         (9, 27),
     }
-    assert {fragment.src_slice for fragment in transition.fragments} == {
+    assert {fragment.src_subslice.parent for fragment in transition.fragments} == {
         TensorSlice(
             rank=2,
             dims=(

@@ -1,7 +1,7 @@
 """Helpers to build direct-remap fragments from producer ownership and consumer demand."""
 
 from MAPS.arch import Tile
-from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice, tile_tensor_slice
+from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice, TensorSubSlice, tile_tensor_slice
 from MAPS.core.tensor import Tensor
 from MAPS.transitions.model import TransitionFragment
 
@@ -30,6 +30,28 @@ def _intersect_slice(a: TensorSlice, b: TensorSlice) -> TensorSlice | None:
         dims.append(overlap)
 
     return TensorSlice(rank=a.rank, dims=tuple(dims))
+
+
+def _relative_subslice(parent: TensorSlice, child: TensorSlice) -> TensorSubSlice:
+    """Return child as a subslice with coordinates relative to parent."""
+
+    if parent.rank != child.rank:
+        raise ValueError("cannot build subslice from slices with different ranks")
+
+    dims: list[TensorRange] = []
+    for parent_dim, child_dim in zip(parent.dims, child.dims):
+        parent_end = parent_dim.start + parent_dim.length
+        child_end = child_dim.start + child_dim.length
+        if child_dim.start < parent_dim.start or child_end > parent_end:
+            raise ValueError("child slice must fit inside parent slice")
+        dims.append(
+            TensorRange(
+                start=child_dim.start - parent_dim.start,
+                length=child_dim.length,
+            )
+        )
+
+    return TensorSubSlice(parent=parent, dims=tuple(dims))
 
 
 def tile_owned_slices(tensor: Tensor, layout: TensorLayout) -> tuple[tuple[Tile, TensorSlice], ...]:
@@ -69,8 +91,8 @@ def build_direct_remap_fragments(
                 TransitionFragment(
                     src_hartid=src_tile.tile_id,
                     dst_hartid=dst_tile.tile_id,
-                    src_slice=overlap,
-                    dst_slice=overlap,
+                    src_subslice=_relative_subslice(src_slice, overlap),
+                    dst_subslice=_relative_subslice(dst_slice, overlap),
                 )
             )
 
