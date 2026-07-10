@@ -42,10 +42,63 @@ Run the full test suite with:
 
 ## Run the MAGIA example
 
-MAPS includes a runnable MAGIA planning example in ./examples/magia_example.py.
+MAPS includes a runnable MAGIA planning example in
+`./examples/magia_example.py`.
 
-Run it with:
+Run only the Python planner and JSON export with:
 
 ```bash
 ./.venv/bin/python examples/magia_example.py
 ```
+
+This writes:
+
+```text
+generated/magia_example.pipeline.json
+```
+
+## Run the full MAGIA flow
+
+The repository root `Makefile` runs the MAPS-side example first, then delegates
+the MLIR translation and MAGIA header/data generation to `maps-ir/Makefile`.
+
+Configure `maps-ir` once before running the full flow:
+
+```bash
+cmake -S maps-ir -B maps-ir/build \
+  -DMLIR_DIR=/path/to/llvm-install/lib/cmake/mlir \
+  -DLLVM_DIR=/path/to/llvm-install/lib/cmake/llvm
+```
+
+Then run:
+
+```bash
+make magia-example
+```
+
+This builds `maps-translate`, generates the pipeline JSON, converts it
+to MAPS MLIR, and emits the MAGIA header and data files:
+
+```text
+generated/magia_example.pipeline.json
+generated/magia_example.pipeline.mlir
+generated/magia_example.h
+generated/magia_example_data.c
+```
+
+You can also run individual root targets:
+
+```bash
+make pipeline-json
+make maps-translate
+make maps-mlir
+make magia-header
+make magia-data
+```
+
+Clean generated MLIR/header/data artifacts with:
+
+```bash
+make clean-generated
+```
+
