@@ -272,30 +272,38 @@ class TransportCostModel:
         )
 
     def _estimate_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
+        """Estimate a producer-initiated write into a consumer's L1."""
+
         self._require_noc()
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
         estimate = self._route_protocol_cost(
             flows=(
                 _NoCFlow(
-                    src_endpoint_id=dst_endpoint.endpoint_id,
-                    dst_endpoint_id=src_endpoint.endpoint_id,
-                    bytes=self.read_request_bytes,
-                    traffic_kind=TrafficKind.READ_REQ,
+                    src_endpoint_id=src_endpoint.endpoint_id,
+                    dst_endpoint_id=dst_endpoint.endpoint_id,
+                    bytes=self.write_request_bytes,
+                    traffic_kind=TrafficKind.WRITE_REQ,
                 ),
                 _NoCFlow(
                     src_endpoint_id=src_endpoint.endpoint_id,
                     dst_endpoint_id=dst_endpoint.endpoint_id,
                     bytes=bytes_,
-                    traffic_kind=TrafficKind.READ_RSP,
+                    traffic_kind=TrafficKind.WRITE_DATA,
                     bandwidth_limit=min(src.memory.bandwidth, dst.memory.bandwidth),
+                ),
+                _NoCFlow(
+                    src_endpoint_id=dst_endpoint.endpoint_id,
+                    dst_endpoint_id=src_endpoint.endpoint_id,
+                    bytes=self.write_response_bytes,
+                    traffic_kind=TrafficKind.WRITE_RSP,
                 ),
             ),
         )
         return self._with_dma_resource_load(
             estimate=estimate,
-            tile=dst,
-            job=DMAJob.READJOB,
+            tile=src,
+            job=DMAJob.WRITEJOB,
         )
 
     def _route_protocol_cost(

@@ -36,16 +36,16 @@ class TileIOScore:
 
     tile_id: int
     stage_id: int | None
-    tile_to_tile_reads: int
+    tile_to_tile_writes: int
     l2_reads: int
     l2_writes: int
-    producer_stage_reads: dict[int, int]
+    consumer_stage_writes: dict[int, int]
 
     @property
     def score(self) -> int:
         """Return the additive physical IO score for one tile."""
 
-        return self.tile_to_tile_reads + self.l2_reads + self.l2_writes
+        return self.tile_to_tile_writes + self.l2_reads + self.l2_writes
 
 
 @dataclass(frozen=True)
@@ -55,13 +55,13 @@ class StageIOBreakdown:
     physical_tile_id: int | None
     l2_read: int
     l2_write: int
-    l1_read: int
+    l1_write: int
 
     @property
     def total(self) -> int:
         """Return the additive physical IO score of the worst tile."""
 
-        return self.l1_read + self.l2_read + self.l2_write
+        return self.l1_write + self.l2_read + self.l2_write
 
 
 @dataclass(frozen=True)
@@ -558,31 +558,31 @@ def _choose_repair_regions(
 
     bottleneck_stage_id = worst_tile.stage_id
     candidates: dict[frozenset[int], RepairCandidate] = {}
-    producer_blames = sorted(
-        worst_tile.producer_stage_reads.items(),
+    consumer_blames = sorted(
+        worst_tile.consumer_stage_writes.items(),
         key=lambda item: (-item[1], item[0]),
     )
 
-    for producer_stage_id, blame in producer_blames[:2]:
-        direct_region = frozenset({producer_stage_id, bottleneck_stage_id})
+    for consumer_stage_id, blame in consumer_blames[:2]:
+        direct_region = frozenset({bottleneck_stage_id, consumer_stage_id})
         _record_candidate(
             candidates,
             direct_region,
             priority=float(blame),
-            reason=f"direct_{producer_stage_id}_to_{bottleneck_stage_id}",
+            reason=f"direct_{bottleneck_stage_id}_to_{consumer_stage_id}",
         )
         blocker_stage_id = _first_blocker_on_path(
             mesh=mesh,
             placements=placements,
             src_stage_id=bottleneck_stage_id,
-            dst_stage_id=producer_stage_id,
+            dst_stage_id=consumer_stage_id,
         )
         if blocker_stage_id is not None:
             _record_candidate(
                 candidates,
                 frozenset({bottleneck_stage_id, blocker_stage_id}),
                 priority=float(blame) * 0.9,
-                reason=f"blocker_{blocker_stage_id}_toward_{producer_stage_id}",
+                reason=f"blocker_{blocker_stage_id}_toward_{consumer_stage_id}",
             )
 
     l2_blocker = _first_blocker_to_l2(mesh, placements, bottleneck_stage_id)
@@ -607,9 +607,9 @@ def _choose_repair_regions(
             reason=f"physical_neighbor_{neighbor_stage_id}",
         )
 
-    if len(producer_blames) >= 2:
-        left_stage_id, left_blame = producer_blames[0]
-        right_stage_id, right_blame = producer_blames[1]
+    if len(consumer_blames) >= 2:
+        left_stage_id, left_blame = consumer_blames[0]
+        right_stage_id, right_blame = consumer_blames[1]
         stronger = max(left_blame, right_blame)
         weaker = min(left_blame, right_blame)
         if weaker > 0 and stronger <= int(1.5 * weaker):
@@ -727,10 +727,10 @@ def _evaluate_mapping(
         for stage_id, placement in placements.items()
         for tile_id in placement.physical_submesh.tile_ids
     }
-    tile_reads = {tile_id: 0 for tile_id in stage_of_tile}
+    tile_writes = {tile_id: 0 for tile_id in stage_of_tile}
     tile_l2_reads = {tile_id: 0 for tile_id in stage_of_tile}
     tile_l2_writes = {tile_id: 0 for tile_id in stage_of_tile}
-    producer_stage_reads = {tile_id: {} for tile_id in stage_of_tile}
+    consumer_stage_writes = {tile_id: {} for tile_id in stage_of_tile}
 
     for dst_stage_id, dst_plan in stage_plans.items():
         dst_placement = placements[dst_stage_id]
@@ -769,12 +769,12 @@ def _evaluate_mapping(
                 for fragment in fragments:
                     bytes_ = fragment.src_subslice.num_elements * tensor.elem_bytes
                     src_tile = mesh.tile_by_id(src_placement.physical_tile_id(fragment.src_hartid))
-                    dst_tile_id = dst_placement.physical_tile_id(fragment.dst_hartid)
-                    dst_tile = mesh.tile_by_id(dst_tile_id)
+                    dst_tile = mesh.tile_by_id(dst_placement.physical_tile_id(fragment.dst_hartid))
                     transfer_cost = model.l1_to_l1(src_tile, dst_tile, bytes_)
-                    tile_reads[dst_tile_id] += transfer_cost
-                    producer_stage_reads[dst_tile_id][src_stage_id] = (
-                        producer_stage_reads[dst_tile_id].get(src_stage_id, 0) + transfer_cost
+                    src_tile_id = src_tile.tile_id
+                    tile_writes[src_tile_id] += transfer_cost
+                    consumer_stage_writes[src_tile_id][dst_stage_id] = (
+                        consumer_stage_writes[src_tile_id].get(dst_stage_id, 0) + transfer_cost
                     )
 
             for output_idx, tensor in enumerate(dst_node.outputs):
@@ -792,10 +792,10 @@ def _evaluate_mapping(
         tile_id: TileIOScore(
             tile_id=tile_id,
             stage_id=stage_of_tile.get(tile_id),
-            tile_to_tile_reads=tile_reads.get(tile_id, 0),
+            tile_to_tile_writes=tile_writes.get(tile_id, 0),
             l2_reads=tile_l2_reads.get(tile_id, 0),
             l2_writes=tile_l2_writes.get(tile_id, 0),
-            producer_stage_reads=dict(sorted(producer_stage_reads.get(tile_id, {}).items())),
+            consumer_stage_writes=dict(sorted(consumer_stage_writes.get(tile_id, {}).items())),
         )
         for tile_id in stage_of_tile
     }
@@ -820,7 +820,7 @@ def _evaluate_mapping(
             physical_tile_id=worst_stage_tile,
             l2_read=tile_score.l2_reads,
             l2_write=tile_score.l2_writes,
-            l1_read=tile_score.tile_to_tile_reads,
+            l1_write=tile_score.tile_to_tile_writes,
         )
 
     return MappingEvaluation(
@@ -870,7 +870,7 @@ def print_spatial_mapping_details(
             f"tile={io_cost.physical_tile_id} "
             f"l2_read={io_cost.l2_read} "
             f"l2_write={io_cost.l2_write} "
-            f"l1_read={io_cost.l1_read} "
+            f"l1_write={io_cost.l1_write} "
             f"total={io_cost.total}"
         )
     print(

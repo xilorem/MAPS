@@ -143,7 +143,7 @@ def test_l1_to_l1_transfer_cost_uses_noc_route_hops_when_available() -> None:
     assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(2, 0), 64) > model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 64)
 
 
-def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel_selection() -> None:
+def test_l1_to_l1_transfer_cost_respects_write_traffic_policy_channel_selection() -> None:
     wide_mesh = Mesh(
         width=2,
         height=1,
@@ -172,8 +172,9 @@ def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel
             ),
             traffic_policy=TrafficPolicy(
                 {
-                    TrafficKind.READ_REQ: (1,),
-                    TrafficKind.READ_RSP: (1,),
+                    TrafficKind.WRITE_REQ: (1,),
+                    TrafficKind.WRITE_DATA: (1,),
+                    TrafficKind.WRITE_RSP: (1,),
                 }
             ),
         ),
@@ -189,8 +190,9 @@ def test_l1_to_l1_transfer_cost_respects_read_req_and_rsp_traffic_policy_channel
             endpoints=wide_mesh.noc.endpoints,
             traffic_policy=TrafficPolicy(
                 {
-                    TrafficKind.READ_REQ: (0,),
-                    TrafficKind.READ_RSP: (0,),
+                    TrafficKind.WRITE_REQ: (0,),
+                    TrafficKind.WRITE_DATA: (0,),
+                    TrafficKind.WRITE_RSP: (0,),
                 }
             ),
         ),
@@ -684,7 +686,7 @@ def test_transport_cost_rounds_nonzero_flow_transfer_time_up_to_one_cycle() -> N
     )
     model = TransportCostModel(mesh=mesh)
 
-    assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 1) == 2
+    assert model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 0), 1) == 3
 
 
 def test_l1_to_l1_delta_cache_reuses_uniform_no_contention_costs() -> None:
@@ -694,14 +696,14 @@ def test_l1_to_l1_delta_cache_reuses_uniform_no_contention_costs() -> None:
     first_cost = model.l1_to_l1(mesh.tile(0, 0), mesh.tile(1, 1), 64)
 
     assert model._l1_to_l1_delta_cache_enabled is True
-    assert len(model._flow_cost_cache) == 2
+    assert len(model._flow_cost_cache) == 3
     assert len(model._l1_to_l1_delta_estimate_cache) == 1
 
     second_cost = model.l1_to_l1(mesh.tile(1, 0), mesh.tile(2, 1), 64)
 
     assert second_cost == first_cost
     assert len(model._estimate_cache) == 2
-    assert len(model._flow_cost_cache) == 2
+    assert len(model._flow_cost_cache) == 3
     assert len(model._l1_to_l1_delta_estimate_cache) == 1
 
 
@@ -717,7 +719,7 @@ def test_l1_to_l1_delta_cache_is_disabled_when_accounting_noc_contention() -> No
 
     assert model._l1_to_l1_delta_cache_enabled is False
     assert len(model._l1_to_l1_delta_estimate_cache) == 0
-    assert len(model._flow_cost_cache) == 4
+    assert len(model._flow_cost_cache) == 6
 
 
 def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
@@ -806,5 +808,5 @@ def test_l1_to_l1_delta_cache_is_disabled_on_nonuniform_noc() -> None:
 
     assert model._l1_to_l1_delta_cache_enabled is False
     assert len(model._l1_to_l1_delta_estimate_cache) == 0
-    assert len(model._flow_cost_cache) == 4
+    assert len(model._flow_cost_cache) == 6
     assert bottom_cost > top_cost

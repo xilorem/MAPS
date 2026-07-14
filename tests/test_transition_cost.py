@@ -104,13 +104,13 @@ def test_direct_remap_cost_ignores_shared_noc_link_load_when_disabled() -> None:
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
-    assert cost.producer_loads == {0: 9, 1: 9}
-    assert cost.consumer_loads == {2: 9, 3: 9}
+    assert cost.producer_loads == {0: 10, 1: 10}
+    assert cost.consumer_loads == {2: 10, 3: 10}
     assert cost.resource_loads == {
-        "tile:2:dma:idma_read": 9,
-        "tile:3:dma:idma_read": 9,
+        "tile:0:dma:idma_write": 10,
+        "tile:1:dma:idma_write": 10,
     }
-    assert cost.total_cost == 9
+    assert cost.total_cost == 10
 
 
 def test_direct_remap_cost_accounts_for_shared_noc_link_load_when_enabled() -> None:
@@ -119,13 +119,13 @@ def test_direct_remap_cost_accounts_for_shared_noc_link_load_when_enabled() -> N
 
     cost = estimate_transition_cost(transition, tensor, mesh, model)
 
-    assert cost.producer_loads == {0: 9, 1: 9}
-    assert cost.consumer_loads == {2: 9, 3: 9}
+    assert cost.producer_loads == {0: 10, 1: 10}
+    assert cost.consumer_loads == {2: 10, 3: 10}
     assert cost.resource_loads == {
-        "noc_link:0:channel:0": 9,
-        "noc_link:1:channel:0": 18,
-        "noc_link:2:channel:0": 9,
-        "tile:2:dma:idma_read": 9,
-        "tile:3:dma:idma_read": 9,
+        "noc_link:0:channel:0": 10,
+        "noc_link:1:channel:0": 20,
+        "noc_link:2:channel:0": 10,
+        "tile:0:dma:idma_write": 10,
+        "tile:1:dma:idma_write": 10,
     }
-    assert cost.total_cost == 18
+    assert cost.total_cost == 20

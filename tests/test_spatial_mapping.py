@@ -122,6 +122,48 @@ def test_map_spatially_returns_connected_adjacent_mapping() -> None:
     )
 
 
+def test_mapping_charges_l1_communication_to_the_producer_tile() -> None:
+    mesh = _test_mesh(2, 1)
+    producer = _gemm_node("producer")
+    consumer = _gemm_node("consumer", x=producer.outputs[0])
+    graph = Graph(
+        name="g",
+        nodes=(producer, consumer),
+        edges=(Edge(tensor=producer.outputs[0], src=producer, dst=consumer),),
+    )
+    stage_plans = {
+        0: _single_node_stage_plan(mesh, 0, producer, {0}),
+        1: _single_node_stage_plan(mesh, 1, consumer, {0}),
+    }
+    placements = {
+        stage_id: StagePlacement(
+            stage_id=stage_id,
+            virtual_submesh=spatial_mapping._stage_virtual_submesh(plan),
+            physical_submesh=Submesh(mesh=mesh, submesh_id=stage_id, tile_ids=frozenset({stage_id})),
+            virtual_to_physical={0: stage_id},
+        )
+        for stage_id, plan in stage_plans.items()
+    }
+
+    evaluation = spatial_mapping._evaluate_mapping(
+        graph=graph,
+        mesh=mesh,
+        stage_plans=stage_plans,
+        placements=placements,
+        node_stage_ids={id(producer): 0, id(consumer): 1},
+    )
+
+    producer_score = evaluation.tile_scores[0]
+    consumer_score = evaluation.tile_scores[1]
+    assert producer_score.tile_to_tile_writes > 0
+    assert producer_score.consumer_stage_writes == {1: producer_score.tile_to_tile_writes}
+    assert consumer_score.tile_to_tile_writes == 0
+    assert evaluation.stage_breakdowns[0].l1_write == producer_score.tile_to_tile_writes
+    assert producer_score.score == (
+        producer_score.l2_reads + producer_score.l2_writes + producer_score.tile_to_tile_writes
+    )
+
+
 def test_repair_region_skips_an_infeasible_growth_attempt(monkeypatch) -> None:
     mesh = _test_mesh(2, 1)
     submesh = Submesh(mesh=mesh, submesh_id=0, tile_ids=frozenset({0}))
