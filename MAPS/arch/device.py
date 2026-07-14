@@ -17,10 +17,36 @@ class DeviceKind(Enum):
 class WorkKind(Enum):
     GEMM = auto()
     ELEMENTWISE = auto()
+    ABS = auto()
+    ADD = auto()
+    DIV = auto()
+    LOG = auto()
+    MUL = auto()
+    NEG = auto()
+    POW = auto()
     REDUCE_SUM = auto()
     REDUCE_MAX = auto()
     EXP = auto()
+    SQRT = auto()
+    SUB = auto()
     DMA = auto()
+
+    @property
+    def fallback_kind(self) -> "WorkKind":
+        if self in {
+            WorkKind.ABS,
+            WorkKind.ADD,
+            WorkKind.DIV,
+            WorkKind.EXP,
+            WorkKind.LOG,
+            WorkKind.MUL,
+            WorkKind.NEG,
+            WorkKind.POW,
+            WorkKind.SQRT,
+            WorkKind.SUB,
+        }:
+            return WorkKind.ELEMENTWISE
+        return self
 
 
 class DMAJob(Enum):
@@ -53,7 +79,7 @@ class Device:
         object.__setattr__(self, "throughput", dict(self.throughput))
 
     def supports(self, work_kind: WorkKind) -> bool:
-        return work_kind in self.throughput
+        return work_kind in self.throughput or work_kind.fallback_kind in self.throughput
 
     def cycles(self, work: object) -> int:
         raise NotImplementedError
@@ -63,7 +89,8 @@ class Device:
             raise ValueError("device work amount must be >= 0")
         if not self.supports(work_kind):
             raise ValueError(f"device {self.name} does not support {work_kind.name} work")
-        compute_cycles = ceil(amount / self.throughput[work_kind])
+        throughput_kind = work_kind if work_kind in self.throughput else work_kind.fallback_kind
+        compute_cycles = ceil(amount / self.throughput[throughput_kind])
         if compute_cycles < 0:
             raise ValueError("device cycle estimator must return >= 0")
         return self.startup_cycles + compute_cycles
@@ -177,5 +204,4 @@ class VectorDevice(Device):
 
         vector_ops = ceil(amount / self.vector_length)
         return self._throughput_cycles(work_kind, vector_ops)
-
 

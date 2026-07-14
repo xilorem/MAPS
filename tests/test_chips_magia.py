@@ -1,4 +1,4 @@
-from MAPS.arch import DMADevice, DMAJob, DeviceKind, EndpointKind, RoutingPolicy, ScalarDevice, SystolicDevice, TrafficKind
+from MAPS.arch import DMADevice, DMAJob, DeviceKind, EndpointKind, RoutingPolicy, ScalarDevice, SystolicDevice, TrafficKind, WorkKind
 from MAPS.hw.chips.magia import (
     MAGIA_L1_BANDWIDTH_BYTES,
     MAGIA_L1_USABLE_BYTES,
@@ -10,6 +10,7 @@ from MAPS.hw.chips.magia import (
     MAGIA_NOC_WIDE_CHANNEL_WIDTH_BYTES,
     magia_mesh,
 )
+from MAPS.hw.devices import MAGIA_CORE_DEVICE, MAGIA_TILE_DEVICES
 
 
 def test_magia_mesh_matches_paper_memory_map_and_shape() -> None:
@@ -44,6 +45,14 @@ def test_magia_tiles_have_idma_core_and_redmule_devices() -> None:
         assert isinstance(devices["core"], ScalarDevice)
         assert devices["redmule"].kind is DeviceKind.SYSTOLIC
         assert isinstance(devices["redmule"], SystolicDevice)
+
+
+def test_magia_tile_profile_is_used_by_the_mesh() -> None:
+    mesh = magia_mesh()
+
+    assert mesh.tiles[0].devices is MAGIA_TILE_DEVICES
+    assert MAGIA_CORE_DEVICE.supports(WorkKind.ADD)
+    assert MAGIA_CORE_DEVICE.supports(WorkKind.DIV)
 
 
 def test_magia_mesh_accepts_custom_shape() -> None:

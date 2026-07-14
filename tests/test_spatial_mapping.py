@@ -3,6 +3,8 @@ from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.defs.gemm import GemmPayload
+from MAPS.planner.placement import StagePlacement
+import MAPS.planner.spatial_mapping as spatial_mapping
 from MAPS.planner.spatial_mapping import build_virtual_traffic, map_spatially
 from MAPS.planner.workload_balancing import StagePlan
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
@@ -118,3 +120,41 @@ def test_map_spatially_returns_connected_adjacent_mapping() -> None:
         set(mapping[0].physical_submesh.tile_ids),
         set(mapping[1].physical_submesh.tile_ids),
     )
+
+
+def test_repair_region_skips_an_infeasible_growth_attempt(monkeypatch) -> None:
+    mesh = _test_mesh(2, 1)
+    submesh = Submesh(mesh=mesh, submesh_id=0, tile_ids=frozenset({0}))
+    placement = StagePlacement(
+        stage_id=0,
+        virtual_submesh=submesh,
+        physical_submesh=submesh,
+        virtual_to_physical={0: 0},
+    )
+    traffic = spatial_mapping.VirtualTraffic(
+        stage_comm={},
+        edge_matrices={},
+        input_weights={},
+        output_weights={},
+        l2_read_weights={},
+        l2_write_weights={},
+        communication_degree={},
+        bottleneck_risk={},
+        l2_pressure={},
+    )
+
+    def fail_growth(**kwargs) -> set[int]:
+        del kwargs
+        raise ValueError("infeasible region")
+
+    monkeypatch.setattr(spatial_mapping, "_grow_stage_region", fail_growth)
+
+    assert spatial_mapping._repair_region(
+        mesh=mesh,
+        stage_plans={0: StagePlan(stage_id=0, tile_count=1, logical_shape=(1, 1), output_layouts=())},
+        current_placements={0: placement},
+        traffic=traffic,
+        affected_stages=frozenset({0}),
+        focus_stage_id=0,
+        debug=False,
+    ) is None

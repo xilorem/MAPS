@@ -4,7 +4,12 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
-from MAPS.ops.defs.elementwise import BinaryElementwisePayload, UnaryElementwisePayload
+from MAPS.ops.defs.elementwise import (
+    BINARY_ELEMENTWISE_OPS,
+    UNARY_ELEMENTWISE_OPS,
+    BinaryElementwisePayload,
+    UnaryElementwisePayload,
+)
 
 
 def _make_exp_op() -> UnaryElementwisePayload:
@@ -57,6 +62,13 @@ def test_exp_cost_uses_exp_capable_device() -> None:
     )
 
     assert ElementwiseCostModel(work_kind=WorkKind.EXP).cost(tile_work, submesh.tiles[0]) == 32
+
+
+def test_elementwise_work_kinds_preserve_operation_identity() -> None:
+    assert UNARY_ELEMENTWISE_OPS["Sqrt"] is WorkKind.SQRT
+    assert UNARY_ELEMENTWISE_OPS["Log"] is WorkKind.LOG
+    assert BINARY_ELEMENTWISE_OPS["Add"] is WorkKind.ADD
+    assert BINARY_ELEMENTWISE_OPS["Div"] is WorkKind.DIV
 
 
 def test_binary_elementwise_tile_work_supports_broadcasting() -> None:

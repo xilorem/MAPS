@@ -11,6 +11,7 @@ from MAPS.hw.devices.generic import GENERIC_SCALAR_DEVICE
 from MAPS.hw.devices.redmule import REDMULE_ARRAY_HEIGHT, REDMULE_ARRAY_WIDTH
 from MAPS.hw.devices.tensix_tile import TENSIX_MATRIX_DEVICE
 from MAPS.ops.defs.gemm import GemmTileWork
+from MAPS.ops.defs.elementwise import ElementwiseTileWork
 
 
 def _tile_work(m_size: int = 4, n_size: int = 8, k_size: int = 16) -> GemmTileWork:
@@ -170,3 +171,31 @@ def test_vector_device_rejects_zero_length() -> None:
             throughput={WorkKind.ELEMENTWISE: 1},
             vector_length=0,
         )
+
+
+def test_scalar_device_uses_operation_specific_throughput() -> None:
+    device = ScalarDevice(
+        name="scalar",
+        kind=DeviceKind.SCALAR,
+        throughput={WorkKind.ADD: 4, WorkKind.DIV: 1},
+    )
+    tensor = Tensor(name="x", rank=1, dims=(8,), elem_bytes=4)
+    output_slice = TensorSlice(rank=1, dims=(TensorRange(start=0, length=8),))
+
+    add_work = ElementwiseTileWork(
+        work_kind=WorkKind.ADD,
+        output=tensor,
+        output_slice=output_slice,
+        inputs=(tensor,),
+        input_tile_slices=(output_slice,),
+    )
+    div_work = ElementwiseTileWork(
+        work_kind=WorkKind.DIV,
+        output=tensor,
+        output_slice=output_slice,
+        inputs=(tensor,),
+        input_tile_slices=(output_slice,),
+    )
+
+    assert device.cycles(add_work) == 2
+    assert device.cycles(div_work) == 8

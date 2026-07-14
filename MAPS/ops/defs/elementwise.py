@@ -170,19 +170,19 @@ def _broadcast_input_slice(
 
 
 UNARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
-    "Abs": WorkKind.ELEMENTWISE,
+    "Abs": WorkKind.ABS,
     "Exp": WorkKind.EXP,
-    "Log": WorkKind.ELEMENTWISE,
-    "Neg": WorkKind.ELEMENTWISE,
-    "Sqrt": WorkKind.ELEMENTWISE,
+    "Log": WorkKind.LOG,
+    "Neg": WorkKind.NEG,
+    "Sqrt": WorkKind.SQRT,
 }
 
 BINARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
-    "Add": WorkKind.ELEMENTWISE,
-    "Div": WorkKind.ELEMENTWISE,
-    "Mul": WorkKind.ELEMENTWISE,
-    "Pow": WorkKind.ELEMENTWISE,
-    "Sub": WorkKind.ELEMENTWISE,
+    "Add": WorkKind.ADD,
+    "Div": WorkKind.DIV,
+    "Mul": WorkKind.MUL,
+    "Pow": WorkKind.POW,
+    "Sub": WorkKind.SUB,
 }
 
 

@@ -23,9 +23,18 @@ SCALAR_DEVICE = ScalarDevice(
     kind=DeviceKind.SCALAR,
     throughput={
         WorkKind.ELEMENTWISE: 1,
+        WorkKind.ABS: 1,
+        WorkKind.ADD: 1,
+        WorkKind.DIV: 1,
+        WorkKind.LOG: 1,
+        WorkKind.MUL: 1,
+        WorkKind.NEG: 1,
+        WorkKind.POW: 1,
         WorkKind.REDUCE_SUM: 1,
         WorkKind.REDUCE_MAX: 1,
         WorkKind.EXP: 1,
+        WorkKind.SQRT: 1,
+        WorkKind.SUB: 1,
     },
 )
 
@@ -35,8 +44,17 @@ GENERIC_SCALAR_DEVICE = ScalarDevice(
     throughput={
         WorkKind.GEMM: 1,
         WorkKind.ELEMENTWISE: 1,
+        WorkKind.ABS: 1,
+        WorkKind.ADD: 1,
+        WorkKind.DIV: 1,
+        WorkKind.LOG: 1,
+        WorkKind.MUL: 1,
+        WorkKind.NEG: 1,
+        WorkKind.POW: 1,
         WorkKind.REDUCE_SUM: 1,
         WorkKind.REDUCE_MAX: 1,
         WorkKind.EXP: 1,
+        WorkKind.SQRT: 1,
+        WorkKind.SUB: 1,
     },
 )

@@ -493,17 +493,21 @@ def _repair_region(
                 feasible = False
                 break
             preferred_seed = seed_candidates[min(restart_idx, len(seed_candidates) - 1)]
-            region = _grow_stage_region(
-                stage_id=stage_id,
-                mesh=mesh,
-                allowed_tile_ids=free_tile_ids,
-                tile_count=local_tile_counts[stage_id],
-                target=target,
-                traffic=traffic,
-                placed_regions=placed_regions,
-                remaining_tile_counts=remaining_tile_counts,
-                preferred_seed=preferred_seed,
-            )
+            try:
+                region = _grow_stage_region(
+                    stage_id=stage_id,
+                    mesh=mesh,
+                    allowed_tile_ids=free_tile_ids,
+                    tile_count=local_tile_counts[stage_id],
+                    target=target,
+                    traffic=traffic,
+                    placed_regions=placed_regions,
+                    remaining_tile_counts=remaining_tile_counts,
+                    preferred_seed=preferred_seed,
+                )
+            except ValueError:
+                feasible = False
+                break
             local_regions[stage_id] = region
             placed_regions[stage_id] = region
             free_tile_ids -= region
