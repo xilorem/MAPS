@@ -115,6 +115,7 @@ class DMADevice(Device):
     """DMA device model using throughput-based timing."""
 
     job: DMAJob = DMAJob.READJOB
+    burst_bytes: int | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -122,6 +123,8 @@ class DMADevice(Device):
             raise ValueError("DMADevice must use DeviceKind.DMA")
         if not isinstance(self.job, DMAJob):
             raise ValueError("Bad DMADevice job description, must be a DMAJob type")
+        if self.burst_bytes is not None and self.burst_bytes <= 0:
+            raise ValueError("DMA burst_bytes must be > 0 when specified")
 
     def cycles(self, work: object) -> int:
         raise ValueError("DMA device cannot perform compute operations")
@@ -204,4 +207,3 @@ class VectorDevice(Device):
 
         vector_ops = ceil(amount / self.vector_length)
         return self._throughput_cycles(work_kind, vector_ops)
-

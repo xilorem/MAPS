@@ -28,6 +28,27 @@ def _transition_fragment_num_bytes(fragment: TransitionFragment, tensor: Tensor)
     return fragment.src_subslice.num_elements * tensor.elem_bytes
 
 
+def _transition_fragment_dma_rows(
+    fragment: TransitionFragment,
+    tensor: Tensor,
+) -> tuple[int | None, int]:
+    """Return native-2D row geometry when either local view has row gaps."""
+    if fragment.src_subslice.rank < 2:
+        return None, 1
+
+    src_inner = fragment.src_subslice.dims[-1]
+    dst_inner = fragment.dst_subslice.dims[-1]
+    if src_inner.length != dst_inner.length:
+        return None, 1
+
+    src_gapped = src_inner.length != fragment.src_subslice.parent.dims[-1].length
+    dst_gapped = dst_inner.length != fragment.dst_subslice.parent.dims[-1].length
+    if not (src_gapped or dst_gapped):
+        return None, 1
+
+    return src_inner.length * tensor.elem_bytes, fragment.src_subslice.num_elements // src_inner.length
+
+
 def _aggregate_transition(legs: tuple[TransferLeg, ...], model: TransportCostModel) -> TransitionCost:
     producer_loads: dict[int, int] = {}
     consumer_loads: dict[int, int] = {}
@@ -69,12 +90,15 @@ def _build_direct_remap_legs(
     legs: list[TransferLeg] = []
 
     for fragment in transition.fragments:
+        row_bytes, rows = _transition_fragment_dma_rows(fragment, tensor)
         legs.append(
             TransferLeg(
                 kind=TransferKind.L1_TO_L1,
                 bytes=_transition_fragment_num_bytes(fragment, tensor),
                 src_tile=mesh.tile_by_id(fragment.src_hartid),
                 dst_tile=mesh.tile_by_id(fragment.dst_hartid),
+                row_bytes=row_bytes,
+                rows=rows,
             )
         )
 

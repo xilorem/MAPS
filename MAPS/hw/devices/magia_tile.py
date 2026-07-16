@@ -13,6 +13,7 @@ MAGIA_IDMA_READ_DEVICE = DMADevice(
     kind=DeviceKind.DMA,
     throughput={WorkKind.DMA: 1},
     job=DMAJob.READJOB,
+    burst_bytes=4,
 )
 
 MAGIA_IDMA_WRITE_DEVICE = DMADevice(
@@ -20,6 +21,7 @@ MAGIA_IDMA_WRITE_DEVICE = DMADevice(
     kind=DeviceKind.DMA,
     throughput={WorkKind.DMA: 1},
     job=DMAJob.WRITEJOB,
+    burst_bytes=8,
 )
 
 # Keep every scalar operation explicit so measured MAGIA rates can be updated

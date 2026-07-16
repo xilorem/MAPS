@@ -33,10 +33,19 @@ class TransferLeg:
     bytes: int
     src_tile: Tile | None = None
     dst_tile: Tile | None = None
+    row_bytes: int | None = None
+    rows: int = 1
 
     def __post_init__(self) -> None:
         if self.bytes <= 0:
             raise ValueError("transfer leg bytes must be > 0")
+        if self.row_bytes is None:
+            if self.rows != 1:
+                raise ValueError("rows must be 1 when row_bytes is not specified")
+        elif self.row_bytes <= 0 or self.rows <= 0:
+            raise ValueError("row_bytes and rows must be > 0")
+        elif self.bytes != self.row_bytes * self.rows:
+            raise ValueError("bytes must equal row_bytes * rows for a row-strided transfer")
 
         if self.kind is TransferKind.L1_TO_L2:
             if self.src_tile is None:
@@ -68,6 +77,9 @@ class _NoCFlow:
     bytes: int
     traffic_kind: TrafficKind
     bandwidth_limit: int | None = None
+    row_bytes: int | None = None
+    rows: int = 1
+    burst_bytes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -79,7 +91,9 @@ class TransportCostModel:
     read_request_bytes: int = 1
     write_request_bytes: int = 1
     write_response_bytes: int = 1
-    _estimate_cache: dict[tuple[TransferKind, int, int | None, int | None], TransferCostEstimate] = field(
+    _estimate_cache: dict[
+        tuple[TransferKind, int, int | None, int | None, int | None, int], TransferCostEstimate
+    ] = field(
         init=False,
         repr=False,
         compare=False,
@@ -129,31 +143,37 @@ class TransportCostModel:
         default=None,
     )
 
-    def l1_to_l2(self, src: Tile, bytes_: int) -> int:
+    def l1_to_l2(self, src: Tile, bytes_: int, *, row_bytes: int | None = None, rows: int = 1) -> int:
         return self.estimate(
             TransferLeg(
                 kind=TransferKind.L1_TO_L2,
                 bytes=bytes_,
                 src_tile=src,
+                row_bytes=row_bytes,
+                rows=rows,
             )
         ).total_cost
 
-    def l2_to_l1(self, dst: Tile, bytes_: int) -> int:
+    def l2_to_l1(self, dst: Tile, bytes_: int, *, row_bytes: int | None = None, rows: int = 1) -> int:
         return self.estimate(
             TransferLeg(
                 kind=TransferKind.L2_TO_L1,
                 bytes=bytes_,
                 dst_tile=dst,
+                row_bytes=row_bytes,
+                rows=rows,
             )
         ).total_cost
 
-    def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> int:
+    def l1_to_l1(self, src: Tile, dst: Tile, bytes_: int, *, row_bytes: int | None = None, rows: int = 1) -> int:
         return self.estimate(
             TransferLeg(
                 kind=TransferKind.L1_TO_L1,
                 bytes=bytes_,
                 src_tile=src,
                 dst_tile=dst,
+                row_bytes=row_bytes,
+                rows=rows,
             )
         ).total_cost
 
@@ -166,7 +186,7 @@ class TransportCostModel:
             return cached
         
         # try using cached delta value for l1 to l1 transfers
-        if leg.kind is TransferKind.L1_TO_L1:
+        if leg.kind is TransferKind.L1_TO_L1 and leg.row_bytes is None:
             delta_key = self._l1_to_l1_delta_cache_key(leg.src_tile, leg.dst_tile, leg.bytes)
             if delta_key is not None:
                 cached = self._l1_to_l1_delta_estimate_cache.get(delta_key)
@@ -175,11 +195,11 @@ class TransportCostModel:
                     return cached
 
         if leg.kind is TransferKind.L1_TO_L2:
-            estimate = self._estimate_l1_to_l2(leg.src_tile, leg.bytes)
+            estimate = self._estimate_l1_to_l2(leg.src_tile, leg)
         elif leg.kind is TransferKind.L2_TO_L1:
-            estimate = self._estimate_l2_to_l1(leg.dst_tile, leg.bytes)
+            estimate = self._estimate_l2_to_l1(leg.dst_tile, leg)
         elif leg.kind is TransferKind.L1_TO_L1:
-            estimate = self._estimate_l1_to_l1(leg.src_tile, leg.dst_tile, leg.bytes)
+            estimate = self._estimate_l1_to_l1(leg.src_tile, leg.dst_tile, leg)
         else:
             raise ValueError(f"unsupported transfer kind: {leg.kind}")
         
@@ -187,7 +207,7 @@ class TransportCostModel:
         self._estimate_cache[leg_key] = estimate
 
         # try to cache the delta of the computation
-        if leg.kind is TransferKind.L1_TO_L1:
+        if leg.kind is TransferKind.L1_TO_L1 and leg.row_bytes is None:
             delta_key = self._l1_to_l1_delta_cache_key(leg.src_tile, leg.dst_tile, leg.bytes)
             if delta_key is not None:
                 self._l1_to_l1_delta_estimate_cache.setdefault(delta_key, estimate)
@@ -201,7 +221,7 @@ class TransportCostModel:
     def resource_loads(self, leg: TransferLeg) -> dict[str, int]:
         return self.estimate(leg).resource_loads
 
-    def _estimate_l1_to_l2(self, src: Tile, bytes_: int) -> TransferCostEstimate:
+    def _estimate_l1_to_l2(self, src: Tile, leg: TransferLeg) -> TransferCostEstimate:
         self._require_noc_with_l2()
         src_endpoint = self.mesh.noc.endpoint_for_tile(src.tile_id, EndpointKind.L1)
         estimate = min(
@@ -217,9 +237,12 @@ class TransportCostModel:
                         _NoCFlow(
                             src_endpoint_id=src_endpoint.endpoint_id,
                             dst_endpoint_id=l2_endpoint.endpoint_id,
-                            bytes=bytes_,
+                            bytes=leg.bytes,
                             traffic_kind=TrafficKind.WRITE_DATA,
                             bandwidth_limit=min(src.memory.bandwidth, self.mesh.l2_memory.bandwidth),
+                            row_bytes=leg.row_bytes,
+                            rows=leg.rows,
+                            burst_bytes=self._dma_burst_bytes(src, DMAJob.WRITEJOB),
                         ),
                         _NoCFlow(
                             src_endpoint_id=l2_endpoint.endpoint_id,
@@ -239,7 +262,7 @@ class TransportCostModel:
             job=DMAJob.WRITEJOB,
         )
 
-    def _estimate_l2_to_l1(self, dst: Tile, bytes_: int) -> TransferCostEstimate:
+    def _estimate_l2_to_l1(self, dst: Tile, leg: TransferLeg) -> TransferCostEstimate:
         self._require_noc_with_l2()
         dst_endpoint = self.mesh.noc.endpoint_for_tile(dst.tile_id, EndpointKind.L1)
         estimate = min(
@@ -255,9 +278,12 @@ class TransportCostModel:
                         _NoCFlow(
                             src_endpoint_id=l2_endpoint.endpoint_id,
                             dst_endpoint_id=dst_endpoint.endpoint_id,
-                            bytes=bytes_,
+                            bytes=leg.bytes,
                             traffic_kind=TrafficKind.READ_RSP,
                             bandwidth_limit=min(self.mesh.l2_memory.bandwidth, dst.memory.bandwidth),
+                            row_bytes=leg.row_bytes,
+                            rows=leg.rows,
+                            burst_bytes=self._dma_burst_bytes(dst, DMAJob.READJOB),
                         ),
                     ),
                 )
@@ -271,7 +297,7 @@ class TransportCostModel:
             job=DMAJob.READJOB,
         )
 
-    def _estimate_l1_to_l1(self, src: Tile, dst: Tile, bytes_: int) -> TransferCostEstimate:
+    def _estimate_l1_to_l1(self, src: Tile, dst: Tile, leg: TransferLeg) -> TransferCostEstimate:
         """Estimate a producer-initiated write into a consumer's L1."""
 
         self._require_noc()
@@ -288,9 +314,12 @@ class TransportCostModel:
                 _NoCFlow(
                     src_endpoint_id=src_endpoint.endpoint_id,
                     dst_endpoint_id=dst_endpoint.endpoint_id,
-                    bytes=bytes_,
+                    bytes=leg.bytes,
                     traffic_kind=TrafficKind.WRITE_DATA,
                     bandwidth_limit=min(src.memory.bandwidth, dst.memory.bandwidth),
+                    row_bytes=leg.row_bytes,
+                    rows=leg.rows,
+                    burst_bytes=self._dma_burst_bytes(src, DMAJob.WRITEJOB),
                 ),
                 _NoCFlow(
                     src_endpoint_id=dst_endpoint.endpoint_id,
@@ -373,14 +402,14 @@ class TransportCostModel:
             src_endpoint.egress_latency_cycles
             + (src_attachment_channel.hop_latency_cycles if src_attachment_channel is not None else 0)
             + dst_endpoint.ingress_latency_cycles
-            + self._transfer_cycles(flow.bytes, bandwidth)
+            + self._flow_transfer_cycles(flow, bandwidth)
             + sum(channel.hop_latency_cycles for channel in route_channels)
             + (dst_attachment_channel.hop_latency_cycles if dst_attachment_channel is not None else 0)
         )
         resource_loads = {}
         if self.account_noc_contention:
             resource_loads = {
-                self._route_resource_id(link_id, channel.channel_id): self._transfer_cycles(flow.bytes, channel.width_bytes)
+                self._route_resource_id(link_id, channel.channel_id): self._flow_transfer_cycles(flow, channel.width_bytes)
                 for link_id, channel in zip(route.link_ids, route_channels)
             }
             if src_attachment_channel is not None:
@@ -390,7 +419,7 @@ class TransportCostModel:
                         "egress",
                         src_attachment_channel.channel_id,
                     )
-                ] = self._transfer_cycles(flow.bytes, src_attachment_channel.width_bytes)
+                ] = self._flow_transfer_cycles(flow, src_attachment_channel.width_bytes)
             if dst_attachment_channel is not None:
                 resource_loads[
                     self._endpoint_attachment_resource_id(
@@ -398,14 +427,14 @@ class TransportCostModel:
                         "ingress",
                         dst_attachment_channel.channel_id,
                     )
-                ] = self._transfer_cycles(flow.bytes, dst_attachment_channel.width_bytes)
+                ] = self._flow_transfer_cycles(flow, dst_attachment_channel.width_bytes)
             if src_endpoint.egress_bandwidth_bytes is not None:
                 resource_loads[self._endpoint_resource_id(src_endpoint.endpoint_id, "egress")] = (
-                    self._transfer_cycles(flow.bytes, src_endpoint.egress_bandwidth_bytes)
+                    self._flow_transfer_cycles(flow, src_endpoint.egress_bandwidth_bytes)
                 )
             if dst_endpoint.ingress_bandwidth_bytes is not None:
                 resource_loads[self._endpoint_resource_id(dst_endpoint.endpoint_id, "ingress")] = (
-                    self._transfer_cycles(flow.bytes, dst_endpoint.ingress_bandwidth_bytes)
+                    self._flow_transfer_cycles(flow, dst_endpoint.ingress_bandwidth_bytes)
                 )
         estimate = TransferCostEstimate(total_cost=total_cost, resource_loads=resource_loads)
         self._flow_cost_cache[flow] = estimate
@@ -524,6 +553,11 @@ class TransportCostModel:
         )
 
     @staticmethod
+    def _dma_burst_bytes(tile: Tile, job: DMAJob) -> int | None:
+        dma_devices = tile.dma_devices(job)
+        return dma_devices[0].burst_bytes if dma_devices else None
+
+    @staticmethod
     def _dma_resource_id(tile_id: int, device: DMADevice) -> str:
         return f"tile:{tile_id}:dma:{device.name}"
 
@@ -624,12 +658,14 @@ class TransportCostModel:
     @staticmethod
     def _estimate_cache_key(
         leg: TransferLeg,
-    ) -> tuple[TransferKind, int, int | None, int | None]:
+    ) -> tuple[TransferKind, int, int | None, int | None, int | None, int]:
         return (
             leg.kind,
             leg.bytes,
             None if leg.src_tile is None else leg.src_tile.tile_id,
             None if leg.dst_tile is None else leg.dst_tile.tile_id,
+            leg.row_bytes,
+            leg.rows,
         )
 
     @staticmethod
@@ -644,3 +680,14 @@ class TransportCostModel:
         if bandwidth is None:
             return 1
         return max(1, math.ceil(bytes_ / bandwidth))
+
+    @classmethod
+    def _flow_transfer_cycles(cls, flow: _NoCFlow, bandwidth: int | None) -> int:
+        if flow.row_bytes is None or flow.burst_bytes is None:
+            return cls._transfer_cycles(flow.bytes, bandwidth)
+
+        row_cost = sum(
+            cls._transfer_cycles(min(flow.burst_bytes, flow.row_bytes - offset), bandwidth)
+            for offset in range(0, flow.row_bytes, flow.burst_bytes)
+        )
+        return flow.rows * row_cost

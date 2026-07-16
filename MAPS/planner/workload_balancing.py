@@ -36,7 +36,8 @@ def balance_workload(
     alpha: float = 1.0,
     beta: float = 1.0,
 ) -> dict[int, StagePlan]:
-    """Balance workload using connected tile sets and one-tile growth steps."""
+    """Balance compute and communication bottlenecks with one-tile growth steps."""
+
     resolved_stage_selection = _resolve_stage_selection(graph, stage_selection)
     stage_ids = tuple(resolved_stage_selection)
     initializer_tensors = frozenset(graph.initializers)
@@ -83,6 +84,7 @@ def balance_workload(
             graph_outputs=graph_outputs,
             producer_stage_id_by_tensor=producer_stage_id_by_tensor,
             initializer_tensors=initializer_tensors,
+            graph=graph,
         )
         stage_order = tuple(
             sorted(
@@ -123,6 +125,8 @@ def balance_workload(
                 graph_inputs=graph_inputs,
                 graph_outputs=graph_outputs,
                 producer_stage_id_by_tensor=producer_stage_id_by_tensor,
+                graph=graph,
+                current_selection_metrics=current_selection_metrics,
             )
             if grown_tile_count is None:
                 _debug(debug, f"[workload_balancing] stage={stage_id} no_valid_growth")
@@ -155,6 +159,7 @@ def balance_workload(
             graph_outputs=graph_outputs,
             producer_stage_id_by_tensor=producer_stage_id_by_tensor,
             initializer_tensors=initializer_tensors,
+            graph=graph,
         )[chosen_stage_id]
         improvement = chosen_metric - chosen_candidate_metric
         _debug(
@@ -294,6 +299,8 @@ def grow_tile_count_for_stage(
     graph_inputs: frozenset = frozenset(),
     graph_outputs: frozenset = frozenset(),
     producer_stage_id_by_tensor: dict[object, int] | None = None,
+    graph: Graph | None = None,
+    current_selection_metrics: dict[int, float] | None = None,
 ) -> int | None:
     current_tile_count = tile_counts[stage_id]
     remaining_tiles = mesh.num_tiles - used_tiles
@@ -336,10 +343,16 @@ def grow_tile_count_for_stage(
             graph_outputs=graph_outputs,
             producer_stage_id_by_tensor=producer_stage_id_by_tensor or {},
             initializer_tensors=initializer_tensors,
+            graph=graph,
         )
         candidate_metric = candidate_metrics[stage_id]
-        improvement = current_metric - candidate_metric
-        if improvement <= 0:
+        if current_selection_metrics is not None:
+            improved = _selection_objective(candidate_metrics) < _selection_objective(current_selection_metrics)
+            improvement = current_metric - candidate_metric
+        else:
+            improvement = current_metric - candidate_metric
+            improved = improvement > 0
+        if not improved:
             _debug(
                 debug,
                 "[workload_balancing] "
@@ -538,7 +551,13 @@ def _estimate_selection_metrics(
     graph_outputs: frozenset,
     producer_stage_id_by_tensor: dict[object, int],
     initializer_tensors: frozenset,
+    graph: Graph | None = None,
 ) -> dict[int, float]:
+    virtual_communication = (
+        _virtual_communication_cycles(graph, mesh, plans, producer_stage_id_by_tensor)
+        if graph is not None
+        else None
+    )
     return {
         stage_id: _selection_metric_for_stage(
             stage_nodes=stage_nodes,
@@ -550,6 +569,7 @@ def _estimate_selection_metrics(
             graph_outputs=graph_outputs,
             producer_stage_id_by_tensor=producer_stage_id_by_tensor,
             initializer_tensors=initializer_tensors,
+            virtual_communication=virtual_communication,
         )
         for stage_id, stage_nodes in stage_selection.items()
     }
@@ -565,6 +585,7 @@ def _selection_metric_for_stage(
     graph_outputs: frozenset,
     producer_stage_id_by_tensor: dict[object, int],
     initializer_tensors: frozenset,
+    virtual_communication: dict[int, dict[int, int]] | None = None,
 ) -> float:
     submesh = representative_connected_submesh(mesh, plan.stage_id, plan.tile_count)
     worst_tile_compute = _worst_tile_compute_workload_for_stage(
@@ -572,6 +593,25 @@ def _selection_metric_for_stage(
         node_output_layouts=plan.node_output_layouts,
         submesh=submesh,
     )
+    if virtual_communication is not None:
+        compute_by_tile = {
+            tile.tile_id: sum(
+                _node_compute_workload_for_tile(node, output_layouts, tile)
+                for node, output_layouts in zip(stage_nodes, plan.node_output_layouts)
+            )
+            for tile in submesh.tiles
+        }
+        return max(
+            (
+                max(
+                    alpha * compute_by_tile[tile_id],
+                    beta * virtual_communication[plan.stage_id][tile_id],
+                )
+                for tile_id in compute_by_tile
+            ),
+            default=0.0,
+        )
+
     worst_tile_io = _worst_tile_l2_transfer_workload_for_stage(
         stage_id=plan.stage_id,
         stage_nodes=stage_nodes,
@@ -584,6 +624,65 @@ def _selection_metric_for_stage(
         initializer_tensors=initializer_tensors,
     )
     return alpha * worst_tile_compute + beta * worst_tile_io
+
+
+def _virtual_communication_cycles(
+    graph: Graph,
+    mesh: Mesh,
+    plans: dict[int, StagePlan],
+    producer_stage_id_by_tensor: dict[object, int],
+) -> dict[int, dict[int, int]]:
+    """Estimate producer-side virtual-tile communication cycles for candidate plans."""
+
+    # Import lazily because spatial mapping also consumes StagePlan.
+    from MAPS.planner.spatial_mapping import _stage_virtual_submesh, build_virtual_traffic
+
+    traffic = build_virtual_traffic(
+        graph=graph,
+        mesh=mesh,
+        stage_plans=plans,
+        node_stage_ids={
+            id(node): stage_id
+            for stage_id, plan in plans.items()
+            for node in plan.nodes
+        },
+    )
+    communication = {
+        stage_id: {
+            tile.tile_id: 0
+            for tile in _stage_virtual_submesh(plan).tiles
+        }
+        for stage_id, plan in plans.items()
+    }
+
+    for stage_id, plan in plans.items():
+        for virtual_tile in _stage_virtual_submesh(plan).tiles:
+            tile_id = virtual_tile.tile_id
+            l2_bytes = (
+                traffic.l2_read_weights[stage_id][tile_id]
+                + traffic.l2_write_weights[stage_id][tile_id]
+            )
+            communication[stage_id][tile_id] += _ceil_div(
+                l2_bytes,
+                min(virtual_tile.memory.bandwidth, mesh.l2_memory.bandwidth),
+            ) if l2_bytes else 0
+
+    for (src_stage_id, _), matrix in traffic.edge_matrices.items():
+        for (src_tile_id, dst_tile_id), bytes_ in matrix.items():
+            src_tile = mesh.tile_by_id(src_tile_id)
+            dst_tile = mesh.tile_by_id(dst_tile_id)
+            communication[src_stage_id][src_tile_id] += _ceil_div(
+                bytes_,
+                min(src_tile.memory.bandwidth, dst_tile.memory.bandwidth),
+            )
+
+    return communication
+
+
+def _selection_objective(metrics: dict[int, float]) -> tuple[float, ...]:
+    """Return the ordered global bottlenecks for one allocation candidate."""
+
+    return tuple(sorted(metrics.values(), reverse=True))
 
 
 def _worst_tile_compute_workload_for_stage(

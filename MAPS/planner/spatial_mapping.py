@@ -770,7 +770,23 @@ def _evaluate_mapping(
                     bytes_ = fragment.src_subslice.num_elements * tensor.elem_bytes
                     src_tile = mesh.tile_by_id(src_placement.physical_tile_id(fragment.src_hartid))
                     dst_tile = mesh.tile_by_id(dst_placement.physical_tile_id(fragment.dst_hartid))
-                    transfer_cost = model.l1_to_l1(src_tile, dst_tile, bytes_)
+                    row_bytes = None
+                    rows = 1
+                    if fragment.src_subslice.rank >= 2:
+                        src_inner = fragment.src_subslice.dims[-1]
+                        dst_inner = fragment.dst_subslice.dims[-1]
+                        if (
+                            src_inner.length == dst_inner.length
+                            and (
+                                src_inner.length != fragment.src_subslice.parent.dims[-1].length
+                                or dst_inner.length != fragment.dst_subslice.parent.dims[-1].length
+                            )
+                        ):
+                            row_bytes = src_inner.length * tensor.elem_bytes
+                            rows = fragment.src_subslice.num_elements // src_inner.length
+                    transfer_cost = model.l1_to_l1(
+                        src_tile, dst_tile, bytes_, row_bytes=row_bytes, rows=rows
+                    )
                     src_tile_id = src_tile.tile_id
                     tile_writes[src_tile_id] += transfer_cost
                     consumer_stage_writes[src_tile_id][dst_stage_id] = (
@@ -783,9 +799,17 @@ def _evaluate_mapping(
                 output_layout = dst_output_layouts[output_idx]
                 for virtual_tile in output_layout.submesh.tiles:
                     dst_tile_id = dst_placement.physical_tile_id(virtual_tile.tile_id)
+                    output_slice = tile_tensor_slice(tensor, output_layout, virtual_tile)
+                    row_bytes = None
+                    rows = 1
+                    if tensor.rank >= 2 and output_slice.dims[-1].length < tensor.dims[-1]:
+                        row_bytes = output_slice.dims[-1].length * tensor.elem_bytes
+                        rows = output_slice.num_elements // output_slice.dims[-1].length
                     tile_l2_writes[dst_tile_id] += model.l1_to_l2(
                         mesh.tile_by_id(dst_tile_id),
-                        tensor.slice_num_bytes(tile_tensor_slice(tensor, output_layout, virtual_tile)),
+                        tensor.slice_num_bytes(output_slice),
+                        row_bytes=row_bytes,
+                        rows=rows,
                     )
 
     tile_scores = {

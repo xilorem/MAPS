@@ -57,6 +57,7 @@ def build_pipeline(
         mesh,
         debug=print_workload_balancing,
         stage_selection=stage_selection,
+        beta=10.0,
     )
     mapping = map_spatially(
         graph,

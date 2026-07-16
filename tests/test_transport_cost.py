@@ -103,6 +103,18 @@ def test_transport_cost_requires_mesh_for_communication() -> None:
         model.l1_to_l2(tile, 64)
 
 
+def test_magia_burst_rounding_applies_to_strided_l1_and_l2_writes() -> None:
+    mesh = magia_mesh(width=2, height=1)
+    model = TransportCostModel(mesh=mesh)
+    src = mesh.tile(0, 0)
+    dst = mesh.tile(1, 0)
+
+    # idma1 emits two 6-byte rows as two bursts. At the 4-byte NoC width,
+    # that costs four data cycles instead of three for one packed 12-byte run.
+    assert model.l1_to_l1(src, dst, 12, row_bytes=6, rows=2) == model.l1_to_l1(src, dst, 12) + 1
+    assert model.l1_to_l2(src, 12, row_bytes=6, rows=2) == model.l1_to_l2(src, 12) + 1
+
+
 def test_l1_to_l1_transfer_cost_uses_noc_route_hops_when_available() -> None:
     mesh = Mesh(
         width=3,

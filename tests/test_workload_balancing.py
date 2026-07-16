@@ -8,6 +8,8 @@ from MAPS.planner.select_stage import select_stages
 from MAPS.planner.workload_balancing import (
     _best_stage_plan_for_stage_nodes,
     _estimate_selection_metrics,
+    _plan_all_stages_for_tile_counts,
+    _virtual_communication_cycles,
     grow_tile_count_for_stage,
 )
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
@@ -79,6 +81,32 @@ def test_balance_workload_gives_more_tiles_to_heavier_gemm() -> None:
 
     assert allocation[0] > allocation[1]
     assert sum(allocation.values()) == mesh.num_tiles
+
+
+def test_virtual_traffic_charges_inter_stage_writes_to_producer_tiles() -> None:
+    producer = _gemm_node("producer", m=8, k=8, n=8)
+    consumer = _gemm_node("consumer", m=8, k=8, n=8)
+    consumer = Node(
+        name=consumer.name,
+        kind=consumer.kind,
+        inputs=(producer.outputs[0], consumer.inputs[1]),
+        outputs=consumer.outputs,
+        payload=consumer.payload,
+    )
+    graph = Graph(name="g", nodes=(producer, consumer))
+    mesh = _mesh_with_l1(2, 1, l1_size=4096)
+    stage_selection = {0: (producer,), 1: (consumer,)}
+    plans = _plan_all_stages_for_tile_counts(
+        stage_selection,
+        mesh,
+        tile_counts={0: 1, 1: 1},
+        initializer_tensors=frozenset(),
+        debug=False,
+    )
+
+    communication = _virtual_communication_cycles(graph, mesh, plans, {})
+
+    assert communication[0][0] > communication[1][0]
 
 
 def test_balance_workload_preserves_layout_decisions() -> None:
