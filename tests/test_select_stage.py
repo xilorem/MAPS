@@ -1,5 +1,5 @@
 from MAPS.core.graph import Graph, Node, OpKind
-from MAPS.planner.select_stage import select_stages
+from MAPS.planner.passes.stage_selection import select_stages
 
 
 def test_select_stages_defaults_to_singleton_groups() -> None:

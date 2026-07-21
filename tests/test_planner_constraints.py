@@ -8,7 +8,8 @@ from MAPS.pipeline.stage import Stage
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.defs.gemm import GemmPayload
-from MAPS.planner import PlannerConstraints, validate_constraints
+from MAPS.planner.passes.validation import validate_constraints
+from MAPS.planner.validation.contracts import PlannerConstraints
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 

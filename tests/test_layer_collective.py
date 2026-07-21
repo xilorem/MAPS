@@ -2,7 +2,7 @@ from MAPS.hw.chips import magia_mesh
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.planner.cost import cost_estimator, placement_cost_estimator
+from MAPS.planner.workload.cost import cost_estimator, placement_cost_estimator
 from MAPS.ops.defs.collective import AllReducePayload
 
 

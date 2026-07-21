@@ -3,15 +3,14 @@ from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.defs.gemm import GemmPayload
-from MAPS.planner import balance_workload
-from MAPS.planner.select_stage import select_stages
-from MAPS.planner.workload_balancing import (
-    _best_stage_plan_for_stage_nodes,
-    _estimate_selection_metrics,
-    _plan_all_stages_for_tile_counts,
-    _virtual_communication_cycles,
-    grow_tile_count_for_stage,
+from MAPS.planner.passes.stage_selection import select_stages
+from MAPS.planner.passes.workload_balancing import balance_workload
+from MAPS.planner.workload.allocation import grow_tile_count_for_stage
+from MAPS.planner.workload.metrics import (
+    estimate_selection_metrics,
+    virtual_communication_cycles,
 )
+from MAPS.planner.workload.plans import best_plan_for_stage, plan_all_stages
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 
@@ -61,7 +60,7 @@ def test_balance_workload_uses_full_tile_budget() -> None:
 
     allocation = {
         stage_id: plan.tile_count
-        for stage_id, plan in balance_workload(graph, mesh).items()
+        for stage_id, plan in balance_workload(graph, mesh, select_stages(graph)).items()
     }
 
     assert allocation == {0: 8, 1: 8}
@@ -76,7 +75,7 @@ def test_balance_workload_gives_more_tiles_to_heavier_gemm() -> None:
 
     allocation = {
         stage_id: plan.tile_count
-        for stage_id, plan in balance_workload(graph, mesh).items()
+        for stage_id, plan in balance_workload(graph, mesh, select_stages(graph)).items()
     }
 
     assert allocation[0] > allocation[1]
@@ -96,7 +95,7 @@ def test_virtual_traffic_charges_inter_stage_writes_to_producer_tiles() -> None:
     graph = Graph(name="g", nodes=(producer, consumer))
     mesh = _mesh_with_l1(2, 1, l1_size=4096)
     stage_selection = {0: (producer,), 1: (consumer,)}
-    plans = _plan_all_stages_for_tile_counts(
+    plans = plan_all_stages(
         stage_selection,
         mesh,
         tile_counts={0: 1, 1: 1},
@@ -104,7 +103,7 @@ def test_virtual_traffic_charges_inter_stage_writes_to_producer_tiles() -> None:
         debug=False,
     )
 
-    communication = _virtual_communication_cycles(graph, mesh, plans, {})
+    communication = virtual_communication_cycles(graph, mesh, plans)
 
     assert communication[0][0] > communication[1][0]
 
@@ -114,12 +113,12 @@ def test_balance_workload_preserves_layout_decisions() -> None:
     graph = Graph(name="g", nodes=(node,))
     mesh = _mesh_with_l1(4, 1, l1_size=32768)
 
-    plans = balance_workload(graph, mesh)
+    plans = balance_workload(graph, mesh, select_stages(graph))
 
     assert plans[0].tile_count == 4
     assert plans[0].logical_shape[0] * plans[0].logical_shape[1] == 4
-    assert plans[0].output_layouts[0].logical_width == plans[0].logical_shape[0]
-    assert plans[0].output_layouts[0].logical_height == plans[0].logical_shape[1]
+    assert plans[0].node_output_layouts[-1][0].logical_width == plans[0].logical_shape[0]
+    assert plans[0].node_output_layouts[-1][0].logical_height == plans[0].logical_shape[1]
 
 
 def test_balance_workload_starts_from_minimum_l1_feasible_tile_count() -> None:
@@ -127,7 +126,7 @@ def test_balance_workload_starts_from_minimum_l1_feasible_tile_count() -> None:
     graph = Graph(name="g", nodes=(node,))
     mesh = _mesh_with_l1(2, 1, l1_size=80)
 
-    plans = balance_workload(graph, mesh)
+    plans = balance_workload(graph, mesh, select_stages(graph))
 
     assert plans[0].tile_count == 2
 
@@ -193,7 +192,7 @@ def test_best_stage_plan_uses_l1_feasible_logical_shape_for_fixed_tile_count() -
     node = _gemm_node("gemm", m=4, k=16, n=7)
     mesh = _mesh_with_l1(6, 1, l1_size=32768)
 
-    plan = _best_stage_plan_for_stage_nodes(
+    plan = best_plan_for_stage(
         stage_nodes=(node,),
         mesh=mesh,
         stage_id=0,
@@ -210,7 +209,7 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
     node = _gemm_node("gemm", m=32, k=32, n=32)
     mesh = _mesh_with_l1(4, 4, l1_size=32768)
     stage_selection = {0: (node,)}
-    current_plan = _best_stage_plan_for_stage_nodes(
+    current_plan = best_plan_for_stage(
         stage_nodes=(node,),
         mesh=mesh,
         stage_id=0,
@@ -218,12 +217,12 @@ def test_growth_prefers_tile_count_with_more_physical_shape_options() -> None:
         initializer_tensors=frozenset(),
         debug=False,
     )
-    current_metric = _estimate_selection_metrics(
+    current_metric = estimate_selection_metrics(
         {0: current_plan},
         stage_selection,
         mesh=mesh,
-        alpha=1.0,
-        beta=1.0,
+        compute_weight=1.0,
+        communication_weight=1.0,
         graph_inputs=frozenset(),
         graph_outputs=frozenset(),
         producer_stage_id_by_tensor={},
@@ -250,7 +249,7 @@ def test_best_stage_plan_rejects_tile_work_that_does_not_fit() -> None:
     mesh = _mesh_with_l1(1, 1, l1_size=64)
 
     try:
-        _best_stage_plan_for_stage_nodes(
+        best_plan_for_stage(
             stage_nodes=(node,),
             mesh=mesh,
             stage_id=0,
@@ -269,7 +268,7 @@ def test_best_stage_plan_counts_outputs_in_l1_fit() -> None:
     mesh = _mesh_with_l1(1, 1, l1_size=80)
 
     try:
-        _best_stage_plan_for_stage_nodes(
+        best_plan_for_stage(
             stage_nodes=(node,),
             mesh=mesh,
             stage_id=0,

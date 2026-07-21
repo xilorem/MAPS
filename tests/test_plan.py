@@ -11,11 +11,13 @@ from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.transitions.model import TransitionMode
 from MAPS.ops.defs.gemm import GemmPayload
-from MAPS.planner import PlannerConstraints, validate_constraints
+from MAPS.planner.contracts.stages import StagePlacement, StagePlan, virtual_submesh
 import MAPS.planner.plan as plan_module
-from MAPS.planner.plan import _build_pipeline_from_graph, build_pipeline
+from MAPS.planner.passes.pipeline_lowering import lower_pipeline
+from MAPS.planner.passes.validation import validate_constraints
+from MAPS.planner.plan import build_pipeline
+from MAPS.planner.validation.contracts import PlannerConstraints
 from MAPS.utils.pipeline_json import write_pipeline_json
-from MAPS.planner.workload_balancing import StagePlan
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 
@@ -29,7 +31,26 @@ def _mesh_with_l1(width: int, height: int, l1_size: int) -> Mesh:
     )
 
 
-def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp_path: Path) -> None:
+def _identity_placements(
+    plans: dict[int, StagePlan],
+) -> dict[int, StagePlacement]:
+    """Place test plans on the same tile ids used by their virtual layouts."""
+
+    return {
+        stage_id: StagePlacement(
+            stage_id=stage_id,
+            virtual_submesh=virtual_submesh(plan),
+            physical_submesh=virtual_submesh(plan),
+            virtual_to_physical={
+                tile.tile_id: tile.tile_id
+                for tile in virtual_submesh(plan).tiles
+            },
+        )
+        for stage_id, plan in plans.items()
+    }
+
+
+def test_lower_pipeline_assembles_stages_transitions_and_bindings(tmp_path: Path) -> None:
     mesh = magia_mesh()
     src_submesh = Submesh(mesh=mesh, submesh_id=0, tile_ids=frozenset((0, 1)))
     dst_submesh = Submesh(mesh=mesh, submesh_id=1, tile_ids=frozenset((8, 16)))
@@ -75,16 +96,23 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
         stage_id=0,
         tile_count=2,
         logical_shape=(2, 1),
-        output_layouts=gemm0.output_layouts(src_submesh, logical_shape=(2, 1)),
+        nodes=(node0,),
+        node_output_layouts=(
+            gemm0.output_layouts(src_submesh, logical_shape=(2, 1)),
+        ),
     )
     plan1 = StagePlan(
         stage_id=1,
         tile_count=2,
         logical_shape=(2, 1),
-        output_layouts=gemm1.output_layouts(dst_submesh, logical_shape=(2, 1)),
+        nodes=(node1,),
+        node_output_layouts=(
+            gemm1.output_layouts(dst_submesh, logical_shape=(2, 1)),
+        ),
     )
 
-    pipeline = _build_pipeline_from_graph(graph, mesh, {0: plan0, 1: plan1})
+    plans = {0: plan0, 1: plan1}
+    pipeline = lower_pipeline(graph, mesh, plans, _identity_placements(plans))
 
     assert pipeline.name == "direct_two_gemms"
     assert len(pipeline.stages) == 2
@@ -116,7 +144,7 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
     assert transition.src_layer_id == 0
     assert transition.dst_layer_id == 1
     assert transition.src_layout == pipeline.stages[0].layers[-1].outputs[0].layout
-    assert transition.dst_layout == plan1.output_layouts[0]
+    assert transition.dst_layout == plan1.node_output_layouts[-1][0]
     assert len(transition.fragments) == 4
     assert {
         (fragment.src_hartid, fragment.dst_hartid)
@@ -181,8 +209,8 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
         fragment.src_slice
         for fragment in finalization.fragments
     } == {
-        tile_tensor_slice(z, plan1.output_layouts[0], tile)
-        for tile in plan1.output_layouts[0].submesh.tiles
+        tile_tensor_slice(z, plan1.node_output_layouts[-1][0], tile)
+        for tile in plan1.node_output_layouts[-1][0].submesh.tiles
     }
     json_path = write_pipeline_json(pipeline, tmp_path / "pipeline.json")
     payload = json.loads(json_path.read_text(encoding="utf-8"))
@@ -201,7 +229,7 @@ def test_build_pipeline_from_graph_assembles_stages_transitions_and_bindings(tmp
     assert report.is_valid, report.violations
 
 
-def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes() -> None:
+def test_lower_pipeline_builds_local_inputs_for_grouped_stage_nodes() -> None:
     mesh = magia_mesh()
     stage0_submesh = Submesh(mesh=mesh, submesh_id=0, tile_ids=frozenset((0, 1)))
     stage1_submesh = Submesh(mesh=mesh, submesh_id=1, tile_ids=frozenset((8, 9)))
@@ -259,7 +287,6 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
         stage_id=0,
         tile_count=2,
         logical_shape=(2, 1),
-        output_layouts=gemm1.output_layouts(stage0_submesh, logical_shape=(2, 1)),
         nodes=(node0, node1),
         node_output_layouts=(
             gemm0.output_layouts(stage0_submesh, logical_shape=(2, 1)),
@@ -270,12 +297,12 @@ def test_build_pipeline_from_graph_builds_local_inputs_for_grouped_stage_nodes()
         stage_id=1,
         tile_count=2,
         logical_shape=(2, 1),
-        output_layouts=gemm2.output_layouts(stage1_submesh, logical_shape=(2, 1)),
         nodes=(node2,),
         node_output_layouts=(gemm2.output_layouts(stage1_submesh, logical_shape=(2, 1)),),
     )
 
-    pipeline = _build_pipeline_from_graph(graph, mesh, {0: plan0, 1: plan1})
+    plans = {0: plan0, 1: plan1}
+    pipeline = lower_pipeline(graph, mesh, plans, _identity_placements(plans))
 
     assert len(pipeline.stages) == 2
     assert len(pipeline.stages[0].layers) == 2
@@ -449,7 +476,7 @@ def test_build_pipeline_exports_conv_as_one_grouped_gemm_dataflow(tmp_path: Path
     }
 
 
-def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch) -> None:
+def test_build_pipeline_disables_spatial_mapping_progress_by_default(monkeypatch) -> None:
     try:
         import onnx
         from onnx import TensorProto, helper
@@ -460,14 +487,20 @@ def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch)
     built_pipeline = object()
 
     def fake_map_spatially(graph, mesh, stage_plans, **kwargs):
-        seen["max_placements_per_stage"] = kwargs["max_placements_per_stage"]
         seen["show_progress"] = kwargs["show_progress"]
         return {}
 
     monkeypatch.setattr(plan_module, "map_spatially", fake_map_spatially)
-    monkeypatch.setattr(plan_module, "place_stage_plans", lambda stage_plans, mapping: stage_plans)
-    monkeypatch.setattr(plan_module, "_build_pipeline_from_graph", lambda graph, mesh, plans: built_pipeline)
-    monkeypatch.setattr(plan_module, "_print_pipeline_stage_cost", lambda graph, mesh, plans: None)
+    monkeypatch.setattr(
+        plan_module,
+        "lower_pipeline",
+        lambda graph, mesh, plans, placements: built_pipeline,
+    )
+    monkeypatch.setattr(
+        plan_module,
+        "print_pipeline_stage_cost",
+        lambda graph, mesh, plans, placements: None,
+    )
 
     with TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "two_matmuls.onnx"
@@ -491,11 +524,10 @@ def test_build_pipeline_disables_spatial_mapping_pruning_by_default(monkeypatch)
         pipeline = build_pipeline(model_path, _mesh_with_l1(2, 2, l1_size=4096))
 
     assert pipeline is built_pipeline
-    assert seen["max_placements_per_stage"] is None
     assert seen["show_progress"] is False
 
 
-def test_build_pipeline_can_enable_spatial_mapping_pruning(monkeypatch) -> None:
+def test_build_pipeline_can_enable_spatial_mapping_progress(monkeypatch) -> None:
     try:
         import onnx
         from onnx import TensorProto, helper
@@ -506,14 +538,20 @@ def test_build_pipeline_can_enable_spatial_mapping_pruning(monkeypatch) -> None:
     built_pipeline = object()
 
     def fake_map_spatially(graph, mesh, stage_plans, **kwargs):
-        seen["max_placements_per_stage"] = kwargs["max_placements_per_stage"]
         seen["show_progress"] = kwargs["show_progress"]
         return {}
 
     monkeypatch.setattr(plan_module, "map_spatially", fake_map_spatially)
-    monkeypatch.setattr(plan_module, "place_stage_plans", lambda stage_plans, mapping: stage_plans)
-    monkeypatch.setattr(plan_module, "_build_pipeline_from_graph", lambda graph, mesh, plans: built_pipeline)
-    monkeypatch.setattr(plan_module, "_print_pipeline_stage_cost", lambda graph, mesh, plans: None)
+    monkeypatch.setattr(
+        plan_module,
+        "lower_pipeline",
+        lambda graph, mesh, plans, placements: built_pipeline,
+    )
+    monkeypatch.setattr(
+        plan_module,
+        "print_pipeline_stage_cost",
+        lambda graph, mesh, plans, placements: None,
+    )
 
     with TemporaryDirectory() as tmpdir:
         model_path = Path(tmpdir) / "two_matmuls.onnx"
@@ -538,10 +576,7 @@ def test_build_pipeline_can_enable_spatial_mapping_pruning(monkeypatch) -> None:
             model_path,
             _mesh_with_l1(2, 2, l1_size=4096),
             print_spatial_mapping_progress=True,
-            enable_lossless_spatial_mapping_pruning=True,
-            enable_lossy_spatial_mapping_pruning=True,
         )
 
     assert pipeline is built_pipeline
-    assert seen["max_placements_per_stage"] == 16
     assert seen["show_progress"] is True

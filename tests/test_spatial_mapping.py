@@ -3,10 +3,12 @@ from MAPS.core.graph import Edge, Graph, Node, OpKind
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.defs.gemm import GemmPayload
-from MAPS.planner.placement import StagePlacement
-import MAPS.planner.spatial_mapping as spatial_mapping
-from MAPS.planner.spatial_mapping import build_virtual_traffic, map_spatially
-from MAPS.planner.workload_balancing import StagePlan
+from MAPS.planner.contracts.stages import StagePlacement, StagePlan, virtual_submesh
+from MAPS.planner.passes.spatial_mapping import map_spatially
+from MAPS.planner.spatial.evaluation import evaluate_mapping
+import MAPS.planner.spatial.repair as spatial_repair
+from MAPS.planner.spatial.models import VirtualTraffic
+from MAPS.planner.spatial.traffic import build_virtual_traffic
 from tests.noc_utils import rectangular_test_noc, rectangular_test_tiles
 
 
@@ -41,7 +43,6 @@ def _single_node_stage_plan(mesh: Mesh, stage_id: int, node: Node, tile_ids: set
         stage_id=stage_id,
         tile_count=len(tile_ids),
         logical_shape=(len(tile_ids), 1),
-        output_layouts=output_layouts,
         nodes=(node,),
         node_output_layouts=(output_layouts,),
     )
@@ -138,14 +139,14 @@ def test_mapping_charges_l1_communication_to_the_producer_tile() -> None:
     placements = {
         stage_id: StagePlacement(
             stage_id=stage_id,
-            virtual_submesh=spatial_mapping._stage_virtual_submesh(plan),
+            virtual_submesh=virtual_submesh(plan),
             physical_submesh=Submesh(mesh=mesh, submesh_id=stage_id, tile_ids=frozenset({stage_id})),
             virtual_to_physical={0: stage_id},
         )
         for stage_id, plan in stage_plans.items()
     }
 
-    evaluation = spatial_mapping._evaluate_mapping(
+    evaluation = evaluate_mapping(
         graph=graph,
         mesh=mesh,
         stage_plans=stage_plans,
@@ -173,7 +174,7 @@ def test_repair_region_skips_an_infeasible_growth_attempt(monkeypatch) -> None:
         physical_submesh=submesh,
         virtual_to_physical={0: 0},
     )
-    traffic = spatial_mapping.VirtualTraffic(
+    traffic = VirtualTraffic(
         stage_comm={},
         edge_matrices={},
         input_weights={},
@@ -189,11 +190,19 @@ def test_repair_region_skips_an_infeasible_growth_attempt(monkeypatch) -> None:
         del kwargs
         raise ValueError("infeasible region")
 
-    monkeypatch.setattr(spatial_mapping, "_grow_stage_region", fail_growth)
+    monkeypatch.setattr(spatial_repair, "grow_stage_region", fail_growth)
 
-    assert spatial_mapping._repair_region(
+    assert spatial_repair.repair_region(
         mesh=mesh,
-        stage_plans={0: StagePlan(stage_id=0, tile_count=1, logical_shape=(1, 1), output_layouts=())},
+        stage_plans={
+            0: StagePlan(
+                stage_id=0,
+                tile_count=1,
+                logical_shape=(1, 1),
+                nodes=(),
+                node_output_layouts=(),
+            )
+        },
         current_placements={0: placement},
         traffic=traffic,
         affected_stages=frozenset({0}),

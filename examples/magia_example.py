@@ -10,7 +10,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from MAPS.hw.chips import magia_mesh
-from MAPS.planner.constraints import PlannerConstraints, validate_constraints
+from MAPS.planner.passes.validation import validate_constraints
+from MAPS.planner.validation.contracts import PlannerConstraints
 from MAPS.planner.plan import build_pipeline
 from MAPS.utils.pipeline_json import write_pipeline_json
 from MAPS.utils.print_submeshes import print_submeshes
@@ -19,7 +20,7 @@ DEFAULT_MODEL_PATH = PROJECT_ROOT / "examples" / "simple_three_stage.onnx"
 
 
 def main():
-    mesh = magia_mesh(width=8, height=8)
+    mesh = magia_mesh(width=4, height=4)
     output_path = PROJECT_ROOT / "generated" / "magia_example.pipeline.json"
     pipeline = build_pipeline(
         DEFAULT_MODEL_PATH,
@@ -27,10 +28,6 @@ def main():
         print_workload_balancing=True,
         print_spatial_mapping=True,
         print_spatial_mapping_progress=True,
-        require_l2_input_access_point=False, # need to attach these 2 options to workload
-        require_l2_output_access_point=False, # balancing feasible mesh verification
-        enable_lossless_spatial_mapping_pruning=True,
-        enable_lossy_spatial_mapping_pruning=False,
     )
     report = validate_constraints(pipeline, PlannerConstraints())
 

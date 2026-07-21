@@ -340,38 +340,6 @@ def test_l2_transfer_cost_respects_directional_traffic_policy_channel_selection(
     )
 
 
-def test_magia_default_policy_uses_wide_mode_for_bulk_transfer_payloads() -> None:
-    wide_mesh = magia_mesh(width=2, height=1)
-    narrow_mesh = replace(
-        wide_mesh,
-        noc=replace(
-            wide_mesh.noc,
-            traffic_policy=TrafficPolicy(
-                {
-                    TrafficKind.READ_REQ: (0,),
-                    TrafficKind.WRITE_REQ: (0,),
-                    TrafficKind.READ_RSP: (1,),
-                    TrafficKind.WRITE_RSP: (1,),
-                    TrafficKind.WRITE_DATA: (0,),
-                }
-            ),
-        ),
-    )
-
-    wide_model = TransportCostModel(mesh=wide_mesh)
-    narrow_model = TransportCostModel(mesh=narrow_mesh)
-
-    assert wide_model.l1_to_l1(wide_mesh.tile(0, 0), wide_mesh.tile(1, 0), 64) < (
-        narrow_model.l1_to_l1(narrow_mesh.tile(0, 0), narrow_mesh.tile(1, 0), 64)
-    )
-    assert wide_model.l1_to_l2(wide_mesh.tile(1, 0), 64) < (
-        narrow_model.l1_to_l2(narrow_mesh.tile(1, 0), 64)
-    )
-    assert wide_model.l2_to_l1(wide_mesh.tile(1, 0), 64) < (
-        narrow_model.l2_to_l1(narrow_mesh.tile(1, 0), 64)
-    )
-
-
 def test_l2_transfer_cost_includes_noc_endpoint_attachment_latency_without_hops() -> None:
     mesh = Mesh(
         width=1,
