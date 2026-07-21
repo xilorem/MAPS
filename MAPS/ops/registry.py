@@ -6,7 +6,6 @@ from .spec import OnnxLoweringFn, OpSpec
 
 _OPS_BY_NAME: dict[str, OpSpec] = {}
 _OPS_BY_ONNX_NAME: dict[str, OpSpec] = {}
-_OPS_BY_PAYLOAD_TYPE: dict[type, OpSpec] = {}
 _BUILTINS_LOADED = False
 
 
@@ -21,12 +20,11 @@ def _ensure_builtins_registered() -> None:
 
 
 def register_op(spec: OpSpec) -> None:
-    """Register one operation spec."""
+    """Atomically register one operation frontend specification."""
 
     existing = _OPS_BY_NAME.get(spec.name)
     if existing is not None:
         raise ValueError(f"duplicate op spec name: {spec.name}")
-    _OPS_BY_NAME[spec.name] = spec
 
     for onnx_name in spec.onnx_names:
         existing = _OPS_BY_ONNX_NAME.get(onnx_name)
@@ -34,16 +32,10 @@ def register_op(spec: OpSpec) -> None:
             raise ValueError(
                 f"duplicate ONNX op mapping for {onnx_name}: {existing.name} vs {spec.name}"
             )
-        _OPS_BY_ONNX_NAME[onnx_name] = spec
 
-    if spec.payload_type is not None:
-        existing = _OPS_BY_PAYLOAD_TYPE.get(spec.payload_type)
-        if existing is not None:
-            raise ValueError(
-                f"duplicate payload_type mapping for {spec.payload_type.__name__}: "
-                f"{existing.name} vs {spec.name}"
-            )
-        _OPS_BY_PAYLOAD_TYPE[spec.payload_type] = spec
+    _OPS_BY_NAME[spec.name] = spec
+    for onnx_name in spec.onnx_names:
+        _OPS_BY_ONNX_NAME[onnx_name] = spec
 
 
 def get_op(name: str) -> OpSpec:
@@ -71,17 +63,6 @@ def get_op_by_onnx_name(onnx_op_type: str) -> OpSpec | None:
 
     _ensure_builtins_registered()
     return _OPS_BY_ONNX_NAME.get(onnx_op_type)
-
-
-def get_op_for_payload(payload: object) -> OpSpec | None:
-    """Return the op spec for one payload instance."""
-
-    _ensure_builtins_registered()
-    for payload_type in type(payload).__mro__:
-        spec = _OPS_BY_PAYLOAD_TYPE.get(payload_type)
-        if spec is not None:
-            return spec
-    return None
 
 
 def registered_ops() -> tuple[OpSpec, ...]:

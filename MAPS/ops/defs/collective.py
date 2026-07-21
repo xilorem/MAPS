@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice, TensorSliceRef, tile_tensor_slice
+from MAPS.core.layout import (
+    LayoutAxis,
+    LayoutAxisMode,
+    TensorLayout,
+    TensorSlice,
+    TensorSliceRef,
+    tile_tensor_slice,
+)
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.common.payload import OpPayload, sharded_layout
 from MAPS.ops.common.tile_work import TileWork
+from MAPS.ops.common.cost import OpCostModel
 
 
 @dataclass(frozen=True)
@@ -46,7 +54,7 @@ class AllReducePayload(OpPayload):
         self.validate_shapes()
 
     @property
-    def cost_model(self) -> object:
+    def cost_model(self) -> OpCostModel:
         from MAPS.ops.costs.collective_cost import AllReduceCostModel
 
         return AllReduceCostModel(
@@ -90,12 +98,13 @@ class AllReducePayload(OpPayload):
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> CollectiveTileWork:
-        input_layout = self._input_layout_from_output_layout(output_layouts[0])
+        output_layout = self.single_output_layout(output_layouts)
+        input_layout = self._input_layout_from_output_layout(output_layout)
         return CollectiveTileWork(
             x=self.x,
             output=self.output,
             input_slice=tile_tensor_slice(self.x, input_layout, tile),
-            output_slice=tile_tensor_slice(self.output, output_layouts[0], tile),
+            output_slice=tile_tensor_slice(self.output, output_layout, tile),
         )
 
     def validate_shapes(self) -> None:

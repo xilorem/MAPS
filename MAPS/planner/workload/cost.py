@@ -13,10 +13,8 @@ def cost_estimator(
     """Estimate one node's bottleneck compute cost for virtual planning."""
 
     cost_model = node.payload.cost_model
-    placement_cost = getattr(cost_model, "placement_cost", None)
-    if placement_cost is not None:
-        return int(placement_cost(node=node, output_layouts=output_layouts))
-    submesh = output_layouts[0].submesh
+    output_layout = node.payload.single_output_layout(output_layouts)
+    submesh = output_layout.submesh
     tile_work = tuple(
         (
             tile,
@@ -24,9 +22,12 @@ def cost_estimator(
         )
         for tile in submesh.tiles
     )
-    return max(
+    tile_cost = max(
         (cost_model.cost(work, tile) for tile, work in tile_work),
         default=0,
+    )
+    return tile_cost + int(
+        cost_model.placement_cost(node=node, output_layouts=output_layouts)
     )
 
 
@@ -36,7 +37,9 @@ def placement_cost_estimator(
 ) -> int:
     """Estimate the placement-specific component of one node cost."""
 
-    placement_cost = getattr(node.payload.cost_model, "placement_cost", None)
-    if placement_cost is None:
-        return 0
-    return int(placement_cost(node=node, output_layouts=output_layouts))
+    return int(
+        node.payload.cost_model.placement_cost(
+            node=node,
+            output_layouts=output_layouts,
+        )
+    )

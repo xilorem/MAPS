@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
 from MAPS.ops.defs.elementwise import ElementwiseTileWork
+from MAPS.ops.common.cost import OpCostModel
 
 
 @dataclass(frozen=True)
-class ElementwiseCostModel:
+class ElementwiseCostModel(OpCostModel):
     """Elementwise cycle model backed by tile devices."""
 
     work_kind: WorkKind = WorkKind.ELEMENTWISE

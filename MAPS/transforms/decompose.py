@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from MAPS.core.graph import Graph
-from MAPS.ops.registry import get_op_for_payload
+from MAPS.ops.common import CompositeOpPayload
 
 from .graph_utils import build_graph_edges_from_nodes
 
@@ -15,12 +15,11 @@ def decompose_graph(graph: Graph) -> Graph:
     nodes = []
 
     for node in graph.nodes:
-        spec = None if node.payload is None else get_op_for_payload(node.payload)
-        if spec is None or spec.decompose is None:
+        if not isinstance(node.payload, CompositeOpPayload):
             nodes.append(node)
             continue
 
-        new_tensors, lowered_nodes = spec.decompose(node)
+        new_tensors, lowered_nodes = node.payload.decompose(node)
         for tensor in new_tensors:
             if tensor.name in tensors:
                 raise ValueError(f"tensor '{tensor.name}' is already present in graph metadata")

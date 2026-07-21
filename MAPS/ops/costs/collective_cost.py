@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from MAPS.transitions.transport import TransportCostModel
 from MAPS.core.graph import Node
 from MAPS.core.layout import TensorLayout, tile_tensor_slice
+from MAPS.ops.common.cost import OpCostModel
 
 
 @dataclass(frozen=True)
-class AllReduceCostModel:
+class AllReduceCostModel(OpCostModel):
     """Placement-sensitive allreduce latency model."""
 
     reduction: str

@@ -6,10 +6,20 @@ from dataclasses import dataclass
 
 from MAPS.arch import Tile, WorkKind
 from MAPS.core.graph import OpKind
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice, TensorSliceRef, tile_tensor_slice
+from MAPS.core.layout import (
+    LayoutAxis,
+    LayoutAxisMode,
+    TensorLayout,
+    TensorRange,
+    TensorSlice,
+    TensorSliceRef,
+    tile_tensor_slice,
+)
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.common.payload import OpPayload
+from MAPS.ops.common.broadcast import broadcast_input_slice, validate_broadcastable_to
+from MAPS.ops.common.cost import OpCostModel
 from MAPS.ops.common.tile_work import TileWork
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
@@ -74,7 +84,7 @@ class GemmPayload(OpPayload):
     - ``x`` has shape ``[..., M, K]``
     - ``w`` has shape ``[..., K, N]``
     - ``output`` has shape ``[..., M, N]``
-    - optional ``y`` must match ``output`` exactly
+    - optional ``y`` may broadcast unidirectionally to ``output``
     """
 
     x: Tensor
@@ -94,6 +104,16 @@ class GemmPayload(OpPayload):
         if self.x.elem_bytes != self.w.elem_bytes or self.x.elem_bytes != self.output.elem_bytes:
             raise ValueError("GEMM tensors must agree on element size")
 
+        if self.x.rank != self.w.rank or self.x.rank != self.output.rank:
+            raise ValueError(
+                "GEMM currently requires X, W, and output to have equal rank; "
+                "broadcasted batch dimensions must be normalized before planning"
+            )
+        if self.x.dims[:-2] != self.w.dims[:-2] or self.x.dims[:-2] != self.output.dims[:-2]:
+            raise ValueError(
+                "GEMM currently requires identical batch dimensions for X, W, and output"
+            )
+
         if self.x.dims[-1] != self.w.dims[-2]:
             raise ValueError("GEMM tensors must agree on K dimension")
         if self.x.dims[-2] != self.output.dims[-2]:
@@ -102,13 +122,12 @@ class GemmPayload(OpPayload):
             raise ValueError("GEMM W and output must agree on N dimension")
 
         if self.y is not None:
-            if self.y.rank != self.output.rank or self.y.dims != self.output.dims:
-                raise ValueError("Y input must match output tensor shape exactly")
+            validate_broadcastable_to(self.y, self.output, "GEMM Y")
             if self.y.elem_bytes != self.output.elem_bytes:
                 raise ValueError("Y input element size must match output tensor")
 
     @property
-    def cost_model(self) -> object:
+    def cost_model(self) -> OpCostModel:
         from MAPS.ops.costs.gemm_cost import GemmCostModel
 
         return GemmCostModel()
@@ -161,18 +180,17 @@ class GemmPayload(OpPayload):
     def required_y_slice(self, output_slice: TensorSlice) -> TensorSlice | None:
         if self.y is None:
             return None
-        if output_slice.rank != self.y.rank:
-            raise ValueError("output slice rank must match Y tensor rank")
-        return output_slice
+        return broadcast_input_slice(self.y, self.output, output_slice, "GEMM Y")
 
     def build_tile_work(
         self,
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> GemmTileWork:
+        output_layout = self.single_output_layout(output_layouts)
         output_slice = tile_tensor_slice(
             tensor=self.output,
-            layout=output_layouts[0],
+            layout=output_layout,
             tile=tile,
         )
         return GemmTileWork(
@@ -191,14 +209,19 @@ def lower_gemm_node(
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
     attributes: dict[str, object],
-) -> tuple[OpKind, object]:
+) -> tuple[OpKind, GemmPayload]:
     """Lower one ONNX Gemm node into scheduler-side GEMM semantics."""
 
-    del attributes
     if len(inputs) not in (2, 3):
         raise ValueError(f"Gemm node '{node_name}' must have 2 or 3 inputs")
     if len(outputs) != 1:
         raise ValueError(f"Gemm node '{node_name}' must have exactly 1 output")
+    _require_default_gemm_attributes(node_name, attributes)
+    if any(tensor.rank != 2 for tensor in inputs[:2] + outputs):
+        raise NotImplementedError(
+            f"Gemm node '{node_name}' uses non-matrix operands; MAPS currently "
+            "supports ONNX Gemm only for rank-2 A, B, and output tensors"
+        )
 
     return (
         OpKind.GEMM,
@@ -216,7 +239,7 @@ def lower_matmul_node(
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
     attributes: dict[str, object],
-) -> tuple[OpKind, object]:
+) -> tuple[OpKind, GemmPayload]:
     """Lower one ONNX MatMul node into scheduler-side GEMM semantics."""
 
     del attributes
@@ -224,6 +247,23 @@ def lower_matmul_node(
         raise ValueError(f"MatMul node '{node_name}' must have exactly 2 inputs")
     if len(outputs) != 1:
         raise ValueError(f"MatMul node '{node_name}' must have exactly 1 output")
+    x, w = inputs
+    output = outputs[0]
+    if min(x.rank, w.rank, output.rank) < 2:
+        raise NotImplementedError(
+            f"MatMul node '{node_name}' uses vector operands; MAPS currently "
+            "supports matrix operands only"
+        )
+    if x.rank != w.rank or x.rank != output.rank:
+        raise NotImplementedError(
+            f"MatMul node '{node_name}' uses broadcasted operand ranks; MAPS "
+            "currently requires equal operand and output ranks"
+        )
+    if x.dims[:-2] != w.dims[:-2] or x.dims[:-2] != output.dims[:-2]:
+        raise NotImplementedError(
+            f"MatMul node '{node_name}' uses broadcasted batch dimensions; MAPS "
+            "currently requires identical batch dimensions"
+        )
 
     return (
         OpKind.GEMM,
@@ -234,6 +274,27 @@ def lower_matmul_node(
             output=outputs[0],
         ),
     )
+
+
+def _require_default_gemm_attributes(
+    node_name: str,
+    attributes: dict[str, object],
+) -> None:
+    """Reject ONNX Gemm semantics not represented by ``GemmPayload``."""
+
+    supported_defaults = {
+        "alpha": 1.0,
+        "beta": 1.0,
+        "transA": 0,
+        "transB": 0,
+    }
+    for attribute, default in supported_defaults.items():
+        value = attributes.get(attribute, default)
+        if value != default:
+            raise NotImplementedError(
+                f"Gemm node '{node_name}' uses unsupported {attribute}={value}; "
+                f"only {attribute}={default} is currently supported"
+            )
 
 
 register_op(

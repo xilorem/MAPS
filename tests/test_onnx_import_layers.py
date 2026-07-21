@@ -21,6 +21,7 @@ from MAPS.ops.defs.gemm import GemmPayload
 from MAPS.ops.registry import get_onnx_lowerer, register_op, registered_ops
 from MAPS.ops.defs.reduction import ReductionPayload
 from MAPS.ops.spec import OpSpec
+from MAPS.ops.common import OperationPayload
 from MAPS.transforms import decompose_graph
 
 
@@ -339,7 +340,7 @@ def test_op_registry_reports_supported_onnx_ops() -> None:
 
 
 @dataclass(frozen=True)
-class _FakePayload:
+class _FakePayload(OperationPayload):
     x: object
     output: object
 
@@ -349,7 +350,7 @@ def _lower_fake_identity(
     inputs: tuple[object, ...],
     outputs: tuple[object, ...],
     attributes: dict[str, object],
-) -> tuple[OpKind, object]:
+) -> tuple[OpKind, _FakePayload]:
     del node_name, attributes
     if len(inputs) != 1 or len(outputs) != 1:
         raise ValueError("FakeIdentityTestOp expects exactly one input and one output")
@@ -367,7 +368,6 @@ def test_parse_graph_uses_registry_for_new_test_op() -> None:
             name="fake_identity_test",
             onnx_names=("FakeIdentityTestOp",),
             lower_onnx=_lower_fake_identity,
-            payload_type=_FakePayload,
         )
     )
 

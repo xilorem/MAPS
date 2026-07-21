@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from MAPS.arch import WorkKind
 from MAPS.core.graph import Node, OpKind
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice, TensorSliceRef, tile_tensor_slice
-from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
-from MAPS.arch.tile import Tile
-from MAPS.ops.common.payload import OpPayload
-from MAPS.ops.common.tile_work import TileWork
+from MAPS.ops.common.payload import CompositeOpPayload
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
 from MAPS.ops.defs.conv_transforms import (
@@ -20,48 +18,8 @@ from MAPS.ops.defs.conv_transforms import (
     WeightPackPayload,
 )
 
-
 @dataclass(frozen=True)
-class ConvTileWork(TileWork):
-    """Concrete Conv slices associated with one tile."""
-
-    output_slice: TensorSlice
-    x_slice: TensorSlice
-    w_slice: TensorSlice
-    b_slice: TensorSlice | None
-    x: Tensor | None = None
-    w: Tensor | None = None
-    b: Tensor | None = None
-    output: Tensor | None = None
-
-    @property
-    def input_slices(self) -> tuple[TensorSliceRef, ...]:
-        refs = []
-        if self.x is not None:
-            refs.append(TensorSliceRef(tensor=self.x, tensor_slice=self.x_slice))
-        if self.w is not None:
-            refs.append(TensorSliceRef(tensor=self.w, tensor_slice=self.w_slice))
-        if self.b is not None and self.b_slice is not None:
-            refs.append(TensorSliceRef(tensor=self.b, tensor_slice=self.b_slice))
-        return tuple(refs)
-
-    @property
-    def output_slices(self) -> tuple[TensorSliceRef, ...]:
-        if self.output is None:
-            return ()
-        return (TensorSliceRef(tensor=self.output, tensor_slice=self.output_slice),)
-
-
-def _range(start: int, length: int) -> TensorRange:
-    return TensorRange(start=start, length=length)
-
-
-def _full_range(dim: int) -> TensorRange:
-    return TensorRange(start=0, length=dim)
-
-
-@dataclass(frozen=True)
-class ConvPayload(OpPayload):
+class ConvPayload(CompositeOpPayload):
     """2D NCHW Conv payload modeled as im2col plus GEMM.
 
     The planner-side convention is:
@@ -96,164 +54,6 @@ class ConvPayload(OpPayload):
         if self.group != 1:
             raise NotImplementedError("grouped Conv is not implemented")
         self.validate_shapes()
-
-    @property
-    def cost_model(self) -> object:
-        from MAPS.ops.costs.conv_cost import ConvCostModel
-
-        return ConvCostModel()
-
-    def output_layouts(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[TensorLayout, ...]:
-        return (self._output_layout(submesh, logical_shape),)
-
-    def _logical_dims(
-        self,
-        logical_shape: tuple[int, int] | None,
-    ) -> tuple[int | None, int | None]:
-        if logical_shape is None:
-            return None, None
-        return logical_shape
-
-    def _output_layout(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None,
-    ) -> TensorLayout:
-        logical_width, logical_height = self._logical_dims(logical_shape)
-        return TensorLayout(
-            submesh=submesh,
-            mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=1),
-            mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=3),
-            logical_width=logical_width,
-            logical_height=logical_height,
-        )
-
-    def _x_layout(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None,
-    ) -> TensorLayout:
-        logical_width, logical_height = self._logical_dims(logical_shape)
-        return TensorLayout(
-            submesh=submesh,
-            mesh_x=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
-            mesh_y=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=3),
-            logical_width=logical_width,
-            logical_height=logical_height,
-        )
-
-    def _w_layout(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None,
-    ) -> TensorLayout:
-        logical_width, logical_height = self._logical_dims(logical_shape)
-        return TensorLayout(
-            submesh=submesh,
-            mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-            mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
-            logical_width=logical_width,
-            logical_height=logical_height,
-        )
-
-    def _b_layout(
-        self,
-        submesh: Submesh,
-        logical_shape: tuple[int, int] | None,
-    ) -> TensorLayout:
-        logical_width, logical_height = self._logical_dims(logical_shape)
-        return TensorLayout(
-            submesh=submesh,
-            mesh_x=LayoutAxis(mode=LayoutAxisMode.SHARD, tensor_axis=0),
-            mesh_y=LayoutAxis(mode=LayoutAxisMode.REPLICATE),
-            logical_width=logical_width,
-            logical_height=logical_height,
-        )
-
-    def required_x_slice(self, output_slice: TensorSlice) -> TensorSlice:
-        if output_slice.rank != self.output.rank:
-            raise ValueError("output slice rank must match Conv output rank")
-
-        _, _, input_h, input_w = self.x.dims
-        _, _, kernel_h, kernel_w = self.w.dims
-        stride_h, stride_w = self.strides
-        pad_top, pad_left, _, _ = self.pads
-        dilation_h, dilation_w = self.dilations
-
-        out_h = output_slice.dims[2]
-        out_w = output_slice.dims[3]
-        h_start = out_h.start * stride_h - pad_top
-        h_end = (
-            (out_h.start + out_h.length - 1) * stride_h
-            - pad_top
-            + dilation_h * (kernel_h - 1)
-            + 1
-        )
-        w_start = out_w.start * stride_w - pad_left
-        w_end = (
-            (out_w.start + out_w.length - 1) * stride_w
-            - pad_left
-            + dilation_w * (kernel_w - 1)
-            + 1
-        )
-
-        h_start = max(0, h_start)
-        w_start = max(0, w_start)
-        h_end = min(input_h, h_end)
-        w_end = min(input_w, w_end)
-
-        return TensorSlice(
-            rank=self.x.rank,
-            dims=(
-                output_slice.dims[0],
-                _full_range(self.x.dims[1]),
-                _range(h_start, max(0, h_end - h_start)),
-                _range(w_start, max(0, w_end - w_start)),
-            ),
-        )
-
-    def required_w_slice(self, output_slice: TensorSlice) -> TensorSlice:
-        if output_slice.rank != self.output.rank:
-            raise ValueError("output slice rank must match Conv output rank")
-        return TensorSlice(
-            rank=self.w.rank,
-            dims=(
-                output_slice.dims[1],
-                _full_range(self.w.dims[1]),
-                _full_range(self.w.dims[2]),
-                _full_range(self.w.dims[3]),
-            ),
-        )
-
-    def required_b_slice(self, output_slice: TensorSlice) -> TensorSlice | None:
-        if self.b is None:
-            return None
-        return TensorSlice(rank=self.b.rank, dims=(output_slice.dims[1],))
-
-    def build_tile_work(
-        self,
-        output_layouts: tuple[TensorLayout, ...],
-        tile: Tile,
-    ) -> ConvTileWork:
-        output_slice = tile_tensor_slice(
-            tensor=self.output,
-            layout=output_layouts[0],
-            tile=tile,
-        )
-        return ConvTileWork(
-            output_slice=output_slice,
-            x_slice=self.required_x_slice(output_slice),
-            w_slice=self.required_w_slice(output_slice),
-            b_slice=self.required_b_slice(output_slice),
-            x=self.x,
-            w=self.w,
-            b=self.b,
-            output=self.output,
-        )
 
     def validate_shapes(self) -> None:
         if self.x.rank != 4:
@@ -302,13 +102,16 @@ class ConvPayload(OpPayload):
         if (output_h, output_w) != (expected_h, expected_w):
             raise ValueError("Conv output spatial dimensions do not match parameters")
 
+    def decompose(self, node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, ...]]:
+        return decompose_conv_node(node)
+
 
 def lower_conv_node(
     node_name: str,
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
     attributes: dict[str, object],
-) -> tuple[OpKind, object]:
+) -> tuple[OpKind, ConvPayload]:
     """Lower one ONNX Conv node into scheduler-side Conv semantics."""
 
     if len(inputs) not in (2, 3):
@@ -453,7 +256,12 @@ register_op(
         name="conv",
         onnx_names=("Conv",),
         lower_onnx=lower_conv_node,
-        decompose=decompose_conv_node,
-        payload_type=ConvPayload,
+        work_kinds=(
+            WorkKind.IM2COL,
+            WorkKind.WEIGHT_PACK,
+            WorkKind.GEMM,
+            WorkKind.ADD,
+            WorkKind.OUTPUT_REFORMAT,
+        ),
     )
 )

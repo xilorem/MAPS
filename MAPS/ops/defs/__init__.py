@@ -1,7 +1,7 @@
 """Operation definitions."""
 
 from .collective import AllReducePayload, CollectiveTileWork
-from .conv import ConvPayload, ConvTileWork
+from .conv import ConvPayload
 from .conv_transforms import (
     ChannelShardedBiasAddPayload,
     ChannelShardedGemmPayload,
@@ -20,7 +20,6 @@ __all__ = [
     "BinaryElementwisePayload",
     "CollectiveTileWork",
     "ConvPayload",
-    "ConvTileWork",
     "ChannelShardedBiasAddPayload",
     "ChannelShardedGemmPayload",
     "ElementwiseTileWork",

@@ -5,13 +5,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 from MAPS.arch import WorkKind
 from MAPS.core.graph import OpKind
-from MAPS.core.layout import TensorLayout, TensorRange, TensorSlice, TensorSliceRef, tile_tensor_slice
+from MAPS.core.layout import TensorLayout, TensorSlice, TensorSliceRef, tile_tensor_slice
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
+from MAPS.ops.common.broadcast import broadcast_input_slice, validate_broadcast_output
+from MAPS.ops.common.cost import OpCostModel
 from MAPS.ops.common.payload import OpPayload, sharded_layout
 from MAPS.ops.common.tile_work import TileWork
 from MAPS.ops.registry import register_op
 from MAPS.ops.spec import OpSpec
+
+
+UNARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
+    "Abs": WorkKind.ABS,
+    "Exp": WorkKind.EXP,
+    "Log": WorkKind.LOG,
+    "Neg": WorkKind.NEG,
+    "Sqrt": WorkKind.SQRT,
+}
+
+BINARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
+    "Add": WorkKind.ADD,
+    "Div": WorkKind.DIV,
+    "Mul": WorkKind.MUL,
+    "Pow": WorkKind.POW,
+    "Sub": WorkKind.SUB,
+}
 
 
 @dataclass(frozen=True)
@@ -49,10 +68,19 @@ class UnaryElementwisePayload(OpPayload):
     work_kind: WorkKind = WorkKind.ELEMENTWISE
 
     def __post_init__(self) -> None:
+        expected = UNARY_ELEMENTWISE_OPS.get(self.op_name)
+        if expected is None:
+            raise ValueError(f"unsupported unary elementwise operation: {self.op_name}")
+        if self.work_kind not in (WorkKind.ELEMENTWISE, expected):
+            raise ValueError(
+                f"{self.op_name} must use work kind {expected.name}, "
+                f"got {self.work_kind.name}"
+            )
+        object.__setattr__(self, "work_kind", expected)
         self.validate_shapes()
 
     @property
-    def cost_model(self) -> object:
+    def cost_model(self) -> OpCostModel:
         from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
 
         return ElementwiseCostModel(work_kind=self.work_kind)
@@ -74,7 +102,8 @@ class UnaryElementwisePayload(OpPayload):
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> ElementwiseTileWork:
-        output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
+        output_layout = self.single_output_layout(output_layouts)
+        output_slice = tile_tensor_slice(self.output, output_layout, tile)
         return ElementwiseTileWork(
             work_kind=self.work_kind,
             output=self.output,
@@ -101,10 +130,19 @@ class BinaryElementwisePayload(OpPayload):
     work_kind: WorkKind = WorkKind.ELEMENTWISE
 
     def __post_init__(self) -> None:
+        expected = BINARY_ELEMENTWISE_OPS.get(self.op_name)
+        if expected is None:
+            raise ValueError(f"unsupported binary elementwise operation: {self.op_name}")
+        if self.work_kind not in (WorkKind.ELEMENTWISE, expected):
+            raise ValueError(
+                f"{self.op_name} must use work kind {expected.name}, "
+                f"got {self.work_kind.name}"
+            )
+        object.__setattr__(self, "work_kind", expected)
         self.validate_shapes()
 
     @property
-    def cost_model(self) -> object:
+    def cost_model(self) -> OpCostModel:
         from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
 
         return ElementwiseCostModel(work_kind=self.work_kind)
@@ -118,8 +156,8 @@ class BinaryElementwisePayload(OpPayload):
 
     def required_input_slices(self, output_slice: TensorSlice) -> tuple[TensorSlice, ...]:
         return (
-            _broadcast_input_slice(self.lhs, self.output, output_slice),
-            _broadcast_input_slice(self.rhs, self.output, output_slice),
+            broadcast_input_slice(self.lhs, self.output, output_slice, self.op_name),
+            broadcast_input_slice(self.rhs, self.output, output_slice, self.op_name),
         )
 
     def build_tile_work(
@@ -127,7 +165,8 @@ class BinaryElementwisePayload(OpPayload):
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> ElementwiseTileWork:
-        output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
+        output_layout = self.single_output_layout(output_layouts)
+        output_slice = tile_tensor_slice(self.output, output_layout, tile)
         return ElementwiseTileWork(
             work_kind=self.work_kind,
             output=self.output,
@@ -137,53 +176,12 @@ class BinaryElementwisePayload(OpPayload):
         )
 
     def validate_shapes(self) -> None:
-        _validate_broadcastable(self.lhs, self.output, self.op_name)
-        _validate_broadcastable(self.rhs, self.output, self.op_name)
-        if self.lhs.elem_bytes != self.output.elem_bytes or self.rhs.elem_bytes != self.output.elem_bytes:
+        validate_broadcast_output((self.lhs, self.rhs), self.output, self.op_name)
+        if (
+            self.lhs.elem_bytes != self.output.elem_bytes
+            or self.rhs.elem_bytes != self.output.elem_bytes
+        ):
             raise ValueError(f"{self.op_name} input and output element sizes must match")
-
-
-def _validate_broadcastable(input_tensor: Tensor, output: Tensor, op_name: str) -> None:
-    if input_tensor.rank > output.rank:
-        raise ValueError(f"{op_name} input rank cannot exceed output rank")
-    padded_input_dims = (1,) * (output.rank - input_tensor.rank) + input_tensor.dims
-    for input_dim, output_dim in zip(padded_input_dims, output.dims):
-        if input_dim not in (1, output_dim):
-            raise ValueError(f"{op_name} input shape is not broadcastable to output")
-
-
-def _broadcast_input_slice(
-    input_tensor: Tensor,
-    output: Tensor,
-    output_slice: TensorSlice,
-) -> TensorSlice:
-    _validate_broadcastable(input_tensor, output, "elementwise")
-    rank_offset = output.rank - input_tensor.rank
-    dims: list[TensorRange] = []
-    for input_axis, input_dim in enumerate(input_tensor.dims):
-        output_axis = input_axis + rank_offset
-        if input_dim == 1:
-            dims.append(TensorRange(start=0, length=1))
-        else:
-            dims.append(output_slice.dims[output_axis])
-    return TensorSlice(rank=input_tensor.rank, dims=tuple(dims))
-
-
-UNARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
-    "Abs": WorkKind.ABS,
-    "Exp": WorkKind.EXP,
-    "Log": WorkKind.LOG,
-    "Neg": WorkKind.NEG,
-    "Sqrt": WorkKind.SQRT,
-}
-
-BINARY_ELEMENTWISE_OPS: dict[str, WorkKind] = {
-    "Add": WorkKind.ADD,
-    "Div": WorkKind.DIV,
-    "Mul": WorkKind.MUL,
-    "Pow": WorkKind.POW,
-    "Sub": WorkKind.SUB,
-}
 
 
 def _lower_unary_elementwise_node(
@@ -192,7 +190,7 @@ def _lower_unary_elementwise_node(
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
     attributes: dict[str, object],
-) -> tuple[OpKind, object]:
+) -> tuple[OpKind, UnaryElementwisePayload]:
     del attributes
     if len(inputs) != 1:
         raise ValueError(f"{op_name} node '{node_name}' must have exactly 1 input")
@@ -215,7 +213,7 @@ def _lower_binary_elementwise_node(
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
     attributes: dict[str, object],
-) -> tuple[OpKind, object]:
+) -> tuple[OpKind, BinaryElementwisePayload]:
     del attributes
     if len(inputs) != 2:
         raise ValueError(f"{op_name} node '{node_name}' must have exactly 2 inputs")
@@ -239,7 +237,7 @@ def _make_unary_lowerer(op_name: str):
         inputs: tuple[Tensor, ...],
         outputs: tuple[Tensor, ...],
         attributes: dict[str, object],
-    ) -> tuple[OpKind, object]:
+    ) -> tuple[OpKind, UnaryElementwisePayload]:
         return _lower_unary_elementwise_node(op_name, node_name, inputs, outputs, attributes)
 
     return lowerer
@@ -251,7 +249,7 @@ def _make_binary_lowerer(op_name: str):
         inputs: tuple[Tensor, ...],
         outputs: tuple[Tensor, ...],
         attributes: dict[str, object],
-    ) -> tuple[OpKind, object]:
+    ) -> tuple[OpKind, BinaryElementwisePayload]:
         return _lower_binary_elementwise_node(op_name, node_name, inputs, outputs, attributes)
 
     return lowerer

@@ -1,5 +1,12 @@
 """Op-specific planner IR."""
 
+from .common import (
+    CompositeOpPayload,
+    OpCostModel,
+    OperationPayload,
+    OpPayload,
+    TileWork,
+)
 from .defs.collective import AllReducePayload
 from .defs.conv import ConvPayload
 from .defs.conv_transforms import (
@@ -19,12 +26,17 @@ __all__ = [
     "BinaryElementwisePayload",
     "ChannelShardedBiasAddPayload",
     "ChannelShardedGemmPayload",
+    "CompositeOpPayload",
     "ConvPayload",
     "GemmPayload",
     "Im2ColPayload",
+    "OpCostModel",
+    "OperationPayload",
+    "OpPayload",
     "OutputReformatPayload",
     "ReductionPayload",
     "SoftmaxPayload",
+    "TileWork",
     "UnaryElementwisePayload",
     "WeightPackPayload",
 ]

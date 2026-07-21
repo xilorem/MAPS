@@ -4,11 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from MAPS.arch import WorkKind
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorSlice, TensorSliceRef, tile_tensor_slice
+from MAPS.core.layout import (
+    LayoutAxis,
+    LayoutAxisMode,
+    TensorLayout,
+    TensorSlice,
+    TensorSliceRef,
+    tile_tensor_slice,
+)
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.common.payload import OpPayload, sharded_layout
 from MAPS.ops.common.tile_work import TileWork
+from MAPS.ops.common.cost import OpCostModel
+
+
+REDUCTION_WORK_KINDS: dict[str, WorkKind] = {
+    "ReduceMax": WorkKind.REDUCE_MAX,
+    "ReduceSum": WorkKind.REDUCE_SUM,
+}
 
 
 @dataclass(frozen=True)
@@ -44,14 +58,20 @@ class ReductionPayload(OpPayload):
     work_kind: WorkKind
 
     def __post_init__(self) -> None:
-        if self.work_kind not in (WorkKind.REDUCE_SUM, WorkKind.REDUCE_MAX):
-            raise ValueError("ReductionPayload work_kind must be REDUCE_SUM or REDUCE_MAX")
+        expected = REDUCTION_WORK_KINDS.get(self.op_name)
+        if expected is None:
+            raise ValueError(f"unsupported reduction operation: {self.op_name}")
+        if self.work_kind is not expected:
+            raise ValueError(
+                f"{self.op_name} must use work kind {expected.name}, "
+                f"got {self.work_kind.name}"
+            )
         if self.axis < 0 or self.axis >= self.x.rank:
             raise ValueError("ReductionPayload axis must be in input tensor rank")
         self.validate_shapes()
 
     @property
-    def cost_model(self) -> object:
+    def cost_model(self) -> OpCostModel:
         from MAPS.ops.costs.reduction_cost import ReductionCostModel
 
         return ReductionCostModel(work_kind=self.work_kind)
@@ -93,13 +113,14 @@ class ReductionPayload(OpPayload):
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> ReductionTileWork:
-        input_layout = self._input_layout_from_output_layout(output_layouts[0])
+        output_layout = self.single_output_layout(output_layouts)
+        input_layout = self._input_layout_from_output_layout(output_layout)
         return ReductionTileWork(
             work_kind=self.work_kind,
             x=self.x,
             output=self.output,
             input_slice=tile_tensor_slice(self.x, input_layout, tile),
-            output_slice=tile_tensor_slice(self.output, output_layouts[0], tile),
+            output_slice=tile_tensor_slice(self.output, output_layout, tile),
         )
 
     def validate_shapes(self) -> None:
@@ -111,5 +132,6 @@ class ReductionPayload(OpPayload):
             expected_output_dim = 1 if axis == self.axis else input_dim
             if output_dim != expected_output_dim:
                 raise ValueError(
-                    f"{self.op_name} output dim {axis} must be {expected_output_dim}, got {output_dim}"
+                    f"{self.op_name} output dim {axis} must be "
+                    f"{expected_output_dim}, got {output_dim}"
                 )

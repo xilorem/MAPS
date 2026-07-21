@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from .tensor import Tensor
 
 if TYPE_CHECKING:
-    from MAPS.ops.common import OpPayload
+    from MAPS.ops.common import OperationPayload
 
 
 class OpKind(IntEnum):
@@ -29,7 +29,7 @@ class Node:
     kind: OpKind
     inputs: tuple[Tensor, ...] = field(default_factory=tuple)
     outputs: tuple[Tensor, ...] = field(default_factory=tuple)
-    payload: "OpPayload | None" = None
+    payload: "OperationPayload | None" = None
     attributes: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

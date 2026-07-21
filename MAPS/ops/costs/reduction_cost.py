@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
 from MAPS.ops.defs.reduction import ReductionTileWork
+from MAPS.ops.common.cost import OpCostModel
 
 
 @dataclass(frozen=True)
-class ReductionCostModel:
+class ReductionCostModel(OpCostModel):
     """Tile-local reduction cycle model backed by tile devices."""
 
     work_kind: WorkKind

@@ -5,13 +5,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from MAPS.arch import Tile, WorkKind
-from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout, TensorRange, TensorSlice, TensorSliceRef, tile_tensor_slice
+from MAPS.core.layout import (
+    LayoutAxis,
+    LayoutAxisMode,
+    TensorLayout,
+    TensorRange,
+    TensorSlice,
+    TensorSliceRef,
+    tile_tensor_slice,
+)
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.common.payload import OpPayload
 from MAPS.ops.common.tile_work import TileWork
+from MAPS.ops.common.cost import OpCostModel
 from MAPS.ops.defs.elementwise import BinaryElementwisePayload
 from MAPS.ops.defs.gemm import GemmPayload
+
+
+CONV_TRANSFORM_WORK_KINDS: dict[str, WorkKind] = {
+    "Im2Col": WorkKind.IM2COL,
+    "WeightPack": WorkKind.WEIGHT_PACK,
+    "OutputReformat": WorkKind.OUTPUT_REFORMAT,
+}
 
 
 def _full_slice(tensor: Tensor) -> TensorSlice:
@@ -67,7 +83,7 @@ class TransformTileWork(TileWork):
     output_slice: TensorSlice
     inputs: tuple[Tensor, ...]
     input_tile_slices: tuple[TensorSlice, ...]
-    work_kind: WorkKind = WorkKind.ELEMENTWISE
+    work_kind: WorkKind
 
     @property
     def input_slices(self) -> tuple[TensorSliceRef, ...]:
@@ -86,10 +102,14 @@ class TransformTileWork(TileWork):
 
 class _TransformPayload(OpPayload):
     @property
-    def cost_model(self) -> object:
+    def work_kind(self) -> WorkKind:
+        return CONV_TRANSFORM_WORK_KINDS[self.op_name]
+
+    @property
+    def cost_model(self) -> OpCostModel:
         from MAPS.ops.costs.elementwise_cost import ElementwiseCostModel
 
-        return ElementwiseCostModel(work_kind=WorkKind.ELEMENTWISE)
+        return ElementwiseCostModel(work_kind=self.work_kind)
 
 
 @dataclass(frozen=True)
@@ -140,11 +160,13 @@ class Im2ColPayload(_TransformPayload):
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> TransformTileWork:
+        output_layout = self.single_output_layout(output_layouts)
         return TransformTileWork(
             output=self.output,
-            output_slice=tile_tensor_slice(self.output, output_layouts[0], tile),
+            output_slice=tile_tensor_slice(self.output, output_layout, tile),
             inputs=(self.x,),
             input_tile_slices=(_full_slice(self.x),),
+            work_kind=self.work_kind,
         )
 
 
@@ -177,7 +199,8 @@ class WeightPackPayload(_TransformPayload):
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> TransformTileWork:
-        output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
+        output_layout = self.single_output_layout(output_layouts)
+        output_slice = tile_tensor_slice(self.output, output_layout, tile)
         oc_slice = output_slice.dims[1]
         input_slice = TensorSlice(
             rank=self.w.rank,
@@ -193,6 +216,7 @@ class WeightPackPayload(_TransformPayload):
             output_slice=output_slice,
             inputs=(self.w,),
             input_tile_slices=(input_slice,),
+            work_kind=self.work_kind,
         )
 
 
@@ -249,7 +273,8 @@ class OutputReformatPayload(_TransformPayload):
         output_layouts: tuple[TensorLayout, ...],
         tile: Tile,
     ) -> TransformTileWork:
-        output_slice = tile_tensor_slice(self.output, output_layouts[0], tile)
+        output_layout = self.single_output_layout(output_layouts)
+        output_slice = tile_tensor_slice(self.output, output_layout, tile)
         input_slice = TensorSlice(
             rank=self.x.rank,
             dims=(
@@ -262,4 +287,5 @@ class OutputReformatPayload(_TransformPayload):
             output_slice=output_slice,
             inputs=(self.x,),
             input_tile_slices=(input_slice,),
+            work_kind=self.work_kind,
         )

@@ -189,10 +189,10 @@ def _node_compute_workload(node: Node, output_layouts: tuple, tile) -> int:
     """Estimate compute cost for one node on one virtual tile."""
 
     tile_work = node.payload.build_tile_work(output_layouts=output_layouts, tile=tile)
-    placement_cost = getattr(node.payload.cost_model, "placement_cost", None)
-    if placement_cost is not None:
-        return int(placement_cost(node=node, output_layouts=output_layouts))
-    return int(node.payload.cost_model.cost(tile_work, tile))
+    cost_model = node.payload.cost_model
+    return int(cost_model.cost(tile_work, tile)) + int(
+        cost_model.placement_cost(node=node, output_layouts=output_layouts)
+    )
 
 
 def worst_tile_l2_transfer_workload(

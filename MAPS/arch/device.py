@@ -29,6 +29,9 @@ class WorkKind(Enum):
     EXP = auto()
     SQRT = auto()
     SUB = auto()
+    IM2COL = auto()
+    WEIGHT_PACK = auto()
+    OUTPUT_REFORMAT = auto()
     DMA = auto()
 
     @property
@@ -44,6 +47,9 @@ class WorkKind(Enum):
             WorkKind.POW,
             WorkKind.SQRT,
             WorkKind.SUB,
+            WorkKind.IM2COL,
+            WorkKind.WEIGHT_PACK,
+            WorkKind.OUTPUT_REFORMAT,
         }:
             return WorkKind.ELEMENTWISE
         return self

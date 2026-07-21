@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 from MAPS.arch import DeviceKind, Tile, WorkKind
 from MAPS.ops.defs.gemm import GemmTileWork
+from MAPS.ops.common.cost import OpCostModel
 
 
 @dataclass(frozen=True)
-class GemmCostModel:
+class GemmCostModel(OpCostModel):
     """Compute-only GEMM cycle model backed by tile devices."""
 
     preferred_device_kinds: DeviceKind | tuple[DeviceKind, ...] = (DeviceKind.MATRIX, DeviceKind.SYSTOLIC)

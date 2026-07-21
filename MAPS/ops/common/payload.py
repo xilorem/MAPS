@@ -20,12 +20,18 @@ from MAPS.core.layout import LayoutAxis, LayoutAxisMode, TensorLayout
 from MAPS.core.submesh import Submesh
 from MAPS.core.tensor import Tensor
 from MAPS.ops.common.tile_work import TileWork
+from MAPS.ops.common.cost import OpCostModel
 
 if TYPE_CHECKING:
     from MAPS.arch import Tile
+    from MAPS.core.graph import Node
 
 
-class OpPayload(ABC):
+class OperationPayload(ABC):
+    """Marker shared by primitive and composite operation payloads."""
+
+
+class OpPayload(OperationPayload):
     """Planner-facing operation contract attached to one graph node.
 
     A payload owns operation semantics at the MAPS IR level. It chooses the
@@ -36,7 +42,7 @@ class OpPayload(ABC):
 
     @property
     @abstractmethod
-    def cost_model(self) -> object: ...
+    def cost_model(self) -> OpCostModel: ...
 
     @abstractmethod
     def output_layouts(
@@ -51,6 +57,29 @@ class OpPayload(ABC):
         output_layouts: tuple[TensorLayout, ...],
         tile: "Tile",
     ) -> TileWork: ...
+
+    @staticmethod
+    def single_output_layout(
+        output_layouts: tuple[TensorLayout, ...],
+    ) -> TensorLayout:
+        """Return the sole output layout required by current primitive ops."""
+
+        if len(output_layouts) != 1:
+            raise ValueError(
+                f"operation expects exactly one output layout, got {len(output_layouts)}"
+            )
+        return output_layouts[0]
+
+
+class CompositeOpPayload(OperationPayload):
+    """Payload that must decompose into primitive nodes before planning."""
+
+    @abstractmethod
+    def decompose(
+        self,
+        node: "Node",
+    ) -> tuple[tuple[Tensor, ...], tuple["Node", ...]]:
+        """Return ``(new_tensors, primitive_nodes)`` for ``node``."""
 
 
 def sharded_layout(

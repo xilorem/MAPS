@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from MAPS.arch import WorkKind
 from MAPS.core.graph import Node, OpKind
 from MAPS.core.tensor import Tensor
-from MAPS.ops.common.payload import OpPayload
+from MAPS.ops.common.payload import CompositeOpPayload
 from MAPS.ops.defs.collective import AllReducePayload
 from MAPS.ops.defs.elementwise import BinaryElementwisePayload, UnaryElementwisePayload
 from MAPS.ops.defs.reduction import ReductionPayload
@@ -16,7 +16,7 @@ from MAPS.ops.spec import OpSpec
 
 
 @dataclass(frozen=True)
-class SoftmaxPayload(OpPayload):
+class SoftmaxPayload(CompositeOpPayload):
     """High-level softmax payload that must be decomposed before planning."""
 
     x: Tensor
@@ -26,26 +26,6 @@ class SoftmaxPayload(OpPayload):
     def __post_init__(self) -> None:
         self.validate_shapes()
 
-    @property
-    def cost_model(self) -> object:
-        raise NotImplementedError("SoftmaxPayload must be decomposed before cost estimation")
-
-    def output_layouts(
-        self,
-        submesh,
-        logical_shape: tuple[int, int] | None = None,
-    ) -> tuple[object, ...]:
-        del submesh, logical_shape
-        raise NotImplementedError("SoftmaxPayload must be decomposed before layout selection")
-
-    def build_tile_work(
-        self,
-        output_layouts,
-        tile,
-    ) -> object:
-        del output_layouts, tile
-        raise NotImplementedError("SoftmaxPayload must be decomposed before tile work generation")
-
     def validate_shapes(self) -> None:
         if self.axis < 0 or self.axis >= self.x.rank:
             raise ValueError("Softmax axis must be within input tensor rank")
@@ -54,13 +34,16 @@ class SoftmaxPayload(OpPayload):
         if self.x.elem_bytes != self.output.elem_bytes:
             raise ValueError("Softmax input and output element sizes must match")
 
+    def decompose(self, node: Node) -> tuple[tuple[Tensor, ...], tuple[Node, ...]]:
+        return decompose_softmax_node(node)
+
 
 def lower_softmax_onnx(
     node_name: str,
     inputs: tuple[Tensor, ...],
     outputs: tuple[Tensor, ...],
     attributes: dict[str, object],
-) -> tuple[OpKind, object]:
+) -> tuple[OpKind, SoftmaxPayload]:
     """Lower one ONNX Softmax node into one high-level MAPS softmax op."""
 
     if len(inputs) != 1:
@@ -258,8 +241,12 @@ register_op(
         name="softmax",
         onnx_names=("Softmax",),
         lower_onnx=lower_softmax_onnx,
-        decompose=decompose_softmax_node,
-        payload_type=SoftmaxPayload,
-        work_kinds=(WorkKind.REDUCE_MAX, WorkKind.EXP, WorkKind.REDUCE_SUM, WorkKind.SUB, WorkKind.DIV),
+        work_kinds=(
+            WorkKind.REDUCE_MAX,
+            WorkKind.EXP,
+            WorkKind.REDUCE_SUM,
+            WorkKind.SUB,
+            WorkKind.DIV,
+        ),
     )
 )
